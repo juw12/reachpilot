@@ -168,7 +168,7 @@ DEMO = {
         "todo": [
             {"priority": 1, "module": "Jobs", "title": "1 application stopped and needs you",
              "detail": "The site asked for an e-mailed verification code. ReachPilot never answers human checks; open the apply session and finish it.",
-             "action": "jobs_apply", "action_label": "Start apply session",
+             "action": "jobs_apply", "action_label": "Finish stopped application",
              "links": [{"label": "Globex Hardware - NPI Mechanical Engineer", "url": "#"}]},
             {"priority": 2, "module": "Jobs", "title": "7 jobs ready to apply today",
              "detail": "Forms are pre-filled with your CV, cover letter and answers. You glance and press Submit.",
@@ -176,7 +176,7 @@ DEMO = {
             {"priority": 3, "module": "Jobs", "title": "Workday sites need your own sign-in",
              "detail": "Fabrikam Motion and Umbrella Medical use Workday accounts, so these are applied by hand.",
              "action": None, "action_label": "", "links": []},
-            {"priority": 4, "module": "Email", "title": "3 good leads have no recruiter e-mail",
+            {"priority": 4, "module": "Email", "title": "3 good leads have no recruiter email",
              "detail": "They can only be applied to on the company site.",
              "action": "email_open_leads", "action_label": "Open leads", "links": []},
         ],
