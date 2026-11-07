@@ -509,7 +509,7 @@ def todo_items(linkedin: dict | None, jobs: dict, email: dict, tasks: dict) -> l
         if jobs["needs_you"]:
             add(1, "Jobs", f"{len(jobs['needs_you'])} application(s) stopped and need you",
                 "Usually an e-mail verification code or a question only you can answer. Open the apply session to finish them.",
-                "jobs_apply", "Start apply session",
+                "jobs_apply", "Finish stopped applications",
                 [{"label": f"{job['company']} - {job['title']}", "url": job["link"], "note": job["my_notes"]} for job in jobs["needs_you"]])
         if jobs["today"]:
             add(2, "Jobs", f"{len(jobs['today'])} jobs ready to apply today",
@@ -537,7 +537,7 @@ def todo_items(linkedin: dict | None, jobs: dict, email: dict, tasks: dict) -> l
                 f"Last activity {email['last_run']}. Your PC may have been off; it catches up automatically, or run it now.",
                 "email_run_now", "Run now")
         if email["leads_total"]:
-            add(3, "Email", f"{email['leads_total']} good jobs have no recruiter e-mail",
+            add(3, "Email", f"{email['leads_total']} good jobs have no recruiter email",
                 "They need applying on the company site. The leads page lists them best-fit first.", "email_open_leads", "Open leads page")
 
     for key, task in tasks.items():
