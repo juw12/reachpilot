@@ -318,5 +318,22 @@ check(made == {"handle": "me.bsky.social", "app_password": "wxyz-wxyz-wxyz-wxyz"
       and "my normal password" not in json.dumps(made),
       "channels: Bluesky password -> app password (e-mail code handled, main password not stored)")
 
+import growth
+
+check([analytics.platform_of(name) for name in ("linkedin.com", "lnkd.in", "mastodon.social", "bsky.app", "dev.to",
+                                                  "google.com", "github.com", "example.org")]
+      == ["LinkedIn", "LinkedIn", "Mastodon", "Bluesky", "Dev.to", "Search", "GitHub", "Other"],
+      "growth: GitHub referrers mapped to platforms")
+people = [{"id": str(number), "bot": number == 3} for number in range(40)]
+targets = growth.follow_back_targets(people, {"0", "1"}, cap=25)
+check(len(targets) == 25 and "0" not in targets and "3" not in targets, "growth: follow-back skips followed + bots, capped at 25")
+base_profile = {"bio_short": "a", "links": {"GitHub": "https://github.com/x"}}
+check(growth.profile_hash(base_profile) == growth.profile_hash(dict(base_profile))
+      and growth.profile_hash(base_profile) != growth.profile_hash({**base_profile, "bio_short": "b"}),
+      "growth: profile pushed again only when config changes")
+real_profile = json.loads((Path(__file__).parent / "config.json").read_text(encoding="utf-8")).get("profile", {})
+check(len(real_profile.get("bio_short", "")) <= 256 and len(real_profile.get("bio_long", "")) <= 500
+      and "github.com/juw12" in real_profile.get("bio_short", ""), "growth: bios fit Bluesky 256 / Mastodon 500 and link GitHub")
+
 print("\nALL PASSED" if not failures else f"\n{len(failures)} FAILED")
 sys.exit(1 if failures else 0)

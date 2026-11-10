@@ -19,6 +19,22 @@ from pathlib import Path
 
 DATE_FORMATS = ["%m/%d/%Y", "%Y-%m-%d", "%d/%m/%Y", "%b %d, %Y"]
 LINKEDIN_REFERRER = re.compile(r"linkedin|lnkd", re.IGNORECASE)
+PLATFORM_REFERRERS = [
+    ("LinkedIn", re.compile(r"linkedin|lnkd", re.IGNORECASE)),
+    ("Mastodon", re.compile(r"mastodon|mstdn|fosstodon|hachyderm|infosec\.exchange", re.IGNORECASE)),
+    ("Bluesky", re.compile(r"bsky", re.IGNORECASE)),
+    ("Dev.to", re.compile(r"dev\.to", re.IGNORECASE)),
+    ("Search", re.compile(r"google|bing|duckduckgo|yahoo|baidu", re.IGNORECASE)),
+    ("GitHub", re.compile(r"github", re.IGNORECASE)),
+]
+
+
+def platform_of(referrer: str) -> str:
+    """Map a GitHub traffic referrer (e.g. 'mastodon.social') to the platform it came from."""
+    for platform, pattern in PLATFORM_REFERRERS:
+        if pattern.search(referrer or ""):
+            return platform
+    return "Other"
 EXPOSURE_UNITS = 100  # pseudo-trials per post for the GitHub-based score
 STAR_WEIGHT = 3       # one star counts like three LinkedIn visitors
 
@@ -27,11 +43,16 @@ def collect_github_signals(db: sqlite3.Connection, user: str, repos: dict, gh_ap
     """Daily snapshot per repo: LinkedIn-referred visitors (trailing 14 days) and star count."""
     day = datetime.now().strftime("%Y-%m-%d")
     count = 0
+    by_platform: dict[str, list[int]] = {}
     for name, repo in repos.items():
         referrers = gh_api(f"repos/{user}/{name}/traffic/popular/referrers")
         if referrers is None:
             continue
         linkedin = [entry for entry in referrers if LINKEDIN_REFERRER.search(entry.get("referrer", ""))]
+        for entry in referrers:
+            totals = by_platform.setdefault(platform_of(entry.get("referrer", "")), [0, 0])
+            totals[0] += entry.get("count", 0)
+            totals[1] += entry.get("uniques", 0)
         db.execute(
             "INSERT OR REPLACE INTO github_signals(day, repo, li_views, li_uniques, stars) VALUES(?,?,?,?,?)",
             (
@@ -43,6 +64,11 @@ def collect_github_signals(db: sqlite3.Connection, user: str, repos: dict, gh_ap
             ),
         )
         count += 1
+    db.execute("CREATE TABLE IF NOT EXISTS github_referrers(day TEXT, platform TEXT, views INTEGER, uniques INTEGER, "
+               "PRIMARY KEY(day, platform))")
+    for platform, (views, uniques) in by_platform.items():
+        db.execute("INSERT OR REPLACE INTO github_referrers(day, platform, views, uniques) VALUES(?,?,?,?)",
+                   (day, platform, views, uniques))
     db.commit()
     log.info("GitHub signals collected for %d repos", count)
     return count

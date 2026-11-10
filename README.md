@@ -67,6 +67,18 @@ Every LinkedIn slot also goes to the platforms you connect, each cut to fit from
 Each platform publishes and retries on its own (3 attempts within 3 days), so one platform failing never blocks
 LinkedIn or the others. X is left out on purpose: its API is pay-per-post. `preview` shows every platform's version.
 
+Once a day `growth.py` grows the audience and points all of it at GitHub:
+
+- **Profiles:** Mastodon bio plus link fields (GitHub, portfolio, Dev.to, Bluesky), featured hashtags and
+  "discoverable"; Bluesky bio. Written from `profile` in `config.json`, and only pushed again when that block
+  changes, so edits you make in the apps stay.
+- **Pinned intro:** the first post on Mastodon and Bluesky is pinned to the profile.
+- **Follow back:** new followers on Mastodon and Bluesky, at most 25 a day each, bots skipped.
+- **Measured:** follower counts per platform, and the GitHub visitors that came from LinkedIn, Mastodon,
+  Bluesky and Dev.to (repo traffic API). Both show on the dashboard's daily table.
+
+It never follows, likes or replies to strangers automatically: Mastodon instances and Bluesky treat that as spam.
+
 ## What it deliberately doesn't do
 
 - No browser automation, scraping, auto-likes or auto-comments on other people's posts. Only the official
@@ -154,6 +166,7 @@ and the `?` button explains per module when it runs, what it does by itself and 
 | `visuals.py` | screenshots (Edge, headless) |
 | `linkedin_api.py` | OAuth, images, posts, comments |
 | `channels.py` | Bluesky, Mastodon, Dev.to, Telegram, Discord: per-platform cutting, publishing, retries |
+| `growth.py` | daily: profiles, pinned intro, follow-back, follower counts |
 | `analytics.py` | reach scoring |
 | `trylinks.py` | tracked go-links |
 | `dashboard.py` + `dashboard.html` | local dashboard (restarts itself onto new code) |

@@ -500,7 +500,7 @@ CLIENTS = {"bluesky": Bluesky, "mastodon": Mastodon, "devto": DevTo, "telegram":
 
 MASTODON_PORT = 8767
 MASTODON_REDIRECT = f"http://127.0.0.1:{MASTODON_PORT}/callback"
-MASTODON_SCOPES = "read:accounts write:statuses write:media"
+MASTODON_SCOPES = "read:accounts read:follows write:statuses write:media write:accounts write:follows"
 
 
 def mastodon_sign_in(instance: str, open_browser=webbrowser.open, wait_seconds: int = 300, trace=None) -> dict:

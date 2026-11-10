@@ -484,6 +484,17 @@ def daily_stats(sections: dict) -> list[dict]:
                            "select substr(posted_at,1,10), count(*) from channel_posts where status='posted' group by 1"),
             None, "same days as LinkedIn", "One per connected platform for each LinkedIn slot.",
         ))
+    rows.append(_daily_row(
+        "Audience", "linkedin", "Followers (Mastodon + Bluesky + Dev.to + GitHub)",
+        _sqlite_by_day(ROOT / "state.db", "select day, sum(followers) from audience group by 1"),
+        None, "", "Counted once a day. LinkedIn does not share follower counts with apps.",
+    ))
+    rows.append(_daily_row(
+        "Audience", "linkedin", "GitHub visitors from social (last 14 days)",
+        _sqlite_by_day(ROOT / "state.db", "select day, sum(uniques) from github_referrers "
+                       "where platform in ('LinkedIn','Mastodon','Bluesky','Dev.to') group by 1"),
+        None, "", "Unique visitors GitHub says came from LinkedIn, Mastodon, Bluesky and Dev.to.",
+    ))
     return rows
 
 

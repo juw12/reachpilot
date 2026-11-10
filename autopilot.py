@@ -36,6 +36,7 @@ import analytics  # noqa: E402
 import channels  # noqa: E402
 import composer  # noqa: E402
 import github_source as gh  # noqa: E402
+import growth  # noqa: E402
 import trylinks  # noqa: E402
 import visuals  # noqa: E402
 
@@ -578,6 +579,10 @@ def tick(config, db) -> None:
         if repos:
             analytics.collect_github_signals(db, config["github_user"], repos, gh.gh_api, log)
             refresh_try_links(config, db, repos)
+            try:
+                growth.run_daily(db, config, load_secrets(), gh.gh_api, log)
+            except Exception as error:  # growth must never block posting
+                log.exception("Growth pass failed: %s", error)
             kv_set(db, "last_signals_day", today)
     analytics.ingest_inbox(INBOX, db, log)
     token = token_health(db, now)

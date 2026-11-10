@@ -51,5 +51,21 @@
     "telegram",
     "discord"
   ],
-  "goatcounter_code": "juw12"
+  "goatcounter_code": "juw12",
+  "profile": {
+    "name": "Juwen Lie",
+    "bio_long": "R&D mechanical engineer in consumer electronics by day: reliability tests, DVT builds, root cause. By night I ship open-source tools: local-first apps, AI guardrails, automations. Everything I build is on GitHub: https://github.com/juw12",
+    "bio_short": "R&D mechanical engineer by day, open-source builder by night: local-first apps, AI guardrails, automations. Code: https://github.com/juw12",
+    "links": {
+      "GitHub": "https://github.com/juw12",
+      "Portfolio": "https://juw12.github.io/portfolio/",
+      "Dev.to": "https://dev.to/juw12",
+      "Bluesky": "https://bsky.app/profile/juw12.bsky.social"
+    },
+    "hashtags": [
+      "OpenSource",
+      "BuildInPublic",
+      "Python"
+    ]
+  }
 }
