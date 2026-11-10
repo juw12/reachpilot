@@ -161,6 +161,44 @@ class LinkedInClient:
             timeout=30,
         ), "first comment")
 
+    def get_commentary(self, post_urn: str) -> str:
+        """The post text as LinkedIn stores it (little-text escaped)."""
+        response = self._check(requests.get(
+            f"{API}/rest/posts/{urllib.parse.quote(post_urn, safe='')}",
+            headers=self.headers,
+            timeout=30,
+        ), "read post")
+        return response.json().get("commentary", "")
+
+    def set_commentary(self, post_urn: str, commentary: str) -> None:
+        """Edit the post text in place (needs only w_member_social, unlike comments)."""
+        self._check(requests.post(
+            f"{API}/rest/posts/{urllib.parse.quote(post_urn, safe='')}",
+            headers={**self.headers, "X-RestLi-Method": "PARTIAL_UPDATE"},
+            json={"patch": {"$set": {"commentary": commentary}}},
+            timeout=30,
+        ), "edit post")
+
+    def inline_comment(self, post_urn: str, text: str) -> None:
+        """Fallback when commenting is not permitted: swap the 'links in the comment' line for the links."""
+        self.set_commentary(post_urn, inline_links(self.get_commentary(post_urn), to_little_text(text)))
+
     @staticmethod
     def post_url(post_urn: str) -> str:
         return f"https://www.linkedin.com/feed/update/{post_urn}/"
+
+
+COMMENT_POINTER = re.compile(r"\b(in|see) the (first )?comments?\b|\blinks? (is |are )?in the comments?\b", re.I)
+
+
+def inline_links(commentary: str, links: str) -> str:
+    """Replace short 'see the first comment' lines with the links; append them if no pointer line exists."""
+    lines = commentary.split("\n")
+    replaced = False
+    for index, line in enumerate(lines):
+        if COMMENT_POINTER.search(line) and len(line) < 90:
+            lines[index] = links if not replaced else ""
+            replaced = True
+    if replaced:
+        return "\n".join(lines)
+    return commentary.rstrip() + "\n\n" + links

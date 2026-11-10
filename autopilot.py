@@ -525,7 +525,12 @@ def publish(config, db, slot, row, token) -> None:
             client.comment(post_urn, comment)
         except Exception as error:
             log.warning("First comment failed: %s", error)
-            notify("ReachPilot", "Posted, but add the links comment yourself: " + comment.replace("\n", " "))
+            try:  # commenting needs a partner product; editing your own post only needs w_member_social
+                client.inline_comment(post_urn, comment)
+                log.info("Links put into the post itself instead of a comment")
+            except Exception as inline_error:
+                log.warning("Inline links failed too: %s", inline_error)
+                notify("ReachPilot", "Posted, but add the links comment yourself: " + comment.replace("\n", " "))
     notify("ReachPilot", f"Posted: {(repo or angle)}")
 
 
