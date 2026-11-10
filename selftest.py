@@ -201,11 +201,8 @@ for name, limit in limits.items():
 check(set(variants) == set(channels.ALL), f"channels: a launch gets every platform ({sorted(variants)})")
 check(variants["devto"]["extra"]["canonical_url"] == facts.homepage and "## What else it does" in variants["devto"]["body"]
       and variants["devto"]["extra"]["tags"][:2] == ["offlinefirst", "pwa"], "channels: Dev.to article has canonical URL, features, tags")
-hn = variants["hackernews"]
-check(hn["title"].startswith("Show HN: Watt Reserve") and len(hn["title"]) <= 80
-      and hn["extra"]["submit_url"].startswith("https://news.ycombinator.com/submitlink?u="), f"channels: Show HN draft ({hn['title']})")
 recycle_variants = channels.build_variants(post_body, post_comment, "deep_dive", facts)
-check("devto" not in recycle_variants and "hackernews" not in recycle_variants, "channels: recycled angles skip Dev.to and HN/Reddit")
+check("devto" not in recycle_variants and "mastodon" in recycle_variants, "channels: recycled angles skip Dev.to only")
 long_intro = "By day I build hardware. " * 30 + "\n\nSecond paragraph.\n\nPortfolio and GitHub in the first comment.\n\n#OpenSource"
 short = channels.short_post(long_intro, "GitHub: https://github.com/juw12", 300, 1, 2, labelled=False)
 check(len(short) <= 300 and short.endswith("#OpenSource") and "https://github.com/juw12" in short and "first comment" not in short,
@@ -233,12 +230,12 @@ with tempfile.TemporaryDirectory() as temp_dir:
     channel_secrets = {"channels": {"bluesky": {"handle": "x", "app_password": "y"}, "mastodon": {"instance": "m", "access_token": "t"}}}
     queued = channels.prepare(channel_db, channel_config, channel_secrets, "2026-11-11 08:00", "watt-reserve", "launch",
                               post_body, post_comment, [str(big_png)], facts)
-    check(sorted(queued) == ["bluesky", "hackernews", "mastodon", "reddit"], f"channels: only connected platforms + drafts queued ({queued})")
+    check(sorted(queued) == ["bluesky", "mastodon"], f"channels: only connected platforms queued ({queued})")
     again = channels.prepare(channel_db, channel_config, channel_secrets, "2026-11-11 08:00", "watt-reserve", "launch",
                              post_body, post_comment, [str(big_png)], facts)
     later = channels.prepare(channel_db, channel_config, channel_secrets, "2026-11-25 08:00", "watt-reserve", "launch",
                              post_body + " again", post_comment, [], facts)
-    check(again == [] and "hackernews" not in later and "bluesky" in later, "channels: queued once per slot; HN/Reddit once per project")
+    check(again == [] and "bluesky" in later, "channels: queued once per slot")
 
     calls = []
 
@@ -274,17 +271,52 @@ with tempfile.TemporaryDirectory() as temp_dir:
     check(sum(1 for call in calls if call[0] == "bluesky" and "2026-11-11" in call[2]) == 1, "channels: a posted platform is never re-posted")
     check(statuses[("2026-11-11 08:00", "mastodon")] == ("failed", channels.MAX_ATTEMPTS),
           f"channels: a failing platform stops after {channels.MAX_ATTEMPTS} tries ({statuses[('2026-11-11 08:00', 'mastodon')]})")
-    check(statuses[("2026-11-11 08:00", "hackernews")][0] == "manual", "channels: HN stays a manual draft (never auto-posted)")
     check(any(call[1] == 1 for call in calls if call[0] == "bluesky"), "channels: screenshot attached")
 
 todo = hub.channels_todo({
     "not_connected": ["Bluesky"],
-    "manual": [{"slot": "2026-11-11 08:00", "channel": "Hacker News", "repo": "watt-reserve", "title": "Show HN: x",
-                "url": "https://news.ycombinator.com/submitlink?u=a"}],
     "failed": [{"slot": "2026-11-11 08:00", "channel": "Mastodon", "error": "HTTP 503"}],
 })
-check([item["action"] for item in todo] == ["channels_setup", "channels_done:2026-11-11 08:00", "channels_setup"]
-      and todo[1]["links"][0]["url"].startswith("https://news.ycombinator.com/"), "hub: platform to-dos (connect, share drafts, failures)")
+check([item["action"] for item in todo] == ["channels_setup", "channels_setup"], "hub: platform to-dos (connect, failures)")
+
+check(channels.bluesky_sign_in("@me.bsky.social", "abcd-efgh-ijkl-mnop")
+      == {"handle": "me.bsky.social", "app_password": "abcd-efgh-ijkl-mnop"}, "channels: an existing Bluesky app password is kept as is")
+
+
+class FakeResponse:
+    def __init__(self, status, payload):
+        self.status_code = status
+        self.payload = payload
+        self.text = json.dumps(payload)
+
+    def json(self):
+        return self.payload
+
+
+bluesky_calls = []
+
+
+def fake_post(url, json=None, headers=None, timeout=None):
+    bluesky_calls.append((url.rsplit("/", 1)[-1], json, headers))
+    if url.endswith("createSession") and "authFactorToken" not in json:
+        return FakeResponse(401, {"error": "AuthFactorTokenRequired"})
+    if url.endswith("createSession"):
+        return FakeResponse(200, {"handle": "me.bsky.social", "accessJwt": "main-jwt", "did": "did:plc:x"})
+    return FakeResponse(200, {"name": json["name"], "password": "wxyz-wxyz-wxyz-wxyz"})
+
+
+real_post = channels.requests.post
+channels.requests.post = fake_post
+try:
+    made = channels.bluesky_sign_in("me.bsky.social", "my normal password", ask_code=lambda prompt: "CODE1")
+finally:
+    channels.requests.post = real_post
+check(made == {"handle": "me.bsky.social", "app_password": "wxyz-wxyz-wxyz-wxyz"}
+      and bluesky_calls[1][1]["authFactorToken"] == "CODE1"
+      and bluesky_calls[2][0] == "com.atproto.server.createAppPassword"
+      and bluesky_calls[2][2]["Authorization"] == "Bearer main-jwt"
+      and "my normal password" not in json.dumps(made),
+      "channels: Bluesky password -> app password (e-mail code handled, main password not stored)")
 
 print("\nALL PASSED" if not failures else f"\n{len(failures)} FAILED")
 sys.exit(1 if failures else 0)

@@ -6,7 +6,7 @@ Modules live in modules/ (git-ignored, personal data) and keep running on their 
   job_digest   daily digest + Gmail relay credentials used by email_apply
   promote      creator / UGC outreach e-mails for the GitHub projects (modules/promote/promote.py)
 
-Other platforms (Bluesky, Mastodon, Dev.to, Telegram, Discord, HN / Reddit drafts) are part of the public code
+Other platforms (Bluesky, Mastodon, Dev.to, Telegram, Discord) are part of the public code
 (channels.py); channels_section() reads their state from state.db.
 
 This file only reads their files, builds the "what I need from you" list, and runs a short whitelist of actions.
@@ -501,7 +501,6 @@ def channels_section() -> dict:
     section = {
         "connected": [channels.LABELS[name] for name in automatic if creds.get(name)],
         "not_connected": [channels.LABELS[name] for name in automatic if not creds.get(name)],
-        "manual": [],
         "failed": [],
         "recent": [],
     }
@@ -514,10 +513,6 @@ def channels_section() -> dict:
             exists = connection.execute("select 1 from sqlite_master where name='channel_posts'").fetchone()
             if not exists:
                 return section
-            for slot, channel, repo, title, url in connection.execute(
-                "select slot, channel, repo, title, url from channel_posts where status='manual' order by created_at"
-            ):
-                section["manual"].append({"slot": slot, "channel": channels.LABELS[channel], "repo": repo, "title": title, "url": url})
             for slot, channel, error in connection.execute(
                 f"select slot, channel, error from channel_posts where status='failed' and attempts>={channels.MAX_ATTEMPTS} "
                 "and created_at >= date('now', '-14 day')"
@@ -543,19 +538,6 @@ def channels_todo(section: dict) -> list[dict]:
             "title": "Connect " + ", ".join(section["not_connected"]),
             "detail": "Free, official APIs. Each post then also goes out there, cut to fit. About 2 minutes per platform.",
             "action": "channels_setup", "action_label": "Connect platforms", "links": [],
-        })
-    by_slot: dict[str, list[dict]] = {}
-    for draft in section.get("manual", []):
-        by_slot.setdefault(draft["slot"], []).append(draft)
-    for slot, drafts in by_slot.items():
-        repo = drafts[0]["repo"] or "this project"
-        items.append({
-            "priority": 2, "module": "Platforms",
-            "title": f"Share {repo} on " + " and ".join(draft["channel"] for draft in drafts),
-            "detail": "These sites don't allow bots, so the title and link are prefilled: open, check, press submit. "
-                      "On Reddit, pick a subreddit that welcomes self-made projects. Mark done afterwards.",
-            "action": f"channels_done:{slot}", "action_label": "Mark done",
-            "links": [{"label": f"{draft['channel']}: {draft['title']}", "url": draft["url"]} for draft in drafts],
         })
     for failure in section.get("failed", []):
         items.append({
@@ -653,9 +635,9 @@ def help_sections(tasks: dict) -> list[dict]:
          "you": "Renew the LinkedIn login every 60 days (you get a reminder here and a Windows notification)."},
         {"module": "Platforms", "runs": "With every LinkedIn slot (same task, same days).",
          "auto": "Cuts each post to fit Bluesky (300 characters) and Mastodon (500), sends the full post to your Telegram channel and Discord "
-                 "server, publishes a Dev.to article for launches and releases (at most one per project every 60 days), and writes "
-                 "a Show HN and Reddit draft once per new project. Each platform retries on its own up to 3 times.",
-         "you": "Connect the platforms once (Connect platforms). For Hacker News and Reddit, press submit on the prefilled page; those sites ban bots."},
+                 "server, and publishes a Dev.to article for launches and releases (at most one per project every 60 days). "
+                 "Each platform retries on its own up to 3 times.",
+         "you": "Connect the platforms once (Connect platforms). Nothing else."},
         {"module": "Jobs", "runs": "Searches company job boards at 07:30 and 12:30. " + when("jobs", ""),
          "auto": "Finds roles that fit your CV (37 companies, SEA/TW/CN), scores them, writes cover letters, keeps the tracker. The apply session fills each form for you.",
          "you": "Open the apply session, glance at each form, press Submit and type an e-mailed code if a site asks. Sites with a human check never get submitted by the bot."},
@@ -725,18 +707,6 @@ def run_action(name: str) -> str:
     if name == "channels_setup":
         _console([str(PYTHON), "autopilot.py", "channels"], ROOT)
         return "A window opened to connect Bluesky, Mastodon, Dev.to, Telegram and Discord."
-    if name.startswith("channels_done:"):
-        slot = name.partition(":")[2]
-        if not re.fullmatch(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}", slot):
-            raise ValueError(f"Unknown action: {name}")
-        db = ap.connect_db()
-        try:
-            db.execute("UPDATE channel_posts SET status='done', posted_at=? WHERE slot=? AND status='manual'",
-                       (datetime.now().strftime("%Y-%m-%d %H:%M"), slot))
-            db.commit()
-        finally:
-            db.close()
-        return "Marked as shared."
     if name == "open_modules":
         os.startfile(MODULES)
         return "Modules folder opened."

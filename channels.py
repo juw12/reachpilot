@@ -1,13 +1,12 @@
-"""Other platforms for every ReachPilot post: Bluesky, Mastodon, Dev.to, Telegram, Discord, plus Hacker News / Reddit drafts.
+"""Other platforms for every ReachPilot post: Bluesky, Mastodon, Dev.to, Telegram, Discord.
 
 Free, official APIs only (no scraping, no browser bots, no paid tiers):
-  bluesky    AT Protocol with an app password                  short post (300 chars), screenshots, clickable link
+  bluesky    AT Protocol; setup turns your password into an    short post (300 chars), screenshots, clickable link
+             app password once and stores only that
   mastodon   your instance's REST API with an access token      short post (500 chars), screenshots
   devto      Forem API key                                      an article per launch / release, canonical URL back to you
   telegram   Bot API, posts into your own channel               full post with the first screenshot
   discord    a webhook into your own server                     full post with the first screenshot
-  hackernews, reddit  no allowed posting API: a ready "Show HN" / Reddit draft with a prefilled submit link on the
-                      dashboard's to-do list, and you press submit yourself.
 
 Every variant is cut from the LinkedIn post that already passed the no-invented-facts guard, so a platform can
 shorten a post but never add a claim; anything with a number not in the source is dropped.
@@ -32,16 +31,13 @@ from PIL import Image
 import composer
 
 AUTO = ["bluesky", "mastodon", "devto", "telegram", "discord"]
-MANUAL = ["hackernews", "reddit"]
-ALL = AUTO + MANUAL
+ALL = AUTO
 LABELS = {
     "bluesky": "Bluesky",
     "mastodon": "Mastodon",
     "devto": "Dev.to",
     "telegram": "Telegram",
     "discord": "Discord",
-    "hackernews": "Hacker News",
-    "reddit": "Reddit",
 }
 MAX_ATTEMPTS = 3
 RETRY_WINDOW_DAYS = 3
@@ -78,7 +74,7 @@ def enabled(config: dict) -> list[str]:
 
 def connected(config: dict, secrets: dict) -> list[str]:
     creds = credentials(secrets)
-    return [channel for channel in enabled(config) if channel in MANUAL or creds.get(channel)]
+    return [channel for channel in enabled(config) if creds.get(channel)]
 
 
 # ------------------------------------------------------------------ cutting the LinkedIn post into variants
@@ -190,34 +186,6 @@ def devto_article(body: str, comment: str, facts) -> dict | None:
     }
 
 
-def manual_drafts(facts) -> dict[str, dict]:
-    """Show HN + Reddit drafts with prefilled submit links (you pick the subreddit and press submit)."""
-    if facts is None or not facts.description:
-        return {}
-    url = facts.homepage or facts.html_url
-    summary = composer._sentence(facts.description)
-    bullets = "\n".join(f"- {composer._sentence(bullet)}" for bullet in facts.bullets[:4])
-    text = f"{summary}\n\n{bullets}\n\nSource: {facts.html_url}".strip()
-    hn_title = _truncate(f"Show HN: {facts.display_name} – {facts.description.rstrip('.')}", 80).rstrip("…")
-    reddit_title = _truncate(f"I built {facts.display_name}: {_lower(facts.description.rstrip('.'))}", 300)
-    return {
-        "hackernews": {
-            "title": hn_title,
-            "body": text,
-            "url": "https://news.ycombinator.com/submitlink?" + urllib.parse.urlencode({"u": url, "t": hn_title}),
-        },
-        "reddit": {
-            "title": reddit_title,
-            "body": text,
-            "url": "https://www.reddit.com/submit?" + urllib.parse.urlencode({"url": url, "title": reddit_title}),
-        },
-    }
-
-
-def _lower(text: str) -> str:
-    return text[:1].lower() + text[1:] if text and not text[:2].isupper() else text
-
-
 def build_variants(body: str, comment: str, angle: str | None, facts=None, channels: list[str] | None = None) -> dict[str, dict]:
     """channel -> {"title", "body", "extra"} for every channel this post suits. Pure function (used by preview and tests)."""
     channels = channels or ALL
@@ -239,10 +207,6 @@ def build_variants(body: str, comment: str, angle: str | None, facts=None, chann
         article = devto_article(body, comment, facts)
         if article and not composer.invented_numbers(article["body"] + " " + article["title"], source):
             variants["devto"] = {"title": article.pop("title"), "body": article.pop("body"), "extra": article}
-    if angle == "launch":
-        for channel, draft in manual_drafts(facts).items():
-            if channel in channels:
-                variants[channel] = {"title": draft["title"], "body": draft["body"], "extra": {"submit_url": draft["url"]}}
     return variants
 
 
@@ -262,21 +226,14 @@ def prepare(db, config: dict, secrets: dict, slot: str, repo: str | None, angle:
         ).fetchone()[0]
         if recent and datetime.now() - datetime.strptime(recent[:16], "%Y-%m-%d %H:%M") < timedelta(days=DEVTO_COOLDOWN_DAYS):
             wanted.remove("devto")
-    if repo and any(channel in wanted for channel in MANUAL):
-        for channel in MANUAL:
-            seen = db.execute("SELECT 1 FROM channel_posts WHERE channel=? AND repo=? LIMIT 1", (channel, repo)).fetchone()
-            if seen and channel in wanted:
-                wanted.remove(channel)  # one Show HN / Reddit draft per project, ever
     variants = build_variants(body, comment, angle, facts, wanted)
     stamp = datetime.now().strftime("%Y-%m-%d %H:%M")
     for channel, variant in variants.items():
-        status = "manual" if channel in MANUAL else "ready"
-        url = variant["extra"].get("submit_url") if channel in MANUAL else None
         db.execute(
             """INSERT OR IGNORE INTO channel_posts(slot, channel, repo, angle, title, body, extra, images, status, url, created_at)
                VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
             (slot, channel, repo, angle, variant["title"], variant["body"], json.dumps(variant["extra"]),
-             json.dumps(images if channel in ("bluesky", "mastodon", "telegram", "discord") else []), status, url, stamp),
+             json.dumps(images if channel in ("bluesky", "mastodon", "telegram", "discord") else []), "ready", None, stamp),
         )
     db.commit()
     return list(variants)
@@ -413,6 +370,29 @@ class Bluesky:
             json={"repo": session["did"], "collection": "app.bsky.feed.post", "record": record}, timeout=TIMEOUT,
         ), "Bluesky post").json()
         return f"https://bsky.app/profile/{session['handle']}/post/{created['uri'].rsplit('/', 1)[-1]}"
+
+
+
+APP_PASSWORD_PATTERN = re.compile(r"^[a-z2-7]{4}(-[a-z2-7]{4}){3}$")
+
+
+def bluesky_sign_in(handle: str, password: str, service: str = "https://bsky.social", ask_code=input) -> dict:
+    """Normal password -> a new app password (the only thing stored). An app password is accepted as is."""
+    handle = handle.strip().lstrip("@")
+    if APP_PASSWORD_PATTERN.match(password):
+        return {"handle": handle, "app_password": password}
+    login = {"identifier": handle, "password": password}
+    response = requests.post(f"{service}/xrpc/com.atproto.server.createSession", json=login, timeout=TIMEOUT)
+    if response.status_code == 401 and "AuthFactorTokenRequired" in response.text:
+        login["authFactorToken"] = ask_code("  Bluesky e-mailed you a sign-in code. Code: ").strip()
+        response = requests.post(f"{service}/xrpc/com.atproto.server.createSession", json=login, timeout=TIMEOUT)
+    session = _check(response, "Bluesky sign-in").json()
+    created = _check(requests.post(
+        f"{service}/xrpc/com.atproto.server.createAppPassword",
+        headers={"Authorization": f"Bearer {session['accessJwt']}"},
+        json={"name": f"ReachPilot {datetime.now():%Y-%m-%d %H%M}"}, timeout=TIMEOUT,
+    ), "Bluesky app password").json()
+    return {"handle": session["handle"], "app_password": created["password"]}
 
 
 class Mastodon:
@@ -599,8 +579,11 @@ def save_channel(secrets_path: Path, channel: str, values: dict | None) -> None:
 
 SETUP = {
     "bluesky": {
-        "steps": "Bluesky app > Settings > Privacy and security > App passwords > Add. Never use your main password.",
-        "fields": [("handle", "Your handle (e.g. juw12.bsky.social)", False), ("app_password", "App password", True)],
+        "steps": "Type your normal Bluesky password once: ReachPilot uses it to create an app password named "
+                 "'ReachPilot' and stores only that (revoke it any time in Settings > App passwords). "
+                 "An existing app password works too.",
+        "fields": [("handle", "Your handle (e.g. juw12.bsky.social)", False),
+                   ("app_password", "Bluesky password (used once, not stored)", True)],
     },
     "mastodon": {
         "steps": "Leave the token empty to sign in with your browser (just press Authorize). Or paste a token from "
@@ -642,6 +625,12 @@ def setup_interactive(secrets_path: Path) -> None:
         values = {}
         for key, prompt, hidden in SETUP[channel]["fields"]:
             values[key] = (getpass.getpass(f"  {prompt}: ") if hidden else input(f"  {prompt}: ")).strip()
+        if channel == "bluesky" and all(values.values()):
+            try:
+                values = bluesky_sign_in(values["handle"], values["app_password"])
+            except Exception as error:
+                print(f"  {error}\n  Nothing saved for {label}.\n")
+                continue
         if channel == "mastodon" and values.get("instance") and not values.get("access_token"):
             try:
                 print("  Opening Mastodon in your browser: press Authorize there.")
@@ -662,4 +651,3 @@ def setup_interactive(secrets_path: Path) -> None:
     final = credentials(json.loads(secrets_path.read_text(encoding="utf-8")) if secrets_path.exists() else {})
     ready = [LABELS[channel] for channel in AUTO if final.get(channel)]
     print("Posting to: LinkedIn" + "".join(f", {name}" for name in ready))
-    print("Hacker News and Reddit drafts appear on the dashboard to-do list for each new project.")

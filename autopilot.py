@@ -8,8 +8,8 @@ Runs every 30 minutes from Windows Task Scheduler (`autopilot.py install`). Each
        -> recycled project with a fresh angle (Thompson sampling on your engagement data),
   4. never posts near-duplicates, invented numbers, or more than the weekly cap.
 
-Each post also goes to the other platforms you connected (channels.py): Bluesky, Mastodon, Dev.to, Telegram, Discord,
-plus Hacker News / Reddit drafts on the dashboard. Each platform publishes and retries on its own.
+Each post also goes to the other platforms you connected (channels.py): Bluesky, Mastodon, Dev.to, Telegram and
+Discord. Each platform publishes and retries on its own.
 
 Commands:  init | auth | channels | tick | preview [N] | status | install | uninstall
 Kill switch: create a file named PAUSE in this folder.
@@ -525,7 +525,7 @@ def publish(config, db, slot, row, token) -> None:
 
 
 def facts_for(config, db, repo: str | None, repos: dict) -> object | None:
-    """README facts for one repo (Dev.to articles and HN/Reddit drafts need them); None if unavailable."""
+    """README facts for one repo (Dev.to articles need them); None if unavailable."""
     if not repo:
         return None
     if not repos:
@@ -538,16 +538,13 @@ def facts_for(config, db, repo: str | None, repos: dict) -> object | None:
 
 
 def queue_channels(config, db, slot: str, row, facts) -> None:
-    """Once per slot: the Bluesky / Mastodon / Dev.to / Telegram / Discord versions and HN / Reddit drafts."""
+    """Once per slot: the Bluesky / Mastodon / Dev.to / Telegram / Discord versions."""
     source, repo, angle, body, comment, images_json = row[:6]
     queued = channels.prepare(
         db, config, load_secrets(), slot, repo, angle, body, comment or "", json.loads(images_json or "[]"), facts,
     )
     if queued:
         log.info("Queued %s for %s", ", ".join(channels.LABELS[name] for name in queued), slot)
-    manual = [channels.LABELS[name] for name in queued if name in channels.MANUAL]
-    if manual:
-        notify("ReachPilot", f"{' and '.join(manual)} draft ready for {repo}: see the dashboard to-do list")
 
 
 def publish_channels(config, db) -> None:

@@ -58,12 +58,11 @@ Every LinkedIn slot also goes to the platforms you connect, each cut to fit from
 
 | Platform | What it gets | You need |
 |---|---|---|
-| Bluesky | short post (300 characters), up to 4 screenshots, clickable link | an app password |
+| Bluesky | short post (300 characters), up to 4 screenshots, clickable link | your password once (setup turns it into an app password and stores only that) |
 | Mastodon | short post (500 characters), screenshots | an access token from your instance |
 | Dev.to | an article for launches and releases (max one per project every 60 days), canonical URL back to you | an API key |
 | Telegram | the full post with the first screenshot, in your own channel | a bot token + channel |
 | Discord | the full post with the first screenshot, in your own server | a webhook URL |
-| Hacker News, Reddit | a ready "Show HN" / Reddit draft with a prefilled submit link on the dashboard, once per new project | nothing; you press submit (both ban bots) |
 
 Each platform publishes and retries on its own (3 attempts within 3 days), so one platform failing never blocks
 LinkedIn or the others. X is left out on purpose: its API is pay-per-post. `preview` shows every platform's version.
@@ -154,7 +153,7 @@ and the `?` button explains per module when it runs, what it does by itself and 
 | `github_source.py` | README and commit facts |
 | `visuals.py` | screenshots (Edge, headless) |
 | `linkedin_api.py` | OAuth, images, posts, comments |
-| `channels.py` | Bluesky, Mastodon, Dev.to, Telegram, Discord, HN/Reddit drafts: per-platform cutting, publishing, retries |
+| `channels.py` | Bluesky, Mastodon, Dev.to, Telegram, Discord: per-platform cutting, publishing, retries |
 | `analytics.py` | reach scoring |
 | `trylinks.py` | tracked go-links |
 | `dashboard.py` + `dashboard.html` | local dashboard (restarts itself onto new code) |
