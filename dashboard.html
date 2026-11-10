@@ -407,7 +407,22 @@ function renderReach(d) {
       <td class="num">${num(p.visitors)}</td>
       <td class="num">${num(p.stars)}</td>
       <td class="num">${num(p.try_clicks)}</td>
-      <td>${p.url ? `<a href="${esc(p.url)}" target="_blank" rel="noopener">Open</a>` : ""}</td>
+      <td>${p.url ? `<a href="${esc(p.url)}" target="_blank" rel="noopener">LinkedIn</a>` : ""}${(p.elsewhere || []).map((c) =>
+        c.url && c.status === "posted"
+          ? `<div><a href="${esc(c.url)}" target="_blank" rel="noopener">${esc(c.platform)}</a></div>`
+          : `<div class="badge ${STATUS[c.status] || "grey"}" title="${esc(c.error || "")}">${esc(c.platform)}: ${esc(c.status)}</div>`).join("")}</td>
+    </tr>`).join("");
+  const pl = d.platforms || {rows: [], actions: []};
+  const platformRows = pl.rows.map((r) => `<tr>
+      <td><b>${esc(r.platform)}</b></td>
+      <td class="num">${r.followers == null ? "–" : num(r.followers)}</td>
+      <td class="num">${r.change == null ? "–" : (r.change > 0 ? "+" : "") + num(r.change)}</td>
+      <td class="num">${r.posts == null ? "–" : num(r.posts)}</td>
+      <td class="num">${r.visitors == null ? "–" : num(r.visitors)}</td>
+    </tr>`).join("");
+  const actionRows = pl.actions.map((a) => `<tr>
+      <td>${esc(niceDate(a.at))}</td><td>${esc(a.platform)}</td><td><b>${esc(a.action)}</b>
+      <div class="hint">${/^https?:/.test(a.detail || "") ? `<a href="${esc(a.detail)}" target="_blank" rel="noopener">${esc(a.detail)}</a>` : esc(a.detail || "")}</div></td>
     </tr>`).join("");
   document.getElementById("reach").innerHTML = `
     <div class="grid">
@@ -423,6 +438,17 @@ function renderReach(d) {
       ${d.history.length ? `<div class="scroll" tabindex="0" role="region" aria-label="Scrollable table"><table>
         <thead><tr><th>Slot</th><th>Post</th><th>Status</th><th class="num">Impressions</th><th class="num">Engagements</th><th class="num">GitHub visitors</th><th class="num">Stars</th><th class="num">Try-it clicks</th><th></th></tr></thead>
         <tbody>${rows}</tbody></table></div>` : `<div class="empty">Nothing posted yet. The first post goes out ${esc(o.next_post ? niceDate(o.next_post.slot) : "soon")} WIB.</div>`}
+    </div>
+    <div class="card" style="margin-bottom:18px">
+      <h3>Every platform</h3>
+      <p class="hint">Followers are counted once a day${pl.counted_on ? ` (last: ${esc(pl.counted_on)})` : ""}. GitHub visitors are the last 14 days, as GitHub reports them. LinkedIn does not share follower counts with apps.</p>
+      <div class="scroll" tabindex="0" role="region" aria-label="Scrollable table"><table>
+        <thead><tr><th>Platform</th><th class="num">Followers</th><th class="num">7-day change</th><th class="num">Posts</th><th class="num">GitHub visitors</th></tr></thead>
+        <tbody>${platformRows}</tbody></table></div>
+      <h3 style="margin-top:16px">What ReachPilot changed on your accounts</h3>
+      ${pl.actions.length ? `<div class="scroll" tabindex="0" role="region" aria-label="Scrollable table"><table>
+        <thead><tr><th>When</th><th>Platform</th><th>Change</th></tr></thead>
+        <tbody>${actionRows}</tbody></table></div>` : `<div class="empty">Nothing yet. Profiles, pins and follow-backs show up here.</div>`}
     </div>
     <div class="card">
       <h3>Where reach numbers come from</h3>

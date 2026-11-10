@@ -144,7 +144,7 @@ There is no ReachPilot server and no telemetry.
 
 | Command | What it does |
 |---|---|
-| `dashboard` | opens the local app (127.0.0.1 only): to-do list, schedule with post previews, every post's reach, GitHub visitors, stars, "Try it" clicks, what the bot has learned, and the log. It closes itself after 15 idle minutes. |
+| `dashboard` | opens the local app (127.0.0.1 only): to-do list, schedule with post previews, every post's reach with links to it on each platform, followers and GitHub visitors per platform, what it changed on your accounts, GitHub visitors, stars, "Try it" clicks, what the bot has learned, and the log. It closes itself after 15 idle minutes. |
 | `status` | token expiry, queue, recent posts, best performers, click counts |
 | `preview 5` | write the next 5 posts to `drafts/` without posting |
 | `approve` | in review mode, approve the waiting draft |

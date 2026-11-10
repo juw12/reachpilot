@@ -31,6 +31,8 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS growth_state(key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE IF NOT EXISTS audience(day TEXT, channel TEXT, followers INTEGER, PRIMARY KEY(day, channel));
 CREATE TABLE IF NOT EXISTS growth_log(at TEXT, channel TEXT, action TEXT, detail TEXT);
+CREATE TABLE IF NOT EXISTS github_referrers(day TEXT, platform TEXT, views INTEGER, uniques INTEGER,
+    PRIMARY KEY(day, platform));
 """
 
 

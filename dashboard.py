@@ -24,6 +24,8 @@ from pathlib import Path
 from urllib.parse import parse_qs, quote, urlparse
 
 import analytics
+import channels
+import growth
 import hub
 import selfupdate
 import autopilot as ap
@@ -167,6 +169,13 @@ def forecast(db, config: dict, now: datetime) -> list[dict]:
 
 def history(db) -> list[dict]:
     metrics = {row[0]: row[1:] for row in db.execute("SELECT post_date, impressions, engagements FROM metrics")}
+    elsewhere: dict[str, list[dict]] = {}
+    for slot, channel, status, url, error in db.execute(
+        "SELECT slot, channel, status, url, error FROM channel_posts ORDER BY channel"
+    ):
+        elsewhere.setdefault(slot, []).append({
+            "platform": channels.LABELS.get(channel, channel), "status": status, "url": url, "error": error,
+        })
     github = {(record["repo"], record["date"]): record for record in analytics.github_performance(db)}
     posts = []
     for slot, status, repo, angle, body, url, posted_at, error, attempts in db.execute(
@@ -180,8 +189,53 @@ def history(db) -> list[dict]:
             "hook": first_line(body), "body": body or "", "url": url, "posted_at": posted_at, "error": error,
             "attempts": attempts, "impressions": impressions, "engagements": engagements,
             "visitors": result.get("visitors"), "stars": result.get("stars"), "try_clicks": result.get("try_clicks"),
+            "elsewhere": elsewhere.get(slot, []),
         })
     return posts
+
+
+PLATFORM_ACCOUNTS = {
+    "mastodon": "Mastodon", "bluesky": "Bluesky", "devto": "Dev.to", "telegram": "Telegram",
+    "discord": "Discord", "github": "GitHub",
+}
+
+
+def platforms(db, now: datetime) -> dict:
+    """Followers, posts and GitHub visitors per platform, plus what growth.py changed on the accounts."""
+    growth.ensure_schema(db)
+    week_ago = (now - timedelta(days=7)).strftime("%Y-%m-%d")
+    latest_day = db.execute("SELECT MAX(day) FROM audience").fetchone()[0]
+    latest = dict(db.execute("SELECT channel, followers FROM audience WHERE day=?", (latest_day,)).fetchall())
+    before = dict(db.execute(
+        "SELECT channel, followers FROM audience WHERE day=(SELECT MIN(day) FROM audience WHERE day>=?)", (week_ago,)
+    ).fetchall())
+    posts = dict(db.execute(
+        "SELECT channel, COUNT(*) FROM channel_posts WHERE status='posted' GROUP BY channel"
+    ).fetchall())
+    referrer_day = db.execute("SELECT MAX(day) FROM github_referrers").fetchone()[0]
+    visitors = dict(db.execute(
+        "SELECT platform, uniques FROM github_referrers WHERE day=?", (referrer_day,)
+    ).fetchall())
+    rows = [{
+        "platform": "LinkedIn", "followers": None, "change": None,
+        "posts": db.execute("SELECT COUNT(*) FROM posts WHERE status='posted'").fetchone()[0],
+        "visitors": visitors.get("LinkedIn"),
+    }]
+    for key, label in PLATFORM_ACCOUNTS.items():
+        if key not in latest and key not in posts:
+            continue
+        rows.append({
+            "platform": label, "followers": latest.get(key),
+            "change": latest[key] - before[key] if key in latest and key in before else None,
+            "posts": posts.get(key, 0) if key != "github" else None, "visitors": visitors.get(label),
+        })
+    actions = [
+        {"at": at, "platform": PLATFORM_ACCOUNTS.get(channel, channel), "action": action, "detail": detail}
+        for at, channel, action, detail in db.execute(
+            "SELECT at, channel, action, detail FROM growth_log ORDER BY at DESC LIMIT 20"
+        )
+    ]
+    return {"rows": rows, "actions": actions, "counted_on": latest_day}
 
 
 def github_section(db, now: datetime) -> dict:
@@ -282,6 +336,7 @@ def build_data() -> dict:
             "hub": hub.build(summary),
             "schedule": plan,
             "history": history(db),
+            "platforms": platforms(db, now),
             "github": github_section(db, now),
             "learning": learning(db),
             "log": log_tail(),
