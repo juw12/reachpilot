@@ -392,5 +392,15 @@ finally:
 check(proxy_fetch_ok and len(fetch_calls) == 2 and fetch_calls[0][0] == "fetch",
       "selfupdate: direct fetch timeout falls back to the local proxy")
 
+# LinkedIn: when the comment API is refused, the links go into the post in place of the pointer line
+from linkedin_api import inline_links
+
+intro = "Start building.\n\nPortfolio and GitHub in the first comment.\n\n\\#OpenSource"
+inlined = inline_links(intro, "GitHub: https://github.com/juw12")
+check("first comment" not in inlined and "GitHub: https://github.com/juw12" in inlined
+      and inlined.endswith("\\#OpenSource"), "linkedin: pointer line swapped for the links, hashtags kept")
+no_pointer = inline_links("Just a post.", "GitHub: https://github.com/juw12")
+check(no_pointer == "Just a post.\n\nGitHub: https://github.com/juw12", "linkedin: links appended when there is no pointer line")
+
 print("\nALL PASSED" if not failures else f"\n{len(failures)} FAILED")
 sys.exit(1 if failures else 0)
