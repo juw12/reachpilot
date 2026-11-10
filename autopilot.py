@@ -443,7 +443,11 @@ def refresh_try_links(config, db, repos: dict) -> None:
         return
     code, token = goat
     targets = site_link_targets(config, db, repos)
-    available = trylinks.sync_go_pages(config["github_user"], targets, code, PAGES_CHECKOUT, log)
+    try:
+        available = trylinks.sync_go_pages(config["github_user"], targets, code, PAGES_CHECKOUT, log)
+    except Exception as error:  # a slow or failed git pull must not fail the whole run (and block posting)
+        log.warning("Go-page sync failed, keeping the existing pages: %s", error)
+        available = set()
     if available:
         kv_set(db, "go_pages", json.dumps(sorted(available)))
     for day in ((datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d"), datetime.now().strftime("%Y-%m-%d")):
