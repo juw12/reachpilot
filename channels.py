@@ -19,8 +19,11 @@ import getpass
 import io
 import json
 import re
+import secrets as token_tools
 import urllib.parse
+import webbrowser
 from datetime import datetime, timedelta, timezone
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 import requests
@@ -513,6 +516,85 @@ class Discord:
 CLIENTS = {"bluesky": Bluesky, "mastodon": Mastodon, "devto": DevTo, "telegram": Telegram, "discord": Discord}
 
 
+# ------------------------------------------------------------------ Mastodon: sign in with the browser (no token to copy)
+
+MASTODON_PORT = 8767
+MASTODON_REDIRECT = f"http://127.0.0.1:{MASTODON_PORT}/callback"
+MASTODON_SCOPES = "read:accounts write:statuses write:media"
+
+
+def mastodon_sign_in(instance: str, open_browser=webbrowser.open, wait_seconds: int = 300, trace=None) -> dict:
+    """Register a ReachPilot app on the instance, open its Authorize page, catch the code on localhost, swap it for a token."""
+    base = instance.strip().rstrip("/")
+    base = base if base.startswith("http") else "https://" + base
+    app = _check(requests.post(f"{base}/api/v1/apps", data={
+        "client_name": "ReachPilot",
+        "redirect_uris": MASTODON_REDIRECT,
+        "scopes": MASTODON_SCOPES,
+        "website": "https://github.com/juw12/reachpilot",
+    }, timeout=TIMEOUT), "Mastodon app registration").json()
+    state = token_tools.token_urlsafe(16)
+    received: dict = {}
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            parsed = urllib.parse.urlparse(self.path)
+            query = urllib.parse.parse_qs(parsed.query)
+            if trace:
+                trace(f"GET {parsed.path} keys={sorted(query)}")  # never the values
+            if "code" not in query and "error" not in query:
+                self.send_response(204)  # favicon, pre-connect: ignore quietly
+                self.end_headers()
+                return
+            received.update({key: values[0] for key, values in query.items()})
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.end_headers()
+            self.wfile.write("<h2>ReachPilot is connected to Mastodon. You can close this tab.</h2>".encode())
+
+        def log_message(self, *args):
+            pass
+
+    server = HTTPServer(("127.0.0.1", MASTODON_PORT), Handler)
+    server.timeout = 5
+    authorize_url = f"{base}/oauth/authorize?" + urllib.parse.urlencode({
+        "client_id": app["client_id"],
+        "redirect_uri": MASTODON_REDIRECT,
+        "response_type": "code",
+        "scope": MASTODON_SCOPES,
+        "state": state,
+    })
+    if trace:
+        trace("AUTHORIZE " + authorize_url.split("?")[0])
+    open_browser(authorize_url)
+    deadline = datetime.now() + timedelta(seconds=wait_seconds)
+    while "code" not in received and "error" not in received and datetime.now() < deadline:
+        server.handle_request()
+    server.server_close()
+    if received.get("state") != state or "code" not in received:
+        raise RuntimeError(f"Mastodon sign-in failed: {received.get('error_description') or received.get('error') or 'timed out'}")
+    token = _check(requests.post(f"{base}/oauth/token", data={
+        "grant_type": "authorization_code",
+        "code": received["code"],
+        "client_id": app["client_id"],
+        "client_secret": app["client_secret"],
+        "redirect_uri": MASTODON_REDIRECT,
+        "scope": MASTODON_SCOPES,
+    }, timeout=TIMEOUT), "Mastodon token").json()
+    return {"instance": base, "access_token": token["access_token"]}
+
+
+def save_channel(secrets_path: Path, channel: str, values: dict | None) -> None:
+    """Re-read secrets.json and change only this platform, so other windows or LinkedIn/GoatCounter keys are never lost."""
+    current = json.loads(secrets_path.read_text(encoding="utf-8")) if secrets_path.exists() else {}
+    stored = current.setdefault("channels", {})
+    if values:
+        stored[channel] = values
+    else:
+        stored.pop(channel, None)
+    secrets_path.write_text(json.dumps(current, indent=2), encoding="utf-8")
+
+
 # ------------------------------------------------------------------ one-time setup (python autopilot.py channels)
 
 SETUP = {
@@ -521,9 +603,10 @@ SETUP = {
         "fields": [("handle", "Your handle (e.g. juw12.bsky.social)", False), ("app_password", "App password", True)],
     },
     "mastodon": {
-        "steps": "On your instance: Preferences > Development > New application, scopes read:accounts write:statuses "
-                 "write:media > Submit, then copy 'Your access token'.",
-        "fields": [("instance", "Instance (e.g. fosstodon.org)", False), ("access_token", "Access token", True)],
+        "steps": "Leave the token empty to sign in with your browser (just press Authorize). Or paste a token from "
+                 "Preferences > Development > your app > 'Your access token'.",
+        "fields": [("instance", "Instance (e.g. mastodon.social)", False),
+                   ("access_token", "Access token (Enter = sign in with browser)", True)],
     },
     "devto": {
         "steps": "dev.to > Settings > Extensions > 'DEV Community API Keys' > Generate API key.",
@@ -542,15 +625,14 @@ SETUP = {
 
 
 def setup_interactive(secrets_path: Path) -> None:
-    secrets = json.loads(secrets_path.read_text(encoding="utf-8")) if secrets_path.exists() else {}
-    creds = secrets.setdefault("channels", {})
     print("ReachPilot: connect other platforms (all free). Press Enter to skip one.\n")
     for channel in AUTO:
         label = LABELS[channel]
+        creds = credentials(json.loads(secrets_path.read_text(encoding="utf-8")) if secrets_path.exists() else {})
         state = "connected" if creds.get(channel) else "not connected"
         answer = input(f"{label} ({state}). Set up {'again' if creds.get(channel) else 'now'}? [y/N/r=remove] ").strip().lower()
         if answer == "r":
-            creds.pop(channel, None)
+            save_channel(secrets_path, channel, None)
             print(f"  {label} removed.\n")
             continue
         if answer != "y":
@@ -560,6 +642,13 @@ def setup_interactive(secrets_path: Path) -> None:
         values = {}
         for key, prompt, hidden in SETUP[channel]["fields"]:
             values[key] = (getpass.getpass(f"  {prompt}: ") if hidden else input(f"  {prompt}: ")).strip()
+        if channel == "mastodon" and values.get("instance") and not values.get("access_token"):
+            try:
+                print("  Opening Mastodon in your browser: press Authorize there.")
+                values = mastodon_sign_in(values["instance"])
+            except Exception as error:
+                print(f"  {error}\n")
+                continue
         if not all(values.values()):
             print("  Skipped (empty value).\n")
             continue
@@ -568,10 +657,9 @@ def setup_interactive(secrets_path: Path) -> None:
         except Exception as error:
             print(f"  Could not connect: {error}\n  Nothing saved for {label}.\n")
             continue
-        creds[channel] = values
-        secrets_path.write_text(json.dumps(secrets, indent=2), encoding="utf-8")
+        save_channel(secrets_path, channel, values)
         print(f"  {label} connected as {who}.\n")
-    secrets_path.write_text(json.dumps(secrets, indent=2), encoding="utf-8")
-    ready = [LABELS[channel] for channel in AUTO if creds.get(channel)]
+    final = credentials(json.loads(secrets_path.read_text(encoding="utf-8")) if secrets_path.exists() else {})
+    ready = [LABELS[channel] for channel in AUTO if final.get(channel)]
     print("Posting to: LinkedIn" + "".join(f", {name}" for name in ready))
     print("Hacker News and Reddit drafts appear on the dashboard to-do list for each new project.")
