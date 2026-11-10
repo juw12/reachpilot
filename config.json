@@ -44,5 +44,14 @@
     "#OpenSource",
     "#BuildInPublic"
   ],
+  "channels": [
+    "bluesky",
+    "mastodon",
+    "devto",
+    "telegram",
+    "discord",
+    "hackernews",
+    "reddit"
+  ],
   "goatcounter_code": "juw12"
 }

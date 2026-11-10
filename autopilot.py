@@ -8,7 +8,10 @@ Runs every 30 minutes from Windows Task Scheduler (`autopilot.py install`). Each
        -> recycled project with a fresh angle (Thompson sampling on your engagement data),
   4. never posts near-duplicates, invented numbers, or more than the weekly cap.
 
-Commands:  init | auth | tick | preview [N] | status | install | uninstall
+Each post also goes to the other platforms you connected (channels.py): Bluesky, Mastodon, Dev.to, Telegram, Discord,
+plus Hacker News / Reddit drafts on the dashboard. Each platform publishes and retries on its own.
+
+Commands:  init | auth | channels | tick | preview [N] | status | install | uninstall
 Kill switch: create a file named PAUSE in this folder.
 """
 from __future__ import annotations
@@ -30,6 +33,7 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 
 import analytics  # noqa: E402
+import channels  # noqa: E402
 import composer  # noqa: E402
 import github_source as gh  # noqa: E402
 import trylinks  # noqa: E402
@@ -89,6 +93,7 @@ def connect_db() -> sqlite3.Connection:
         CREATE TABLE IF NOT EXISTS try_clicks(day TEXT, repo TEXT, clicks INTEGER, PRIMARY KEY(day, repo));
         """
     )
+    channels.ensure_schema(db)
     return db
 
 
@@ -412,6 +417,12 @@ def load_token() -> dict | None:
     return json.loads(TOKEN_PATH.read_text(encoding="utf-8"))
 
 
+def load_secrets() -> dict:
+    if not SECRETS_PATH.exists():
+        return {}
+    return json.loads(SECRETS_PATH.read_text(encoding="utf-8"))
+
+
 def site_link_targets(config, db, repos: dict) -> dict[str, str]:
     """Every live-site URL the bot may post: repo homepages + links in the remaining seed queue."""
     user = config["github_user"]
@@ -513,6 +524,43 @@ def publish(config, db, slot, row, token) -> None:
     notify("ReachPilot", f"Posted: {(repo or angle)}")
 
 
+def facts_for(config, db, repo: str | None, repos: dict) -> object | None:
+    """README facts for one repo (Dev.to articles and HN/Reddit drafts need them); None if unavailable."""
+    if not repo:
+        return None
+    if not repos:
+        repos = sync_github(config, db)
+    try:
+        return gh.repo_facts(config["github_user"], repos[repo]) if repo in repos else None
+    except Exception as error:
+        log.warning("Could not read facts for %s: %s", repo, error)
+        return None
+
+
+def queue_channels(config, db, slot: str, row, facts) -> None:
+    """Once per slot: the Bluesky / Mastodon / Dev.to / Telegram / Discord versions and HN / Reddit drafts."""
+    source, repo, angle, body, comment, images_json = row[:6]
+    queued = channels.prepare(
+        db, config, load_secrets(), slot, repo, angle, body, comment or "", json.loads(images_json or "[]"), facts,
+    )
+    if queued:
+        log.info("Queued %s for %s", ", ".join(channels.LABELS[name] for name in queued), slot)
+    manual = [channels.LABELS[name] for name in queued if name in channels.MANUAL]
+    if manual:
+        notify("ReachPilot", f"{' and '.join(manual)} draft ready for {repo}: see the dashboard to-do list")
+
+
+def publish_channels(config, db) -> None:
+    """Publish queued channel posts and retry failed ones (3 attempts within 3 days), independent of LinkedIn."""
+    results = channels.publish_pending(db, load_secrets(), lambda text: track_links(config, db, text), log)
+    posted = [channels.LABELS[name] for name, outcome, _ in results if outcome == "posted"]
+    if posted:
+        notify("ReachPilot", "Also posted to " + ", ".join(posted))
+    for name, outcome, detail in results:
+        if outcome == "failed":
+            notify("ReachPilot", f"{channels.LABELS[name]} post failed 3 times: {detail[:120]}")
+
+
 def tick(config, db) -> None:
     if PAUSE_FLAG.exists():
         log.info("PAUSE file present; doing nothing")
@@ -538,6 +586,7 @@ def tick(config, db) -> None:
     token = token_health(db, now)
 
     if not slot:
+        publish_channels(config, db)
         return
     if posts_this_week(db, now) >= config["max_posts_per_week"]:
         log.info("Weekly cap reached; skipping slot %s", slot)
@@ -546,6 +595,7 @@ def tick(config, db) -> None:
         return
 
     row = db.execute("SELECT source, repo, angle, body, comment, images, status FROM posts WHERE slot=?", (slot,)).fetchone()
+    fresh_facts = None
     if row is None:
         if not repos:
             repos = sync_github(config, db)
@@ -566,6 +616,7 @@ def tick(config, db) -> None:
         db.commit()
         write_draft(slot, choice["body"], choice["comment"], images)
         row = db.execute("SELECT source, repo, angle, body, comment, images, status FROM posts WHERE slot=?", (slot,)).fetchone()
+        fresh_facts = choice["facts"][0] if choice["facts"] and choice["repo"] else None
 
     if config["mode"] == "review":
         approved = DRAFTS / (slot.replace(":", "").replace(" ", "_") + ".approved")
@@ -576,22 +627,33 @@ def tick(config, db) -> None:
                 notify("ReachPilot", f"Draft ready for {slot}. Approve: python autopilot.py approve")
             return
 
-    if token is None:
-        return
     try:
-        publish(config, db, slot, row[:6], token)
-    except Exception as error:
-        db.execute("UPDATE posts SET status='failed', attempts=attempts+1, error=? WHERE slot=?", (str(error)[:500], slot))
-        db.commit()
-        log.error("Posting failed for %s: %s", slot, error)
-        notify("ReachPilot", f"Posting failed, will retry: {str(error)[:120]}")
+        queue_channels(config, db, slot, row, fresh_facts or facts_for(config, db, row[1], repos))
+    except Exception as error:  # other platforms must never block LinkedIn
+        log.exception("Preparing other platforms failed for %s: %s", slot, error)
+
+    if token is not None:
+        try:
+            publish(config, db, slot, row[:6], token)
+        except Exception as error:
+            db.execute("UPDATE posts SET status='failed', attempts=attempts+1, error=? WHERE slot=?", (str(error)[:500], slot))
+            db.commit()
+            log.error("Posting failed for %s: %s", slot, error)
+            notify("ReachPilot", f"Posting failed, will retry: {str(error)[:120]}")
+    publish_channels(config, db)
 
 
-def write_draft(slot: str, body: str, comment: str, images: list[str]) -> Path:
+def write_draft(slot: str, body: str, comment: str, images: list[str], variants: dict | None = None) -> Path:
     DRAFTS.mkdir(exist_ok=True)
     path = DRAFTS / (slot.replace(":", "").replace(" ", "_") + ".md")
     image_lines = "\n".join(f"- {image}" for image in images)
-    path.write_text(f"# Slot {slot}\n\n{body}\n\n## First comment\n\n{comment}\n\n## Images\n\n{image_lines}\n", encoding="utf-8")
+    text = f"# Slot {slot}\n\n{body}\n\n## First comment\n\n{comment}\n\n## Images\n\n{image_lines}\n"
+    for channel, variant in (variants or {}).items():
+        heading = channels.LABELS[channel] + (f": {variant['title']}" if variant["title"] else "")
+        text += f"\n## {heading} ({len(variant['body'])} chars)\n\n{variant['body']}\n"
+        if variant["extra"].get("submit_url"):
+            text += f"\nSubmit: {variant['extra']['submit_url']}\n"
+    path.write_text(text, encoding="utf-8")
     return path
 
 
@@ -623,6 +685,10 @@ def cmd_auth() -> None:
     print(f"Connected as {token['name']}. Token valid for {days:.0f} days.")
 
 
+def cmd_channels() -> None:
+    channels.setup_interactive(SECRETS_PATH)
+
+
 def cmd_preview(config, db, count: int) -> None:
     """Generate the next N non-queue posts as drafts (nothing is posted or consumed)."""
     repos = sync_github(config, db)
@@ -641,7 +707,9 @@ def cmd_preview(config, db, count: int) -> None:
             picker.simulated_recent.add(choice["repo"])
         slot = f"preview-{index + 1:02d}"
         images = build_images(config, choice, slot)
-        path = write_draft(slot, choice["body"], choice["comment"], images)
+        facts = choice["facts"][0] if choice["facts"] and choice["repo"] else None
+        variants = channels.build_variants(choice["body"], choice["comment"], choice["angle"], facts, channels.enabled(config))
+        path = write_draft(slot, choice["body"], choice["comment"], images, variants)
         print(f"{slot}: {choice['repo']} / {choice['angle']} ({choice['source']}) -> {path}")
     for (event_id,) in savepoint_events:
         db.execute("UPDATE events SET consumed=0 WHERE id=?", (event_id,))
@@ -679,6 +747,14 @@ def cmd_status(config, db) -> None:
         print("'Try it' clicks, last 30 days: " + (", ".join(f"{name} {count}" for name, count in rows) or "none yet"))
     else:
         print("'Try it' click tracking: off (run: python autopilot.py goatcounter)")
+    creds = channels.credentials(load_secrets())
+    print("Other platforms: " + ", ".join(
+        f"{channels.LABELS[name]} {'on' if creds.get(name) else 'off'}" for name in channels.AUTO if name in channels.enabled(config)
+    ) + "   (connect: python autopilot.py channels)")
+    for slot, channel, status, url, error in db.execute(
+        "SELECT slot, channel, status, url, error FROM channel_posts ORDER BY created_at DESC LIMIT 8"
+    ):
+        print(f"  {slot}  {channels.LABELS[channel]:<12} {status:<8} {url or (error or '')[:80]}")
 
 
 def cmd_approve(db) -> None:
@@ -736,7 +812,7 @@ def cmd_uninstall() -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("command", choices=["init", "auth", "goatcounter", "tick", "preview", "status", "approve", "install", "uninstall", "dashboard"])
+    parser.add_argument("command", choices=["init", "auth", "channels", "goatcounter", "tick", "preview", "status", "approve", "install", "uninstall", "dashboard"])
     parser.add_argument("count", nargs="?", type=int, default=3)
     args = parser.parse_args()
     setup_logging()
@@ -744,6 +820,9 @@ def main() -> None:
 
     if args.command == "auth":
         cmd_auth()
+        return
+    if args.command == "channels":
+        cmd_channels()
         return
     if args.command == "goatcounter":
         cmd_goatcounter(config)

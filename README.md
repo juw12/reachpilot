@@ -51,6 +51,23 @@ Every 30 minutes, Windows Task Scheduler runs one pass:
 It also repairs garbled characters in READMEs (text saved in the wrong encoding), skips install/run steps when picking
 feature bullets, and puts links in the first comment.
 
+### Other platforms (free, official APIs)
+
+Every LinkedIn slot also goes to the platforms you connect, each cut to fit from the same fact-checked post
+(a platform can shorten a post, never add a claim):
+
+| Platform | What it gets | You need |
+|---|---|---|
+| Bluesky | short post (300 characters), up to 4 screenshots, clickable link | an app password |
+| Mastodon | short post (500 characters), screenshots | an access token from your instance |
+| Dev.to | an article for launches and releases (max one per project every 60 days), canonical URL back to you | an API key |
+| Telegram | the full post with the first screenshot, in your own channel | a bot token + channel |
+| Discord | the full post with the first screenshot, in your own server | a webhook URL |
+| Hacker News, Reddit | a ready "Show HN" / Reddit draft with a prefilled submit link on the dashboard, once per new project | nothing; you press submit (both ban bots) |
+
+Each platform publishes and retries on its own (3 attempts within 3 days), so one platform failing never blocks
+LinkedIn or the others. X is left out on purpose: its API is pay-per-post. `preview` shows every platform's version.
+
 ## What it deliberately doesn't do
 
 - No browser automation, scraping, auto-likes or auto-comments on other people's posts. Only the official
@@ -73,6 +90,7 @@ python autopilot.py init             # baseline your repos (+ optional seed_queu
 python autopilot.py auth             # LinkedIn app with "Share on LinkedIn" + "Sign In with LinkedIn (OpenID)",
                                      # redirect URL http://localhost:8765/callback
 python autopilot.py preview 5        # first result: the next 5 posts as drafts in drafts/, nothing is posted
+python autopilot.py channels         # optional: connect Bluesky, Mastodon, Dev.to, Telegram, Discord (each verified)
 python autopilot.py goatcounter      # optional: free GoatCounter site + token for "Try it" clicks
 python autopilot.py install          # scheduled task \ReachPilot\LinkedIn posts: every 30 min + at sign-in
 python selfupdate.py install         # optional: task \ReachPilot\Updates keeps the code current (fast-forward only)
@@ -100,6 +118,7 @@ the dashboard and a Windows notification remind you a week before.
 |---|---|---|
 | GitHub | find repos, READMEs, commits, traffic | read-only requests through `gh` (public API as fallback) |
 | LinkedIn | publish and measure posts | the post text, images and the first comment with links |
+| Bluesky, Mastodon, Dev.to, Telegram, Discord (only those you connect) | publish the cut-down post | the post text, screenshots and links |
 | GoatCounter (optional) | count "Try it" clicks | a page view when someone opens a tracked go-link |
 | Ollama (optional, local) | rephrase a post | nothing leaves your PC |
 
@@ -135,6 +154,7 @@ and the `?` button explains per module when it runs, what it does by itself and 
 | `github_source.py` | README and commit facts |
 | `visuals.py` | screenshots (Edge, headless) |
 | `linkedin_api.py` | OAuth, images, posts, comments |
+| `channels.py` | Bluesky, Mastodon, Dev.to, Telegram, Discord, HN/Reddit drafts: per-platform cutting, publishing, retries |
 | `analytics.py` | reach scoring |
 | `trylinks.py` | tracked go-links |
 | `dashboard.py` + `dashboard.html` | local dashboard (restarts itself onto new code) |

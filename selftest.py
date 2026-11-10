@@ -171,5 +171,120 @@ with tempfile.TemporaryDirectory() as temp_dir:
     finally:
         autopilot.DB_PATH, autopilot.SECRETS_PATH, autopilot.TOKEN_PATH = real_paths
 
+# Other platforms: variants fit each limit, never add facts, publish/retry on their own
+import logging  # noqa: E402
+
+import channels  # noqa: E402
+import hub  # noqa: E402
+
+facts = gh.RepoFacts(
+    name="watt-reserve", description="Plan home battery backup for blackouts, offline.",
+    html_url="https://github.com/juw12/watt-reserve", homepage="https://juw12.github.io/watt-reserve/",
+    topics=["offline-first", "pwa", "energy"], language="TypeScript", pushed_at="2026-11-01T00:00:00Z", license="MIT",
+    tagline="Know how long your battery lasts.", title="Watt Reserve",
+    bullets=["Adds up every appliance you choose", "Shows runtime for 3 battery sizes", "Works offline as an installable app",
+             "Exports the plan as a printable page"],
+    readme_images=["https://raw.githubusercontent.com/juw12/watt-reserve/main/shot.png"], has_ci=True,
+)
+post_body = composer.compose_launch(facts, random.Random(3), set(), True) + "\n\n#OpenSource #BuildInPublic #PWA"
+post_comment = composer.links_for(facts)
+paragraphs, tags, parsed_links = channels.split_post(post_body, post_comment)
+check(not any(channels.COMMENT_POINTER.search(part) for part in paragraphs), "channels: 'links in the comment' pointers removed")
+check(tags == ["#OpenSource", "#BuildInPublic", "#PWA"], f"channels: hashtag line split off ({tags})")
+check(parsed_links[0] == ("Try it", "https://juw12.github.io/watt-reserve/"), f"channels: links parsed ({parsed_links[:1]})")
+variants = channels.build_variants(post_body, post_comment, "launch", facts)
+limits = {"bluesky": 300, "mastodon": 500, "telegram": 1024, "discord": 2000}
+for name, limit in limits.items():
+    size = len(variants.get(name, {}).get("body", ""))
+    check(name in variants and size <= limit, f"channels: {name} fits {limit} chars ({size})")
+    check("juw12.github.io/watt-reserve" in variants[name]["body"], f"channels: {name} carries the link")
+check(set(variants) == set(channels.ALL), f"channels: a launch gets every platform ({sorted(variants)})")
+check(variants["devto"]["extra"]["canonical_url"] == facts.homepage and "## What else it does" in variants["devto"]["body"]
+      and variants["devto"]["extra"]["tags"][:2] == ["offlinefirst", "pwa"], "channels: Dev.to article has canonical URL, features, tags")
+hn = variants["hackernews"]
+check(hn["title"].startswith("Show HN: Watt Reserve") and len(hn["title"]) <= 80
+      and hn["extra"]["submit_url"].startswith("https://news.ycombinator.com/submitlink?u="), f"channels: Show HN draft ({hn['title']})")
+recycle_variants = channels.build_variants(post_body, post_comment, "deep_dive", facts)
+check("devto" not in recycle_variants and "hackernews" not in recycle_variants, "channels: recycled angles skip Dev.to and HN/Reddit")
+long_intro = "By day I build hardware. " * 30 + "\n\nSecond paragraph.\n\nPortfolio and GitHub in the first comment.\n\n#OpenSource"
+short = channels.short_post(long_intro, "GitHub: https://github.com/juw12", 300, 1, 2, labelled=False)
+check(len(short) <= 300 and short.endswith("#OpenSource") and "https://github.com/juw12" in short and "first comment" not in short,
+      "channels: an over-long first paragraph is shortened, link and tags kept")
+facet_text = "One detail → see https://juw12.github.io/x/ #OpenSource"
+facets = channels.bluesky_facets(facet_text)
+encoded = facet_text.encode("utf-8")
+link_facet = next(facet for facet in facets if facet["features"][0]["$type"].endswith("#link"))
+tag_facet = next(facet for facet in facets if facet["features"][0]["$type"].endswith("#tag"))
+check(encoded[link_facet["index"]["byteStart"]:link_facet["index"]["byteEnd"]] == b"https://juw12.github.io/x/",
+      "channels: Bluesky link facet uses UTF-8 byte offsets")
+check(encoded[tag_facet["index"]["byteStart"]:tag_facet["index"]["byteEnd"]] == b"#OpenSource", "channels: Bluesky hashtag facet")
+
+with tempfile.TemporaryDirectory() as temp_dir:
+    from PIL import Image as PILImage
+
+    noisy = PILImage.effect_noise((2600, 1600), 90).convert("RGB")
+    big_png = Path(temp_dir) / "big_screenshot.png"
+    noisy.save(big_png)
+    data, width, height = channels.jpeg(big_png, 950_000)
+    check(len(data) <= 950_000 and max(width, height) <= 2000, f"channels: screenshots re-encoded under Bluesky's limit ({len(data)} bytes)")
+
+    channel_db = sqlite3.connect(":memory:")
+    channel_config = {"channels": channels.ALL}
+    channel_secrets = {"channels": {"bluesky": {"handle": "x", "app_password": "y"}, "mastodon": {"instance": "m", "access_token": "t"}}}
+    queued = channels.prepare(channel_db, channel_config, channel_secrets, "2026-11-11 08:00", "watt-reserve", "launch",
+                              post_body, post_comment, [str(big_png)], facts)
+    check(sorted(queued) == ["bluesky", "hackernews", "mastodon", "reddit"], f"channels: only connected platforms + drafts queued ({queued})")
+    again = channels.prepare(channel_db, channel_config, channel_secrets, "2026-11-11 08:00", "watt-reserve", "launch",
+                             post_body, post_comment, [str(big_png)], facts)
+    later = channels.prepare(channel_db, channel_config, channel_secrets, "2026-11-25 08:00", "watt-reserve", "launch",
+                             post_body + " again", post_comment, [], facts)
+    check(again == [] and "hackernews" not in later and "bluesky" in later, "channels: queued once per slot; HN/Reddit once per project")
+
+    calls = []
+
+    class FakeClient:
+        fail = {"mastodon"}
+
+        def __init__(self, creds):
+            self.creds = creds
+
+        def publish(self, text, title, images, link, extra, idempotency_key):
+            channel = "mastodon" if "instance" in self.creds else "bluesky"
+            calls.append((channel, len(images), idempotency_key))
+            if channel in self.fail:
+                raise RuntimeError("HTTP 503")
+            return f"https://example.test/{channel}"
+
+    real_clients = dict(channels.CLIENTS)
+    channels.CLIENTS.update({"bluesky": FakeClient, "mastodon": FakeClient})
+    quiet = logging.getLogger("selftest-channels")
+    quiet.addHandler(logging.NullHandler())
+    quiet.propagate = False
+    try:
+        for _ in range(5):
+            channels.publish_pending(channel_db, channel_secrets, lambda text: text, quiet)
+    finally:
+        channels.CLIENTS.clear()
+        channels.CLIENTS.update(real_clients)
+    statuses = {
+        (slot, channel): (status, attempts)
+        for slot, channel, status, attempts in channel_db.execute("SELECT slot, channel, status, attempts FROM channel_posts")
+    }
+    check(statuses[("2026-11-11 08:00", "bluesky")] == ("posted", 0), "channels: Bluesky posted")
+    check(sum(1 for call in calls if call[0] == "bluesky" and "2026-11-11" in call[2]) == 1, "channels: a posted platform is never re-posted")
+    check(statuses[("2026-11-11 08:00", "mastodon")] == ("failed", channels.MAX_ATTEMPTS),
+          f"channels: a failing platform stops after {channels.MAX_ATTEMPTS} tries ({statuses[('2026-11-11 08:00', 'mastodon')]})")
+    check(statuses[("2026-11-11 08:00", "hackernews")][0] == "manual", "channels: HN stays a manual draft (never auto-posted)")
+    check(any(call[1] == 1 for call in calls if call[0] == "bluesky"), "channels: screenshot attached")
+
+todo = hub.channels_todo({
+    "not_connected": ["Bluesky"],
+    "manual": [{"slot": "2026-11-11 08:00", "channel": "Hacker News", "repo": "watt-reserve", "title": "Show HN: x",
+                "url": "https://news.ycombinator.com/submitlink?u=a"}],
+    "failed": [{"slot": "2026-11-11 08:00", "channel": "Mastodon", "error": "HTTP 503"}],
+})
+check([item["action"] for item in todo] == ["channels_setup", "channels_done:2026-11-11 08:00", "channels_setup"]
+      and todo[1]["links"][0]["url"].startswith("https://news.ycombinator.com/"), "hub: platform to-dos (connect, share drafts, failures)")
+
 print("\nALL PASSED" if not failures else f"\n{len(failures)} FAILED")
 sys.exit(1 if failures else 0)

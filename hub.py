@@ -6,6 +6,9 @@ Modules live in modules/ (git-ignored, personal data) and keep running on their 
   job_digest   daily digest + Gmail relay credentials used by email_apply
   promote      creator / UGC outreach e-mails for the GitHub projects (modules/promote/promote.py)
 
+Other platforms (Bluesky, Mastodon, Dev.to, Telegram, Discord, HN / Reddit drafts) are part of the public code
+(channels.py); channels_section() reads their state from state.db.
+
 This file only reads their files, builds the "what I need from you" list, and runs a short whitelist of actions.
 Every reader is defensive: a missing or half-written file shows as "not set up" instead of breaking the dashboard.
 """
@@ -474,7 +477,94 @@ def daily_stats(sections: dict) -> list[dict]:
         _sqlite_by_day(ROOT / "state.db", "select substr(slot,1,10), count(*) from posts where status='posted' group by 1"),
         None, "3 a week (Tue/Wed/Thu)", "Posting days are fixed, so most days show 0.",
     ))
+    if sections.get("channels", {}).get("connected"):
+        rows.append(_daily_row(
+            "Other platforms", "linkedin", "Posts on other platforms",
+            _sqlite_by_day(ROOT / "state.db",
+                           "select substr(posted_at,1,10), count(*) from channel_posts where status='posted' group by 1"),
+            None, "same days as LinkedIn", "One per connected platform for each LinkedIn slot.",
+        ))
     return rows
+
+
+# ------------------------------------------------------------------ other platforms (channels.py)
+
+def channels_section() -> dict:
+    import channels
+    import sqlite3
+
+    config = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
+    secrets_file = ROOT / "secrets.json"
+    secrets = json.loads(secrets_file.read_text(encoding="utf-8")) if secrets_file.exists() else {}
+    creds = channels.credentials(secrets)
+    automatic = [name for name in channels.AUTO if name in channels.enabled(config)]
+    section = {
+        "connected": [channels.LABELS[name] for name in automatic if creds.get(name)],
+        "not_connected": [channels.LABELS[name] for name in automatic if not creds.get(name)],
+        "manual": [],
+        "failed": [],
+        "recent": [],
+    }
+    db_file = ROOT / "state.db"
+    if not db_file.exists():
+        return section
+    try:
+        connection = sqlite3.connect(f"file:{db_file}?mode=ro", uri=True, timeout=3)
+        try:
+            exists = connection.execute("select 1 from sqlite_master where name='channel_posts'").fetchone()
+            if not exists:
+                return section
+            for slot, channel, repo, title, url in connection.execute(
+                "select slot, channel, repo, title, url from channel_posts where status='manual' order by created_at"
+            ):
+                section["manual"].append({"slot": slot, "channel": channels.LABELS[channel], "repo": repo, "title": title, "url": url})
+            for slot, channel, error in connection.execute(
+                f"select slot, channel, error from channel_posts where status='failed' and attempts>={channels.MAX_ATTEMPTS} "
+                "and created_at >= date('now', '-14 day')"
+            ):
+                section["failed"].append({"slot": slot, "channel": channels.LABELS[channel], "error": (error or "")[:200]})
+            for slot, channel, status, url in connection.execute(
+                "select slot, channel, status, url from channel_posts where status in ('posted','ready','failed') "
+                "order by created_at desc limit 20"
+            ):
+                section["recent"].append({"slot": slot, "channel": channels.LABELS[channel], "status": status, "url": url})
+        finally:
+            connection.close()
+    except sqlite3.Error:
+        pass
+    return section
+
+
+def channels_todo(section: dict) -> list[dict]:
+    items = []
+    if section.get("not_connected"):
+        items.append({
+            "priority": 3, "module": "Platforms",
+            "title": "Connect " + ", ".join(section["not_connected"]),
+            "detail": "Free, official APIs. Each post then also goes out there, cut to fit. About 2 minutes per platform.",
+            "action": "channels_setup", "action_label": "Connect platforms", "links": [],
+        })
+    by_slot: dict[str, list[dict]] = {}
+    for draft in section.get("manual", []):
+        by_slot.setdefault(draft["slot"], []).append(draft)
+    for slot, drafts in by_slot.items():
+        repo = drafts[0]["repo"] or "this project"
+        items.append({
+            "priority": 2, "module": "Platforms",
+            "title": f"Share {repo} on " + " and ".join(draft["channel"] for draft in drafts),
+            "detail": "These sites don't allow bots, so the title and link are prefilled: open, check, press submit. "
+                      "On Reddit, pick a subreddit that welcomes self-made projects. Mark done afterwards.",
+            "action": f"channels_done:{slot}", "action_label": "Mark done",
+            "links": [{"label": f"{draft['channel']}: {draft['title']}", "url": draft["url"]} for draft in drafts],
+        })
+    for failure in section.get("failed", []):
+        items.append({
+            "priority": 2, "module": "Platforms",
+            "title": f"{failure['channel']} post failed ({failure['slot']})",
+            "detail": f"Tried 3 times. Last error: {failure['error']}",
+            "action": "channels_setup", "action_label": "Check connection", "links": [],
+        })
+    return items
 
 
 # ------------------------------------------------------------------ what I need from you
@@ -561,6 +651,11 @@ def help_sections(tasks: dict) -> list[dict]:
         {"module": "LinkedIn", "runs": "Every 30 minutes; posts Tue/Wed/Thu 08:00. " + when("linkedin", ""),
          "auto": "Picks a project, writes the post from real README facts, adds screenshots, posts through the official API, learns from clicks and stars.",
          "you": "Renew the LinkedIn login every 60 days (you get a reminder here and a Windows notification)."},
+        {"module": "Platforms", "runs": "With every LinkedIn slot (same task, same days).",
+         "auto": "Cuts each post to fit Bluesky (300 characters) and Mastodon (500), sends the full post to your Telegram channel and Discord "
+                 "server, publishes a Dev.to article for launches and releases (at most one per project every 60 days), and writes "
+                 "a Show HN and Reddit draft once per new project. Each platform retries on its own up to 3 times.",
+         "you": "Connect the platforms once (Connect platforms). For Hacker News and Reddit, press submit on the prefilled page; those sites ban bots."},
         {"module": "Jobs", "runs": "Searches company job boards at 07:30 and 12:30. " + when("jobs", ""),
          "auto": "Finds roles that fit your CV (37 companies, SEA/TW/CN), scores them, writes cover letters, keeps the tracker. The apply session fills each form for you.",
          "you": "Open the apply session, glance at each form, press Submit and type an e-mailed code if a site asks. Sites with a human check never get submitted by the bot."},
@@ -627,6 +722,21 @@ def run_action(name: str) -> str:
             return "LinkedIn posting resumed."
         ap.PAUSE_FLAG.write_text("paused from ReachPilot dashboard")
         return "LinkedIn posting paused."
+    if name == "channels_setup":
+        _console([str(PYTHON), "autopilot.py", "channels"], ROOT)
+        return "A window opened to connect Bluesky, Mastodon, Dev.to, Telegram and Discord."
+    if name.startswith("channels_done:"):
+        slot = name.partition(":")[2]
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}", slot):
+            raise ValueError(f"Unknown action: {name}")
+        db = ap.connect_db()
+        try:
+            db.execute("UPDATE channel_posts SET status='done', posted_at=? WHERE slot=? AND status='manual'",
+                       (datetime.now().strftime("%Y-%m-%d %H:%M"), slot))
+            db.commit()
+        finally:
+            db.close()
+        return "Marked as shared."
     if name == "open_modules":
         os.startfile(MODULES)
         return "Modules folder opened."
@@ -640,7 +750,8 @@ def run_action(name: str) -> str:
 def build(linkedin_overview: dict | None) -> dict:
     tasks = task_status()
     sections = {}
-    for key, reader in (("jobs", jobs_section), ("email", email_section), ("promote", promote_section)):
+    for key, reader in (("jobs", jobs_section), ("email", email_section), ("promote", promote_section),
+                        ("channels", channels_section)):
         try:
             sections[key] = reader()
         except Exception as error:  # one broken module must not take the dashboard down
@@ -655,7 +766,8 @@ def build(linkedin_overview: dict | None) -> dict:
         "daily": daily,
         "tasks": tasks,
         "todo": sorted(
-            todo_items(linkedin_overview, sections["jobs"], sections["email"], tasks) + sections["promote"].get("todo", []),
+            todo_items(linkedin_overview, sections["jobs"], sections["email"], tasks) + sections["promote"].get("todo", [])
+            + channels_todo(sections["channels"]),
             key=lambda item: item["priority"],
         ),
         "help": help_sections(tasks),
