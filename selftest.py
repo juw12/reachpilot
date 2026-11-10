@@ -370,5 +370,27 @@ if Path(node).exists():
 else:
     print("Skipping dashboard script check (Node not installed)")
 
+# Self-updater: a failed direct fetch is retried through the fallback proxy; a timeout does not crash it
+import subprocess as _subprocess
+import selfupdate
+fetch_calls = []
+
+
+def fake_git(*args, cwd=None, timeout=None):
+    fetch_calls.append(args)
+    if "http.proxy=http://localhost:3128" in args:
+        return _subprocess.CompletedProcess(args, 0, "", "")
+    raise _subprocess.TimeoutExpired("git fetch", timeout)
+
+
+real_git = selfupdate.git
+selfupdate.git = fake_git
+try:
+    proxy_fetch_ok = selfupdate.fetch_main(Path("."))
+finally:
+    selfupdate.git = real_git
+check(proxy_fetch_ok and len(fetch_calls) == 2 and fetch_calls[0][0] == "fetch",
+      "selfupdate: direct fetch timeout falls back to the local proxy")
+
 print("\nALL PASSED" if not failures else f"\n{len(failures)} FAILED")
 sys.exit(1 if failures else 0)
