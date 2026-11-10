@@ -335,5 +335,20 @@ real_profile = json.loads((Path(__file__).parent / "config.json").read_text(enco
 check(len(real_profile.get("bio_short", "")) <= 256 and len(real_profile.get("bio_long", "")) <= 500
       and "github.com/juw12" in real_profile.get("bio_short", ""), "growth: bios fit Bluesky 256 / Mastodon 500 and link GitHub")
 
+check(growth.missing_socials(["https://dev.to/x", "https://bsky.app/profile/x/"], ["https://DEV.to/x/"])
+      == ["https://bsky.app/profile/x/"], "growth: only missing GitHub profile links are added")
+growth_db = sqlite3.connect(":memory:")
+growth_db.executescript(channels.SCHEMA)
+quiet_growth = logging.getLogger("selftest-growth")
+quiet_growth.addHandler(logging.NullHandler())
+quiet_growth.propagate = False
+growth_summary = growth.run_daily(growth_db, {"github_user": "x", "profile": {"bio_short": "b"}}, {},
+                                  lambda path: {"followers": 7} if path == "users/x" else None, quiet_growth)
+growth.record(growth_db, "mastodon", "Profile updated", "bio")
+check(growth_summary["followers"] == {"github": 7}
+      and growth_db.execute("select followers from audience where channel='github'").fetchone()[0] == 7
+      and growth_db.execute("select count(*) from growth_log").fetchone()[0] == 1,
+      "growth: daily pass records follower counts and the action log")
+
 print("\nALL PASSED" if not failures else f"\n{len(failures)} FAILED")
 sys.exit(1 if failures else 0)

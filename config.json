@@ -66,6 +66,11 @@
       "OpenSource",
       "BuildInPublic",
       "Python"
+    ],
+    "socials": [
+      "https://mastodon.social/@juw12",
+      "https://bsky.app/profile/juw12.bsky.social",
+      "https://dev.to/juw12"
     ]
   }
 }

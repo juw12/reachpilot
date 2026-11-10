@@ -74,8 +74,13 @@ Once a day `growth.py` grows the audience and points all of it at GitHub:
   changes, so edits you make in the apps stay.
 - **Pinned intro:** the first post on Mastodon and Bluesky is pinned to the profile.
 - **Follow back:** new followers on Mastodon and Bluesky, at most 25 a day each, bots skipped.
+- **GitHub profile:** your Mastodon, Bluesky and Dev.to accounts are listed on your GitHub profile (`socials` in
+  the `profile` block), using the GitHub login Git already stores. GitHub marks those links `rel="me"`, which
+  gives the GitHub link on your Mastodon profile a verified tick.
 - **Measured:** follower counts per platform, and the GitHub visitors that came from LinkedIn, Mastodon,
   Bluesky and Dev.to (repo traffic API). Both show on the dashboard's daily table.
+- **Recorded:** every change it makes is written to `growth_log` in `state.db` and counted on the dashboard
+  ("Growth actions"), with details in the log file.
 
 It never follows, likes or replies to strangers automatically: Mastodon instances and Bluesky treat that as spam.
 

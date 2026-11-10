@@ -495,6 +495,11 @@ def daily_stats(sections: dict) -> list[dict]:
                        "where platform in ('LinkedIn','Mastodon','Bluesky','Dev.to') group by 1"),
         None, "", "Unique visitors GitHub says came from LinkedIn, Mastodon, Bluesky and Dev.to.",
     ))
+    rows.append(_daily_row(
+        "Audience", "linkedin", "Growth actions (profiles, pins, follow-backs, GitHub links)",
+        _sqlite_by_day(ROOT / "state.db", "select substr(at,1,10), count(*) from growth_log group by 1"),
+        None, "", "Every change growth.py makes on your accounts; details in the growth_log table and the log file.",
+    ))
     return rows
 
 
@@ -647,7 +652,9 @@ def help_sections(tasks: dict) -> list[dict]:
         {"module": "Platforms", "runs": "With every LinkedIn slot (same task, same days).",
          "auto": "Cuts each post to fit Bluesky (300 characters) and Mastodon (500), sends the full post to your Telegram channel and Discord "
                  "server, and publishes a Dev.to article for launches and releases (at most one per project every 60 days). "
-                 "Each platform retries on its own up to 3 times.",
+                 "Each platform retries on its own up to 3 times. Once a day it also keeps your Mastodon and Bluesky "
+                 "bios and pinned intro pointing at GitHub, follows back new followers (25 a day each), lists your "
+                 "accounts on your GitHub profile, and counts followers and GitHub visitors per platform.",
          "you": "Connect the platforms once (Connect platforms). Nothing else."},
         {"module": "Jobs", "runs": "Searches company job boards at 07:30 and 12:30. " + when("jobs", ""),
          "auto": "Finds roles that fit your CV (37 companies, SEA/TW/CN), scores them, writes cover letters, keeps the tracker. The apply session fills each form for you.",

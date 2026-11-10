@@ -6,6 +6,9 @@ What it does (official APIs only, nothing that looks like a spam bot):
   pin         the first post on Mastodon and Bluesky is pinned to the profile (the intro that links to GitHub).
   follow back new followers on Mastodon and Bluesky, at most FOLLOW_BACK_CAP a day each.
   audience    follower counts per platform (Mastodon, Bluesky, Dev.to, GitHub) saved daily for the dashboard.
+  github      the Mastodon / Bluesky / Dev.to accounts listed on the GitHub profile (profile "socials"), using the
+              GitHub login Git already stores; only when that list changes.
+Every action is written to growth_log, which the dashboard shows.
 
 Not done on purpose: following or liking strangers' posts automatically. Both Mastodon instances and Bluesky
 treat that as spam and can suspend the account.
@@ -27,6 +30,7 @@ TIMEOUT = 60
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS growth_state(key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE IF NOT EXISTS audience(day TEXT, channel TEXT, followers INTEGER, PRIMARY KEY(day, channel));
+CREATE TABLE IF NOT EXISTS growth_log(at TEXT, channel TEXT, action TEXT, detail TEXT);
 """
 
 
@@ -41,6 +45,13 @@ def _state(db, key, default=None):
 
 def _set_state(db, key, value) -> None:
     db.execute("INSERT OR REPLACE INTO growth_state(key, value) VALUES(?, ?)", (key, str(value)))
+    db.commit()
+
+
+def record(db, channel: str, action: str, detail: str = "") -> None:
+    """One line in the dashboard's growth history."""
+    db.execute("INSERT INTO growth_log(at, channel, action, detail) VALUES(?,?,?,?)",
+               (datetime.now().strftime("%Y-%m-%d %H:%M"), channel, action, detail[:300]))
     db.commit()
 
 
@@ -182,6 +193,45 @@ class BlueskyGrowth:
 GROWERS = {"mastodon": MastodonGrowth, "bluesky": BlueskyGrowth}
 
 
+# ------------------------------------------------------------------ GitHub profile links
+
+def github_token() -> str:
+    """The GitHub login Git already keeps (Git Credential Manager). Never printed or stored by ReachPilot."""
+    import os
+    import subprocess
+
+    from trylinks import _git_exe
+
+    result = subprocess.run(
+        [_git_exe(), "credential", "fill"], input="protocol=https\nhost=github.com\n\n",
+        capture_output=True, text=True, timeout=60, creationflags=0x08000000,
+        env={**os.environ, "GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never"},
+    )
+    fields = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
+    return fields.get("password", "")
+
+
+def missing_socials(wanted: list[str], existing: list[str]) -> list[str]:
+    """Links not yet on the GitHub profile (trailing slashes ignored). Pure (tested)."""
+    have = {url.rstrip("/").lower() for url in existing}
+    return [url for url in wanted if url.rstrip("/").lower() not in have]
+
+
+def sync_github_socials(socials: list[str]) -> list[str]:
+    """Add any missing links to the GitHub profile's social accounts. Returns the links added."""
+    token = github_token()
+    if not token:
+        raise RuntimeError("no GitHub login stored by Git")
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"}
+    current = _check(requests.get("https://api.github.com/user/social_accounts", headers=headers, timeout=TIMEOUT),
+                     "GitHub social accounts").json()
+    missing = missing_socials(socials, [account["url"] for account in current])
+    if missing:
+        _check(requests.post("https://api.github.com/user/social_accounts", headers=headers,
+                             json={"account_urls": missing}, timeout=TIMEOUT), "GitHub add social accounts")
+    return missing
+
+
 # ------------------------------------------------------------------ daily run
 
 def devto_followers(creds: dict) -> int:
@@ -221,15 +271,19 @@ def run_daily(db, config: dict, secrets: dict, gh_api, log) -> dict:
             if step("profile", lambda: grower.update_profile(profile)) is None and f"{channel}_profile_error" not in summary:
                 _set_state(db, f"profile_{channel}", profile_hash(profile))
                 summary[f"{channel}_profile"] = "updated"
+                record(db, channel, "Profile updated", profile["bio_short"])
         if not _state(db, f"pinned_{channel}"):
             first = db.execute("SELECT url FROM channel_posts WHERE channel=? AND status='posted' AND url IS NOT NULL "
                                "ORDER BY posted_at LIMIT 1", (channel,)).fetchone()
             if first and step("pin", lambda: grower.pin(first[0])) is None and f"{channel}_pin_error" not in summary:
                 _set_state(db, f"pinned_{channel}", first[0])
                 summary[f"{channel}_pinned"] = first[0]
+                record(db, channel, "Intro post pinned", first[0])
         followed = step("follow_back", lambda: grower.follow_back(FOLLOW_BACK_CAP))
         if followed is not None:
             summary[f"{channel}_followed_back"] = followed
+            if followed:
+                record(db, channel, "Followed back", f"{followed} new follower(s)")
         followers = step("followers", grower.followers_count)
         if followers is not None:
             counts[channel] = followers
@@ -239,6 +293,17 @@ def run_daily(db, config: dict, secrets: dict, gh_api, log) -> dict:
             counts["devto"] = devto_followers(creds["devto"])
         except Exception as error:
             log.warning("Dev.to follower count failed: %s", error)
+    socials = (profile or {}).get("socials", [])
+    if socials and _state(db, "github_socials") != profile_hash({"socials": socials}):
+        try:
+            added = sync_github_socials(socials)
+            _set_state(db, "github_socials", profile_hash({"socials": socials}))
+            if added:
+                record(db, "github", "Profile links added", ", ".join(added))
+            summary["github_socials_added"] = added
+        except Exception as error:
+            log.warning("GitHub profile links failed: %s", error)
+            summary["github_socials_error"] = str(error)[:200]
     user = gh_api(f"users/{config['github_user']}")
     if user:
         counts["github"] = int(user.get("followers", 0))
