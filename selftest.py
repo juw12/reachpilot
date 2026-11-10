@@ -350,5 +350,25 @@ check(growth_summary["followers"] == {"github": 7}
       and growth_db.execute("select count(*) from growth_log").fetchone()[0] == 1,
       "growth: daily pass records follower counts and the action log")
 
+# Dashboard page script: syntax-checked with Node when it is installed (skipped otherwise)
+import re
+import shutil
+import subprocess
+node = shutil.which("node") or str(Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "nodejs" / "node.exe")
+if Path(node).exists():
+    page_html = (Path(__file__).parent / "dashboard.html").read_text(encoding="utf-8")
+    page_scripts = re.findall(r"<script(?![^>]*\bsrc=)[^>]*>(.*?)</script>", page_html, flags=re.S)
+    with tempfile.TemporaryDirectory() as script_dir:
+        script_errors = []
+        for index, body in enumerate(page_scripts):
+            script_file = Path(script_dir) / f"page_{index}.js"
+            script_file.write_text(body, encoding="utf-8")
+            result = subprocess.run([node, "--check", str(script_file)], capture_output=True, text=True)
+            if result.returncode:
+                script_errors.append(result.stderr.strip().splitlines()[-1] if result.stderr.strip() else "syntax error")
+    check(page_scripts and not script_errors, f"dashboard: page script parses in Node {script_errors[:1]}")
+else:
+    print("Skipping dashboard script check (Node not installed)")
+
 print("\nALL PASSED" if not failures else f"\n{len(failures)} FAILED")
 sys.exit(1 if failures else 0)

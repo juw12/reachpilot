@@ -256,6 +256,8 @@
 
 <script>
 const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+// Escapes text, then turns every http(s) URL in it into its own link (details can hold several, comma-separated).
+const linkify = (value) => esc(value).replace(/https?:\/\/[^\s,<]+?(?=&quot;|&#39;|[\s,<]|$)/g, (u) => `<a href="${u}" target="_blank" rel="noopener">${u}</a>`);
 const num = (value) => (value === null || value === undefined ? "–" : Number(value).toLocaleString("en-US"));
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -422,7 +424,7 @@ function renderReach(d) {
     </tr>`).join("");
   const actionRows = pl.actions.map((a) => `<tr>
       <td>${esc(niceDate(a.at))}</td><td>${esc(a.platform)}</td><td><b>${esc(a.action)}</b>
-      <div class="hint">${/^https?:/.test(a.detail || "") ? `<a href="${esc(a.detail)}" target="_blank" rel="noopener">${esc(a.detail)}</a>` : esc(a.detail || "")}</div></td>
+      <div class="hint">${linkify(a.detail)}</div></td>
     </tr>`).join("");
   document.getElementById("reach").innerHTML = `
     <div class="grid">
