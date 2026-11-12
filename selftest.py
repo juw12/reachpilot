@@ -159,6 +159,32 @@ check("go/dawn-falcon/" in out_ok and "go/watt-reserve/" in out_ok,
       f"track_links: a successful sync still rewrites the new link and writes the cache ({out_ok!r})")
 autopilot.SECRETS_PATH = original_pages
 
+# refresh_try_links (daily path) must also tolerate a failed go-page sync and not blow the cache
+daily_db = sqlite3.connect(":memory:")
+daily_db.executescript(
+    """
+    CREATE TABLE kv(key TEXT PRIMARY KEY, value TEXT);
+    CREATE TABLE repos(name TEXT PRIMARY KEY, first_seen TEXT, pushed_at TEXT, release_tag TEXT);
+    CREATE TABLE try_clicks(day TEXT, repo TEXT, clicks INTEGER, PRIMARY KEY(day, repo));
+    CREATE TABLE queue(id TEXT PRIMARY KEY, slot_date TEXT, repo TEXT, angle TEXT,
+        body TEXT, comment TEXT, images TEXT, used INTEGER DEFAULT 0);
+    """
+)
+daily_db.execute("INSERT INTO kv VALUES('go_pages', ?)", (json.dumps(["watt-reserve"]),))
+autopilot.SECRETS_PATH = Path(tempfile.mkdtemp()) / "secrets.json"
+autopilot.SECRETS_PATH.write_text(json.dumps({"goatcounter_token": "t-ok"}), encoding="utf-8")
+with mock.patch("autopilot.trylinks.sync_go_pages", side_effect=RuntimeError("diverged .pages")), \
+     mock.patch("autopilot.trylinks.fetch_go_clicks", return_value={}):
+    autopilot.refresh_try_links(config, daily_db, {})
+stored = json.loads(daily_db.execute("SELECT value FROM kv WHERE key='go_pages'").fetchone()[0])
+check(stored == ["watt-reserve"], f"refresh_try_links: a failed sync keeps the cached go_pages, not [] ({stored})")
+with mock.patch("autopilot.trylinks.sync_go_pages", return_value={"watt-reserve", "dawn-falcon"}):
+    with mock.patch("autopilot.trylinks.fetch_go_clicks", return_value={}):
+        autopilot.refresh_try_links(config, daily_db, {})
+stored = json.loads(daily_db.execute("SELECT value FROM kv WHERE key='go_pages'").fetchone()[0])
+check(stored == ["dawn-falcon", "watt-reserve"], f"refresh_try_links: a successful sync refreshes the cache ({stored})")
+autopilot.SECRETS_PATH = original_pages
+
 # Dashboard data: posted history with reach/clicks, and the upcoming schedule from the prepared queue
 import dashboard  # noqa: E402
 
