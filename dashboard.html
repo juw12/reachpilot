@@ -684,6 +684,27 @@ function renderOverview(d) {
           <div class="hint">${num(h.promote.contacted)} creators contacted · ${num(h.promote.replies)} replies · ${num(h.promote.awaiting_approval)} waiting for your Send</div>
           ${lineChart(h.promote.series, "No e-mails yet.")}` : `<div class="hint">Not set up${h.promote.error ? `: ${esc(h.promote.error)}` : ""}.</div>`}
       </div>
+      ${(h.podcast && h.podcast.installed) ? (() => {
+        const p = h.podcast;
+        const held = p.held || [];
+        const latest = p.latest;
+        const mmss = (s) => (s === null || s === undefined) ? "–" : `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+        const nextRuns = (p.series || []).filter((s) => s.next_run).map((s) => `${esc(s.name)} ${esc(s.next_run)}`).join(" · ");
+        const reviewLine = p.review
+          ? `Review on: each episode waits for your OK. ${actionButton("podcast:review:off", "publish straight away", true)}`
+          : `Review off: episodes publish straight away. ${actionButton("podcast:review:on", "hold each episode", true)}`;
+        return `<div class="card module podcast">
+          <h3>${esc(p.show_title || "Podcast")} ${link(p.feed_url || p.site_url, "Feed")}</h3>
+          ${latest ? `<div class="hint">ep ${num(latest.number)} · ${esc(latest.series_name || "–")} · ${mmss(latest.seconds)} min</div>
+            <div class="big">${esc(latest.title)}</div>` : `<div class="big">No episodes yet</div>
+            <div class="hint">The first one is built on the next slot.</div>`}
+          ${nextRuns ? `<div class="hint" style="margin-top:6px">Next: ${nextRuns}</div>` : ""}
+          <div class="hint">${num(p.episodes_total)} published</div>
+          <div class="hint">${reviewLine}</div>
+          ${held.length ? `<div class="badge warn" style="margin-top:6px">${num(held.length)} held for review</div>
+            <div class="actions">${actionButton("podcast:approve:all", "Approve & publish")}${actionButton("podcast:skip", "Skip", true)}</div>` : ""}
+        </div>`;
+      })() : ""}
     </div>`;
 }
 

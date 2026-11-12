@@ -279,6 +279,71 @@ todo = hub.channels_todo({
 })
 check([item["action"] for item in todo] == ["channels_setup", "channels_setup"], "hub: platform to-dos (connect, failures)")
 
+# hub: the podcast tile - the reader mirrors podcast.py's own rules (published + audio on the site; pending = held for review)
+podcast_home = Path(tempfile.mkdtemp(prefix="rp-podcast-"))
+try:
+    (podcast_home / "site" / "audio").mkdir(parents=True)
+    (podcast_home / "episodes" / "2026-11-01-ep001").mkdir(parents=True)
+    (podcast_home / "episodes" / "2026-11-03-ep002").mkdir(parents=True)
+    (podcast_home / "podcast.py").write_text("", encoding="utf-8")
+    (podcast_home / "podcast_config.json").write_text(json.dumps({
+        "show_title": "Test Show",
+        "series": {
+            "brief": {"name": "The Brief", "days": ["Monday"], "time": "07:30"},
+            "breakdown": {"name": "The Breakdown", "days": ["Wednesday"], "time": "07:30"},
+            "drive": {"name": "The Long Drive", "days": ["Friday"], "time": "07:30"},
+        },
+        "publish": {"enabled": True, "review": True, "base_url": "https://example.test/feed"},
+    }), encoding="utf-8")
+    (podcast_home / "episodes" / "2026-11-01-ep001" / "episode.json").write_text(json.dumps({
+        "number": 1, "slug": "2026-11-01-ep001", "series_name": "The Brief",
+        "title": "Test episode one", "published": "2026-11-01T07:30:00+07:00",
+        "file": "2026-11-01-ep001.mp3", "seconds": 420,
+    }), encoding="utf-8")
+    (podcast_home / "episodes" / "2026-11-03-ep002" / "episode.json").write_text(json.dumps({
+        "number": 2, "slug": "2026-11-03-ep002", "series_name": "The Breakdown",
+        "title": "Held episode two", "published": "2026-11-03T07:30:00+07:00",
+        "file": "2026-11-03-ep002.mp3", "seconds": 300, "status": "pending",
+    }), encoding="utf-8")
+    (podcast_home / "site" / "audio" / "2026-11-01-ep001.mp3").write_bytes(b"audio")
+    (podcast_home / "site" / "audio" / "2026-11-03-ep002.mp3").write_bytes(b"audio")
+    (podcast_home / "last_run.json").write_text(json.dumps(
+        {"ok": True, "title": "Held episode two", "held": True, "awaiting_review": 1, "finished": "2026-11-03 07:35"}),
+        encoding="utf-8")
+
+    real_podcast_home = hub.PODCAST
+    hub.PODCAST = podcast_home
+    try:
+        section = hub.podcast_section()
+    finally:
+        hub.PODCAST = real_podcast_home
+    check(section["installed"] and section["episodes_total"] == 1, "hub: podcast reader counts only published episodes on the site")
+    check(section["latest"]["number"] == 1 and section["latest"]["seconds"] == 420, "hub: podcast latest episode (number + length)")
+    check([item["number"] for item in section["held"]] == [2], "hub: held episode waits in the review queue")
+    check(section["feed_url"] == "https://example.test/feed/feed.xml" and section["review"] and section["publish_enabled"],
+          "hub: podcast feed link + review state")
+    check(len(section["series"]) == 3 and all(item["next_run"] for item in section["series"]),
+          f"hub: next run per series computed ({[item['next_run'] for item in section['series']]})")
+    check(section["published_by_day"] == {"2026-11-01": 1}, "hub: podcast episodes per day")
+    check(section["last_run"].get("held") is True and section["last_run"].get("awaiting_review") == 1,
+          "hub: last run's held state reaches the tile")
+
+    held_todo = hub.todo_items(None, {"installed": False}, {"installed": False}, {}, section)
+    check([item["action"] for item in held_todo if item["module"] == "Podcast"] == ["podcast:approve:all"],
+          "hub: a held episode becomes an urgent approve to-do")
+    help_entries = {entry["module"]: entry for entry in hub.help_sections({}, section)}
+    check("Podcast" in help_entries and "The Brief" in help_entries["Podcast"]["runs"], "hub: podcast help entry names the schedule")
+
+    hub.PODCAST = podcast_home / "nowhere"
+    try:
+        missing = hub.podcast_section()
+    finally:
+        hub.PODCAST = real_podcast_home
+    check(missing == {"installed": False}, "hub: missing podcast module shows as not set up")
+finally:
+    import shutil
+    shutil.rmtree(podcast_home, ignore_errors=True)
+
 check(channels.bluesky_sign_in("@me.bsky.social", "abcd-efgh-ijkl-mnop")
       == {"handle": "me.bsky.social", "app_password": "abcd-efgh-ijkl-mnop"}, "channels: an existing Bluesky app password is kept as is")
 
