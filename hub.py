@@ -5,6 +5,7 @@ Modules live in modules/ (git-ignored, personal data) and keep running on their 
   email_apply  JobStreet / LinkedIn ads with a recruiter e-mail -> CV + cover letter via the Gmail relay
   job_digest   daily digest + Gmail relay credentials used by email_apply
   promote      creator / UGC outreach e-mails for the GitHub projects (modules/promote/promote.py)
+  podcast      "Bits & Tickers" episodes in three series, published to an RSS feed (modules/podcast/podcast.py)
 
 Other platforms (Bluesky, Mastodon, Dev.to, Telegram, Discord) are part of the public code
 (channels.py); channels_section() reads their state from state.db.
@@ -30,6 +31,7 @@ JOBS = MODULES / "jobs"
 EMAIL = MODULES / "email_apply"
 DIGEST = MODULES / "job_digest"
 PROMOTE = MODULES / "promote"
+PODCAST = MODULES / "podcast"
 TASK_FOLDER = "\\ReachPilot\\"
 TASKS = {
     "linkedin": "LinkedIn posts",
@@ -39,6 +41,12 @@ TASKS = {
     "promote": "Promotion",
     "updates": "Updates",
 }
+if (PODCAST / "podcast.py").exists():  # only where the private podcast module is present
+    TASKS.update({
+        "podcast_brief": "Podcast Brief",
+        "podcast_breakdown": "Podcast Breakdown",
+        "podcast_drive": "Podcast Drive",
+    })
 PYTHONW = Path(sys.executable).with_name("pythonw.exe")
 PYTHON = Path(sys.executable).with_name("python.exe")
 NO_WINDOW = 0x08000000
@@ -89,7 +97,8 @@ def task_status() -> dict:
                 "name": name,
                 "installed": True,
                 "state": row.get("Status", "").strip(),
-                "last_run": _pretty_task_time(row.get("Last Run Time", "")),
+                # 267011 = never run: schtasks then reports a placeholder date (30 Nov 1999), so show nothing
+                "last_run": "" if last_result == "267011" else _pretty_task_time(row.get("Last Run Time", "")),
                 "next_run": _pretty_task_time(row.get("Next Run Time", "")),
                 "last_result": last_result,
                 "ok": last_result in ("0", "267009", "267011", "267014"),  # success, running, never run, terminated by us
