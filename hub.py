@@ -375,6 +375,140 @@ def promote_action(name: str) -> str:
     return (output.stdout.strip().splitlines() or ["Done."])[-1]
 
 
+# ------------------------------------------------------------------ podcast module
+
+def _podcast_series_next_run(series: dict, now: datetime) -> str:
+    """Next time a series runs from its weekday + time schedule, e.g. 'Wed 12 Nov · 07:30'."""
+    weekdays = {"monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3, "friday": 4, "saturday": 5, "sunday": 6}
+    wanted = {weekdays[str(day).lower()] for day in series.get("days") or [] if str(day).lower() in weekdays}
+    try:
+        hour, minute = (int(part) for part in str(series.get("time") or "0:0").split(":")[:2])
+    except ValueError:
+        return ""
+    day = now.date()
+    for _ in range(7):
+        if day.weekday() in wanted:
+            candidate = datetime(day.year, day.month, day.day, hour, minute)
+            if candidate > now:
+                return candidate.strftime("%a %#d %b · %H:%M")
+        day += timedelta(days=1)
+    return ""
+
+
+def podcast_section() -> dict:
+    """Reads the files the podcast module already keeps, with the same rules as its load_episodes() and
+    pending_episodes(), so a missing or half-written file shows as 'not set up' instead of breaking the hub."""
+    script = PODCAST / "podcast.py"
+    if not script.exists():
+        return {"installed": False}
+
+    def build():
+        config = {}
+        try:
+            config = json.loads((PODCAST / "podcast_config.json").read_text(encoding="utf-8"))
+        except (ValueError, OSError):
+            pass
+        now = datetime.now()
+        published, held = [], []
+        for record in sorted((PODCAST / "episodes").glob("*/episode.json")):
+            try:
+                episode = json.loads(record.read_text(encoding="utf-8"))
+            except (ValueError, OSError):
+                continue
+            if not isinstance(episode, dict) or not episode.get("file"):
+                continue
+            if not (PODCAST / "site" / "audio" / episode["file"]).exists():
+                continue  # audio not on the site yet: not on the feed and not in the review queue
+            item = {
+                "slug": episode.get("slug") or record.parent.name,
+                "number": episode.get("number"),
+                "title": episode.get("title"),
+                "series_name": episode.get("series_name"),
+                "published": episode.get("published"),
+                "seconds": episode.get("seconds"),
+            }
+            if episode.get("status", "published") == "published":
+                published.append(item)
+            elif episode.get("status") == "pending":
+                held.append(item)
+        published.sort(key=lambda item: item["published"] or "", reverse=True)
+        held.sort(key=lambda item: item["published"] or "")
+        last_run = {}
+        last_run_file = PODCAST / "last_run.json"
+        if last_run_file.exists():
+            try:
+                loaded = json.loads(last_run_file.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict):
+                    last_run = {key: loaded.get(key) for key in
+                                ("ok", "title", "seconds", "published", "held", "awaiting_review", "finished")
+                                if loaded.get(key) is not None}
+            except (ValueError, OSError):
+                pass
+        publish = config.get("publish") or {}
+        base_url = str(publish.get("base_url") or "").rstrip("/")
+        return {
+            "installed": True,
+            "show_title": config.get("show_title"),
+            "tagline": config.get("tagline"),
+            "latest": published[0] if published else None,
+            "held": held,
+            "episodes_total": len(published),
+            "published_by_day": count_by_day(item["published"] for item in published),
+            "review": bool(publish.get("review")),
+            "publish_enabled": bool(publish.get("enabled")),
+            "site_url": base_url or None,
+            "feed_url": base_url + "/feed.xml" if base_url else None,
+            "series": [
+                {"key": key, "name": spec.get("name"), "days": spec.get("days") or [], "time": spec.get("time"),
+                 "next_run": _podcast_series_next_run(spec, now)}
+                for key, spec in (config.get("series") or {}).items() if isinstance(spec, dict)
+            ],
+            "last_run": last_run,
+        }
+
+    mtimes = []
+    for path in (PODCAST / "podcast_config.json", PODCAST / "last_run.json", PODCAST / "episodes"):
+        try:
+            mtimes.append(path.stat().st_mtime)
+        except OSError:
+            pass
+    return cached(f"podcast:{int(max(mtimes)) if mtimes else 0}", 60, build)
+
+
+PODCAST_VERBS = {"approve", "skip", "review", "open"}
+
+
+def podcast_action(name: str) -> str:
+    """name = 'podcast:<verb>[:<argument>]', e.g. podcast:approve:all, podcast:skip:2026-11-12-ep002, podcast:review:off."""
+    _, _, rest = name.partition(":")
+    verb, _, argument = rest.partition(":")
+    if verb == "open":
+        if (PODCAST / "site").exists():
+            os.startfile(PODCAST / "site")
+            return "Site folder opened."
+        raise ValueError("The site folder isn't there yet (no episodes built).")
+    if verb not in PODCAST_VERBS:
+        raise ValueError(f"Unknown action: {name}")
+    for key in [key for key in _cache if key.startswith("podcast:")]:
+        _cache.pop(key, None)
+    command = [str(PYTHON), str(PODCAST / "podcast.py"), verb]
+    if verb in ("approve", "skip"):
+        if verb == "skip" and argument == "all":
+            raise ValueError("Skip works on one episode at a time; name the slug or leave it out.")
+        if argument:
+            command.append("--all" if argument == "all" else argument)
+        # no argument: the module picks the oldest held episode
+    elif argument not in ("on", "off"):
+        raise ValueError("Review takes 'on' or 'off'.")
+    else:
+        command.append(argument)
+    output = subprocess.run(command, cwd=PODCAST, capture_output=True, text=True, encoding="utf-8", timeout=300,
+                            creationflags=NO_WINDOW)
+    if output.returncode != 0:
+        raise RuntimeError((output.stderr or "podcast action failed").strip().splitlines()[-1])
+    return (output.stdout.strip().splitlines() or ["Done."])[-1]
+
+
 # ------------------------------------------------------------------ per-day numbers for every automation
 
 def count_by_day(days) -> dict[str, int]:
@@ -481,6 +615,10 @@ def daily_stats(sections: dict) -> list[dict]:
         rows.append(_daily_row("Job search", "jobs", "Applications submitted", jobs.get("applied_by_day", {}),
                                target, f"goal {target} a day" if target else "",
                                "Needs you: the apply session fills the form, you press Submit."))
+    if sections.get("podcast", {}).get("installed"):
+        rows.append(_daily_row(
+            "Podcast", "overview", "Episodes published", sections["podcast"].get("published_by_day", {}),
+            None, "3 a week", "One episode per series, on its scheduled day."))
     rows.append(_daily_row(
         "LinkedIn posts", "linkedin", "Posts published",
         _sqlite_by_day(ROOT / "state.db", "select substr(slot,1,10), count(*) from posts where status='posted' group by 1"),
@@ -576,7 +714,7 @@ def channels_todo(section: dict) -> list[dict]:
 
 # ------------------------------------------------------------------ what I need from you
 
-def todo_items(linkedin: dict | None, jobs: dict, email: dict, tasks: dict) -> list[dict]:
+def todo_items(linkedin: dict | None, jobs: dict, email: dict, tasks: dict, podcast: dict | None = None) -> list[dict]:
     items: list[dict] = []
 
     def add(priority, module, title, detail, action=None, action_label=None, links=None):
@@ -637,6 +775,16 @@ def todo_items(linkedin: dict | None, jobs: dict, email: dict, tasks: dict) -> l
             add(3, "Email", f"{email['leads_total']} good jobs have no recruiter email",
                 "They need applying on the company site. The leads page lists them best-fit first.", "email_open_leads", "Open leads page")
 
+    if podcast and podcast.get("installed"):
+        if podcast.get("held"):
+            add(1, "Podcast", f"{len(podcast['held'])} podcast episode(s) are waiting for your OK",
+                "Review mode is on, so the episode was built but not published: approve it and it goes to the feed, or skip it.",
+                "podcast:approve:all", "Approve & publish")
+        if (podcast.get("last_run") or {}).get("ok") is False:
+            add(2, "Podcast", "The last podcast run failed",
+                "The episode didn't build. It retries on the next slot, or look at the module's log.",
+                "open_modules", "Open modules")
+
     for key, task in tasks.items():
         if task.get("installed") and not task.get("ok") and task.get("last_result") not in ("", None):
             add(2, "System", f"'{task['name']}' last run reported an error (code {task['last_result']})",
@@ -649,12 +797,12 @@ def todo_items(linkedin: dict | None, jobs: dict, email: dict, tasks: dict) -> l
 
 # ------------------------------------------------------------------ help text
 
-def help_sections(tasks: dict) -> list[dict]:
+def help_sections(tasks: dict, podcast: dict | None = None) -> list[dict]:
     def when(key, fallback):
         task = tasks.get(key, {})
         return f"Next run: {task['next_run']}" if task.get("next_run") and task.get("installed") else fallback
 
-    return [
+    entries = [
         {"module": "LinkedIn", "runs": "Every 30 minutes; posts Tue/Wed/Thu 08:00. " + when("linkedin", ""),
          "auto": "Picks a project, writes the post from real README facts, adds screenshots, posts through the official API, learns from clicks and stars.",
          "you": "Renew the LinkedIn login every 60 days (you get a reminder here and a Windows notification)."},
@@ -675,6 +823,20 @@ def help_sections(tasks: dict) -> list[dict]:
          "auto": "Finds YouTube creators whose niche fits each GitHub project (only e-mails they published themselves), writes a short personal e-mail that mentions one of their videos, rotates through every project, warms up from 5 to 20 e-mails a day, sends one follow-up after 5 days, stops when someone replies, and learns which wording and creator types answer.",
          "you": "Review mode (default): press Send or Approve all in the Promote tab. Answer replies from your personal inbox and mark them Interested / Not a fit. Add TikTok / Instagram creators by hand in creators_import.csv."},
     ]
+    if podcast and podcast.get("installed"):
+        schedule = "; ".join(
+            f"{s.get('name')} " + " & ".join(str(day)[:3] for day in s.get("days") or [])
+            + (f" {s.get('time')}" if s.get("time") else "")
+            for s in podcast.get("series") or [] if s.get("name")
+        )
+        if schedule:
+            entries.append({
+                "module": "Podcast",
+                "runs": f"{podcast.get('show_title') or 'The podcast'}, one episode per series: {schedule}. " + when("podcast_brief", ""),
+                "auto": "Picks the day's stories from the RSS feeds, writes the script, records it with AI voices (disclosed in the feed), builds the site and pushes the episode to the RSS feed, then announces it on the connected channels.",
+                "you": "With review on (default) each episode waits in the podcast tile: listen to it, then Approve & publish or skip it. Turn review off in the tile and episodes publish on their own.",
+            })
+    return entries
 
 
 # ------------------------------------------------------------------ actions (whitelist only)
@@ -739,6 +901,8 @@ def run_action(name: str) -> str:
         return "Modules folder opened."
     if name.startswith("promote:"):
         return promote_action(name)
+    if name.startswith("podcast:"):
+        return podcast_action(name)
     raise ValueError(f"Unknown action: {name}")
 
 
@@ -748,7 +912,7 @@ def build(linkedin_overview: dict | None) -> dict:
     tasks = task_status()
     sections = {}
     for key, reader in (("jobs", jobs_section), ("email", email_section), ("promote", promote_section),
-                        ("channels", channels_section)):
+                        ("channels", channels_section), ("podcast", podcast_section)):
         try:
             sections[key] = reader()
         except Exception as error:  # one broken module must not take the dashboard down
@@ -763,9 +927,10 @@ def build(linkedin_overview: dict | None) -> dict:
         "daily": daily,
         "tasks": tasks,
         "todo": sorted(
-            todo_items(linkedin_overview, sections["jobs"], sections["email"], tasks) + sections["promote"].get("todo", [])
+            todo_items(linkedin_overview, sections["jobs"], sections["email"], tasks, sections.get("podcast"))
+            + sections["promote"].get("todo", [])
             + channels_todo(sections["channels"]),
             key=lambda item: item["priority"],
         ),
-        "help": help_sections(tasks),
+        "help": help_sections(tasks, sections.get("podcast")),
     }
