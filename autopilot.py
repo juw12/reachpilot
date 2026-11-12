@@ -460,7 +460,11 @@ def refresh_try_links(config, db, repos: dict) -> None:
 
 
 def track_links(config, db, text: str) -> str:
-    """Swap live-site links for tracked go-links (publishing any missing go page first)."""
+    """Swap live-site links for tracked go-links (publishing any missing go page first).
+
+    A failed or slow go-page sync must not block the post: keep the existing cached
+    go_pages, log a warning, and post with the plain link.
+    """
     goat = trylinks.load_goatcounter(config, SECRETS_PATH)
     if not goat or not text:
         return text
@@ -469,9 +473,17 @@ def track_links(config, db, text: str) -> str:
     available = set(json.loads(kv_get(db, "go_pages", "[]")))
     missing = {name: url for name, url in needed.items() if name not in available}
     if missing:
-        available = trylinks.sync_go_pages(user, missing, goat[0], PAGES_CHECKOUT, log)
-        kv_set(db, "go_pages", json.dumps(sorted(available)))
-        time.sleep(90)  # give GitHub Pages time to deploy the new page
+        try:
+            synced = trylinks.sync_go_pages(user, missing, goat[0], PAGES_CHECKOUT, log)
+        except Exception as error:  # timeouts, diverged checkout, push rejected - never block the post
+            log.warning("Go-page sync raised, posting with the plain link: %s", error)
+            synced = set()
+        if synced:
+            available = synced
+            kv_set(db, "go_pages", json.dumps(sorted(available)))
+            time.sleep(90)  # give GitHub Pages time to deploy the new page
+        else:
+            log.warning("Go-page sync produced no pages; posting with the plain link(s) instead")
     return trylinks.rewrite_links(text, user, available)
 
 
