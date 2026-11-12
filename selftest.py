@@ -134,6 +134,31 @@ same_thursday = datetime(2026, 11, 12, 9, 0)
 check(autopilot.posts_this_week(cap_db, next_tuesday) == 0, "weekly cap resets on Monday (next Tuesday's slot still posts)")
 check(autopilot.posts_this_week(cap_db, same_thursday) == 3, "weekly cap counts this week's posts")
 
+# track_links: a failed go-page sync must not block the post - text goes out with the plain link
+track_db = sqlite3.connect(":memory:")
+track_db.execute("CREATE TABLE kv(key TEXT PRIMARY KEY, value TEXT)")
+track_db.execute("INSERT INTO kv VALUES('go_pages', ?)", (json.dumps(["watt-reserve"]),))
+import unittest.mock as mock  # noqa: E402
+
+original_pages = autopilot.SECRETS_PATH
+autopilot.SECRETS_PATH = Path(tempfile.mkdtemp()) / "secrets.json"
+autopilot.SECRETS_PATH.parent.mkdir(parents=True, exist_ok=True)
+autopilot.SECRETS_PATH.write_text(json.dumps({"goatcounter_token": "t-ok"}), encoding="utf-8")
+config = {"github_user": "juw12", "goatcounter_code": "juw12"}
+text = "Try it: https://juw12.github.io/watt-reserve/\nNew: https://juw12.github.io/dawn-falcon/"
+with mock.patch("autopilot.trylinks.sync_go_pages", side_effect=RuntimeError("diverged .pages")):
+    out = autopilot.track_links(config, track_db, text)
+check(out == text and "go/watt-reserve" in out,
+      f"track_links: a failed go-page sync keeps the plain link and does not crash ({out!r})")
+stored = json.loads(track_db.execute("SELECT value FROM kv WHERE key='go_pages'").fetchone()[0])
+check(stored == ["watt-reserve"],
+      f"track_links: a failed sync preserves the cached go_pages, doesn't overwrite with [] ({stored})")
+with mock.patch("autopilot.trylinks.sync_go_pages", return_value={"watt-reserve", "dawn-falcon"}):
+    out_ok = autopilot.track_links(config, track_db, text)
+check("go/dawn-falcon/" in out_ok and "go/watt-reserve/" in out_ok,
+      f"track_links: a successful sync still rewrites the new link and writes the cache ({out_ok!r})")
+autopilot.SECRETS_PATH = original_pages
+
 # Dashboard data: posted history with reach/clicks, and the upcoming schedule from the prepared queue
 import dashboard  # noqa: E402
 
