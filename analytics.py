@@ -25,6 +25,10 @@ PLATFORM_REFERRERS = [
     ("Bluesky", re.compile(r"bsky", re.IGNORECASE)),
     ("Dev.to", re.compile(r"dev\.to", re.IGNORECASE)),
     ("X", re.compile(r"(^|\.)(t\.co|x\.com|twitter\.com)$", re.IGNORECASE)),
+    ("Threads", re.compile(r"(^|\.)threads\.(net|com)$", re.IGNORECASE)),
+    ("Substack", re.compile(r"substack", re.IGNORECASE)),
+    ("Telegram", re.compile(r"(^|\.)(t\.me|telegram\.(org|me))$", re.IGNORECASE)),
+    ("Discord", re.compile(r"(^|\.)discord(app)?\.(com|gg)$", re.IGNORECASE)),
     ("Search", re.compile(r"google|bing|duckduckgo|yahoo|baidu", re.IGNORECASE)),
     ("GitHub", re.compile(r"github", re.IGNORECASE)),
 ]

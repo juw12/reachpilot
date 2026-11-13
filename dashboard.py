@@ -196,7 +196,7 @@ def history(db) -> list[dict]:
 
 PLATFORM_ACCOUNTS = {
     "mastodon": "Mastodon", "bluesky": "Bluesky", "devto": "Dev.to", "telegram": "Telegram",
-    "discord": "Discord", "github": "GitHub",
+    "discord": "Discord", "x": "X", "threads": "Threads", "substack": "Substack", "github": "GitHub",
 }
 
 

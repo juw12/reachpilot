@@ -712,13 +712,21 @@ class XViaBuffer(BufferChannel):
         return url or (f"https://x.com/{self.username}" if self.username else "")
 
 
+class ThreadsViaBuffer(BufferChannel):
+    """Threads for free through Buffer; links to the profile when Buffer has no post link yet."""
+
+    def publish(self, text, title, images, link, extra, idempotency_key) -> str:
+        url = super().publish(text, title, images, link, extra, idempotency_key)
+        return url or (f"https://www.threads.com/@{self.username}" if self.username else "")
+
+
 def x_client(creds: dict):
     """Buffer (free) when set up that way, otherwise the paid X API."""
     return XViaBuffer(creds) if creds.get("via") == "buffer" else X(creds)
 
 
 CLIENTS = {"bluesky": Bluesky, "mastodon": Mastodon, "devto": DevTo, "telegram": Telegram, "discord": Discord,
-           "x": x_client, "threads": BufferChannel, "substack": BufferChannel}
+           "x": x_client, "threads": ThreadsViaBuffer, "substack": BufferChannel}
 
 
 # ------------------------------------------------------------------ Mastodon: sign in with the browser (no token to copy)

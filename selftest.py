@@ -598,9 +598,15 @@ check(made == {"handle": "me.bsky.social", "app_password": "wxyz-wxyz-wxyz-wxyz"
 import growth
 
 check([analytics.platform_of(name) for name in ("linkedin.com", "lnkd.in", "mastodon.social", "bsky.app", "dev.to",
-                                                  "t.co", "x.com", "netflix.com", "google.com", "github.com", "example.org")]
-      == ["LinkedIn", "LinkedIn", "Mastodon", "Bluesky", "Dev.to", "X", "X", "Other", "Search", "GitHub", "Other"],
+                                                  "t.co", "x.com", "netflix.com", "google.com", "github.com", "example.org",
+                                                  "l.threads.com", "threads.net", "substack.com", "juwen.substack.com",
+                                                  "t.me", "web.telegram.org", "discord.com", "com.discord")]
+      == ["LinkedIn", "LinkedIn", "Mastodon", "Bluesky", "Dev.to", "X", "X", "Other", "Search", "GitHub", "Other",
+          "Threads", "Threads", "Substack", "Substack", "Telegram", "Telegram", "Discord", "Other"],
       "growth: GitHub referrers mapped to platforms")
+check(set(channels.AUTO) <= set(dashboard.PLATFORM_ACCOUNTS)
+      and all(dashboard.PLATFORM_ACCOUNTS[key] == channels.LABELS[key] for key in channels.AUTO),
+      "dashboard: every platform ReachPilot posts to has a row (posts, followers, GitHub visitors)")
 people = [{"id": str(number), "bot": number == 3} for number in range(40)]
 targets = growth.follow_back_targets(people, {"0", "1"}, cap=25)
 check(len(targets) == 25 and "0" not in targets and "3" not in targets, "growth: follow-back skips followed + bots, capped at 25")

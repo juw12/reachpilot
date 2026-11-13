@@ -86,8 +86,9 @@ Once a day `growth.py` grows the audience and points all of it at GitHub:
 - **GitHub profile:** your Mastodon, Bluesky and Dev.to accounts are listed on your GitHub profile (`socials` in
   the `profile` block), using the GitHub login Git already stores. GitHub marks those links `rel="me"`, which
   gives the GitHub link on your Mastodon profile a verified tick.
-- **Measured:** follower counts per platform, and the GitHub visitors that came from LinkedIn, Mastodon,
-  Bluesky and Dev.to (repo traffic API). Both show on the dashboard's daily table.
+- **Measured:** posts per platform, follower counts (Mastodon, Bluesky, Dev.to, GitHub), and the GitHub visitors
+  that came from LinkedIn, Mastodon, Bluesky, Dev.to, X, Threads, Substack, Telegram and Discord (repo traffic API).
+  All show on the dashboard's "Every platform" table.
 - **Recorded:** every change it makes is written to `growth_log` in `state.db` and counted on the dashboard
   ("Growth actions"), with details in the log file.
 
@@ -144,6 +145,7 @@ the dashboard and a Windows notification remind you a week before.
 | GitHub | find repos, READMEs, commits, traffic | read-only requests through `gh` (public API as fallback) |
 | LinkedIn | publish and measure posts | the post text, images and the first comment with links |
 | Bluesky, Mastodon, Dev.to, Telegram, Discord (only those you connect) | publish the cut-down post | the post text, screenshots and links |
+| Buffer (X, Threads, Substack, only those you connect) | publishes the cut-down post right away | the post text, the project image URL and links |
 | GoatCounter (optional) | count "Try it" clicks | a page view when someone opens a tracked go-link |
 | Ollama (optional, local) | rephrase a post | nothing leaves your PC |
 
