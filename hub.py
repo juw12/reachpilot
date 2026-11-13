@@ -808,7 +808,7 @@ def help_sections(tasks: dict, podcast: dict | None = None) -> list[dict]:
          "you": "Renew the LinkedIn login every 60 days (you get a reminder here and a Windows notification)."},
         {"module": "Platforms", "runs": "With every LinkedIn slot (same task, same days).",
          "auto": "Cuts each post to fit Bluesky (300 characters) and Mastodon (500), sends the full post to your Telegram channel and Discord "
-                 "server, posts to X (280 characters, one link, capped by a monthly budget because X charges per post), "
+                 "server, posts to X for free through Buffer (280 characters, one link, the project image), "
                  "and publishes a Dev.to article for launches and releases (at most one per project every 60 days). "
                  "Each platform retries on its own up to 3 times. Once a day it also keeps your Mastodon and Bluesky "
                  "bios and pinned intro pointing at GitHub, follows back new followers (25 a day each), lists your "

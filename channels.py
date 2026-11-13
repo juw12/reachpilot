@@ -1,14 +1,15 @@
 """Other platforms for every ReachPilot post: Bluesky, Mastodon, Dev.to, Telegram, Discord, X.
 
-Official APIs only (no scraping, no browser bots). All free except X, which is pay-per-use and capped:
+Official APIs only (no scraping, no browser bots), all free:
   bluesky    AT Protocol; setup turns your password into an    short post (300 chars), screenshots, clickable link
              app password once and stores only that
   mastodon   your instance's REST API with an access token      short post (500 chars), screenshots
   devto      Forem API key                                      an article per launch / release, canonical URL back to you
   telegram   Bot API, posts into your own channel               full post with the first screenshot
   discord    a webhook into your own server                     full post with the first screenshot
-  x          X API v2, OAuth 2.0 (PKCE) sign-in in the browser   short post (280 weighted chars), screenshots, link;
-             pay-per-use credits, so a monthly budget cap        ~$0.20 per post with a link (x_monthly_budget_usd)
+  x          free through Buffer's API: Buffer (an official X     short post (280 weighted chars), project image, link
+             partner) publishes to your X account, no X fees.
+             Optional fallback: the paid X API v2 (OAuth 2.0 PKCE), capped by x_monthly_budget_usd
 
 Every variant is cut from the LinkedIn post that already passed the no-invented-facts guard, so a platform can
 shorten a post but never add a claim; anything with a number not in the source is dropped.
@@ -56,6 +57,11 @@ X_COST_POST = 0.015
 X_COST_LINK = 0.20
 X_DEFAULT_MONTHLY_BUDGET = 5.0  # USD; override with "x_monthly_budget_usd" in config.json (0 = never post to X)
 X_URL_WEIGHT = 23  # X counts every link as 23 characters (t.co)
+BUFFER_API = "https://api.buffer.com"
+BUFFER_API_SETTINGS = "https://publish.buffer.com/settings/api"
+BUFFER_CHANNELS = "https://publish.buffer.com/channels"
+BUFFER_X_SERVICES = ("twitter", "x")
+PUBLIC_IMAGE = re.compile(r"^https://\S+\.(png|jpe?g|webp)(\?\S*)?$", re.I)
 
 URL_PATTERN = re.compile(r"https?://[^\s)\]>]+")
 HASHTAG_PATTERN = re.compile(r"(?<![\w#])#([A-Za-z][A-Za-z0-9_]*)")
@@ -217,6 +223,18 @@ def devto_article(body: str, comment: str, facts) -> dict | None:
     }
 
 
+def public_image(facts) -> str:
+    """A hosted image for posts that can't upload local screenshots: the README's first photo, else GitHub's card."""
+    if facts is None:
+        return ""
+    for image in facts.readme_images:
+        if PUBLIC_IMAGE.match(image):
+            return image
+    if facts.html_url.startswith("https://github.com/"):
+        return facts.html_url.replace("https://github.com/", "https://opengraph.githubassets.com/reachpilot/", 1)
+    return ""
+
+
 def build_variants(body: str, comment: str, angle: str | None, facts=None, channels: list[str] | None = None) -> dict[str, dict]:
     """channel -> {"title", "body", "extra"} for every channel this post suits. Pure function (used by preview and tests)."""
     channels = channels or ALL
@@ -236,7 +254,10 @@ def build_variants(body: str, comment: str, angle: str | None, facts=None, chann
             if channel == "x" and x_length(text) > rules["limit"]:
                 continue
             if text and not composer.invented_numbers(text, source):
-                variants[channel] = {"title": "", "body": text, "extra": {"link": link}}
+                extra = {"link": link}
+                if channel == "x":
+                    extra["image_url"] = public_image(facts)
+                variants[channel] = {"title": "", "body": text, "extra": extra}
     if "devto" in channels and angle in ("launch", "update"):
         article = devto_article(body, comment, facts)
         if article and not composer.invented_numbers(article["body"] + " " + article["title"], source):
@@ -260,7 +281,8 @@ def prepare(db, config: dict, secrets: dict, slot: str, repo: str | None, angle:
         ).fetchone()[0]
         if recent and datetime.now() - datetime.strptime(recent[:16], "%Y-%m-%d %H:%M") < timedelta(days=DEVTO_COOLDOWN_DAYS):
             wanted.remove("devto")
-    if "x" in wanted and x_spent_this_month(db) + X_COST_LINK > x_monthly_budget(config):
+    if ("x" in wanted and x_is_paid(credentials(secrets).get("x", {}))
+            and x_spent_this_month(db) + X_COST_LINK > x_monthly_budget(config)):
         wanted.remove("x")
     if not wanted:  # build_variants treats an empty list as 'every platform'
         return []
@@ -275,6 +297,10 @@ def prepare(db, config: dict, secrets: dict, slot: str, repo: str | None, angle:
         )
     db.commit()
     return list(variants)
+
+
+def x_is_paid(creds: dict) -> bool:
+    return creds.get("via") != "buffer"
 
 
 def x_monthly_budget(config: dict) -> float:
@@ -592,7 +618,83 @@ class X:
         return f"https://x.com/{self.creds.get('username') or 'i/web'}/status/{created['data']['id']}"
 
 
-CLIENTS = {"bluesky": Bluesky, "mastodon": Mastodon, "devto": DevTo, "telegram": Telegram, "discord": Discord, "x": X}
+def buffer_graphql(api_key: str, query: str, variables: dict | None = None, what: str = "Buffer") -> dict:
+    response = _check(requests.post(
+        BUFFER_API,
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        json={"query": query, "variables": variables or {}},
+        timeout=TIMEOUT,
+    ), what)
+    payload = response.json()
+    if payload.get("errors"):
+        raise RuntimeError(f"{what} failed: {payload['errors'][0].get('message', payload['errors'])}")
+    return payload.get("data") or {}
+
+
+def buffer_x_channels(api_key: str) -> list[dict]:
+    """Every X account connected to this Buffer login: [{id, name, disconnected}]."""
+    organizations = buffer_graphql(api_key, "query { account { organizations { id } } }", what="Buffer sign-in")
+    found = []
+    for organization in organizations.get("account", {}).get("organizations", []):
+        channels = buffer_graphql(
+            api_key,
+            "query Channels($input: ChannelsInput!) { channels(input: $input) { id name displayName service isDisconnected } }",
+            {"input": {"organizationId": organization["id"]}},
+            "Buffer channels",
+        )
+        for channel in channels.get("channels", []):
+            if str(channel.get("service", "")).lower() in BUFFER_X_SERVICES:
+                found.append({"id": channel["id"], "name": channel.get("name") or channel.get("displayName") or "",
+                              "disconnected": bool(channel.get("isDisconnected"))})
+    return found
+
+
+BUFFER_CREATE_POST = """mutation CreatePost($input: CreatePostInput!) {
+  createPost(input: $input) {
+    ... on PostActionSuccess { post { id externalLink } }
+    ... on MutationError { message }
+  }
+}"""
+
+
+class XViaBuffer:
+    """X for free: Buffer (an official X partner, free plan) publishes the post to your X account right away."""
+
+    def __init__(self, creds: dict):
+        self.api_key = creds["api_key"]
+        self.channel_id = creds["channel_id"]
+        self.username = creds.get("username", "").lstrip("@")
+
+    def verify(self) -> str:
+        channel = next((item for item in buffer_x_channels(self.api_key) if item["id"] == self.channel_id), None)
+        if channel is None:
+            raise RuntimeError("Buffer: that X account is no longer connected to this Buffer login")
+        if channel["disconnected"]:
+            raise RuntimeError(f"Buffer: reconnect X at {BUFFER_CHANNELS}")
+        return f"@{channel['name']} (via Buffer, free)"
+
+    def publish(self, text, title, images, link, extra, idempotency_key) -> str:
+        post_input = {
+            "text": text,
+            "channelId": self.channel_id,
+            "schedulingType": "automatic",
+            "mode": "shareNow",
+            "assets": [{"image": {"url": extra["image_url"]}}] if extra.get("image_url") else [],
+        }
+        result = buffer_graphql(self.api_key, BUFFER_CREATE_POST, {"input": post_input}, "X post via Buffer")
+        created = result.get("createPost") or {}
+        if "post" not in created:
+            raise RuntimeError(f"X post via Buffer failed: {created.get('message') or created}")
+        return created["post"].get("externalLink") or (f"https://x.com/{self.username}" if self.username else "")
+
+
+def x_client(creds: dict):
+    """Buffer (free) when set up that way, otherwise the paid X API."""
+    return XViaBuffer(creds) if creds.get("via") == "buffer" else X(creds)
+
+
+CLIENTS = {"bluesky": Bluesky, "mastodon": Mastodon, "devto": DevTo, "telegram": Telegram, "discord": Discord,
+           "x": x_client}
 
 
 # ------------------------------------------------------------------ Mastodon: sign in with the browser (no token to copy)
@@ -763,19 +865,39 @@ SETUP = {
         "fields": [("webhook_url", "Webhook URL", True)],
     },
     "x": {
-        "steps": "X is pay-per-use: about $0.20 per post with a link, capped by x_monthly_budget_usd in config.json "
-                 "(default $5 a month). Once: console.x.com > buy a few dollars of credits > your app > User "
-                 "authentication settings: permissions 'Read and write', type 'Web App, Automated App or Bot', "
-                 f"callback URI {X_REDIRECT}, website your GitHub. Then Keys and tokens > OAuth 2.0 Client ID "
-                 "(and Client Secret). Your browser opens next: press Authorize app.",
-        "fields": [("client_id", "OAuth 2.0 Client ID", False),
-                   ("client_secret", "Client Secret (Enter if your app has none)", True)],
+        "steps": "Free through Buffer (X's own API now charges per post). Once: sign up at buffer.com (free plan), "
+                 f"connect your X account at {BUFFER_CHANNELS}, then create an API key at {BUFFER_API_SETTINGS} "
+                 "(opening it now) and paste it here. Type 'api' instead to use the paid X API.",
+        "fields": [("api_key", "Buffer API key (or 'api')", True)],
     },
 }
 
 
+def x_setup(answer: str, ask=input, ask_secret=getpass.getpass) -> dict:
+    """'api' -> paid X API sign-in; anything else is a Buffer API key -> pick the connected X account."""
+    if answer.strip().lower() == "api":
+        print("  Paid X API: about $0.20 per post with a link, capped by x_monthly_budget_usd in config.json. "
+              f"console.x.com > credits > your app > User authentication: 'Read and write', callback {X_REDIRECT}.")
+        client_id = ask("  OAuth 2.0 Client ID: ").strip()
+        client_secret = ask_secret("  Client Secret (Enter if none): ").strip()
+        print("  Opening X in your browser: press Authorize app there.")
+        return x_sign_in(client_id, client_secret)
+    api_key = answer.strip()
+    accounts = [account for account in buffer_x_channels(api_key) if not account["disconnected"]]
+    if not accounts:
+        webbrowser.open(BUFFER_CHANNELS)
+        raise RuntimeError(f"No X account in Buffer yet: connect it at {BUFFER_CHANNELS} (opened), then run this again.")
+    chosen = accounts[0]
+    if len(accounts) > 1:
+        for number, account in enumerate(accounts, 1):
+            print(f"  {number}. @{account['name']}")
+        picked = ask("  Which X account? [1]: ").strip() or "1"
+        chosen = accounts[int(picked) - 1]
+    return {"via": "buffer", "api_key": api_key, "channel_id": chosen["id"], "username": chosen["name"]}
+
+
 def setup_interactive(secrets_path: Path) -> None:
-    print("ReachPilot: connect other platforms (all free except X). Press Enter to skip one.\n")
+    print("ReachPilot: connect other platforms (all free). Press Enter to skip one.\n")
     for channel in AUTO:
         label = LABELS[channel]
         creds = credentials(json.loads(secrets_path.read_text(encoding="utf-8")) if secrets_path.exists() else {})
@@ -789,6 +911,8 @@ def setup_interactive(secrets_path: Path) -> None:
             print()
             continue
         print("  " + SETUP[channel]["steps"])
+        if channel == "x":
+            webbrowser.open(BUFFER_API_SETTINGS)
         values = {}
         for key, prompt, hidden in SETUP[channel]["fields"]:
             values[key] = (getpass.getpass(f"  {prompt}: ") if hidden else input(f"  {prompt}: ")).strip()
@@ -805,10 +929,9 @@ def setup_interactive(secrets_path: Path) -> None:
             except Exception as error:
                 print(f"  {error}\n")
                 continue
-        if channel == "x" and values.get("client_id"):
+        if channel == "x" and values.get("api_key"):
             try:
-                print("  Opening X in your browser: press Authorize app there.")
-                values = x_sign_in(values["client_id"], values.get("client_secret", ""))
+                values = x_setup(values["api_key"])
             except Exception as error:
                 print(f"  {error}\n  Nothing saved for {label}.\n")
                 continue
@@ -820,7 +943,7 @@ def setup_interactive(secrets_path: Path) -> None:
         except Exception as error:
             print(f"  Could not connect: {error}\n  Nothing saved for {label}.\n")
             continue
-        if channel == "x":
+        if channel == "x" and x_is_paid(values):
             values["username"] = who.lstrip("@")  # for post links, without a paid lookup per post
         save_channel(secrets_path, channel, values)
         print(f"  {label} connected as {who}.\n")

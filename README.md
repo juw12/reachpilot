@@ -51,7 +51,7 @@ Every 30 minutes, Windows Task Scheduler runs one pass:
 It also repairs garbled characters in READMEs (text saved in the wrong encoding), skips install/run steps when picking
 feature bullets, and puts links in the first comment.
 
-### Other platforms (official APIs; all free except X)
+### Other platforms (free, official APIs)
 
 Every LinkedIn slot also goes to the platforms you connect, each cut to fit from the same fact-checked post
 (a platform can shorten a post, never add a claim):
@@ -63,14 +63,16 @@ Every LinkedIn slot also goes to the platforms you connect, each cut to fit from
 | Dev.to | an article for launches and releases (max one per project every 60 days), canonical URL back to you | an API key |
 | Telegram | the full post with the first screenshot, in your own channel | a bot token + channel |
 | Discord | the full post with the first screenshot, in your own server | a webhook URL |
-| X | short post (280 characters as X counts them), up to 4 screenshots, one link | an X developer app with a few dollars of pay-per-use credit (setup signs in through your browser) |
+| X | short post (280 characters as X counts them), the project's image, one link | a free Buffer account with your X connected, and a Buffer API key (Buffer publishes it, so no X API fees) |
 
 Each platform publishes and retries on its own (3 attempts within 3 days), so one platform failing never blocks
 LinkedIn or the others. `preview` shows every platform's version.
 
-X charges per post (about $0.015, or $0.20 when the post has a link, and every ReachPilot post links to the
-project), so X posts stop for the month once `x_monthly_budget_usd` in `config.json` would be passed
-(default $5, about 25 posts; 0 turns X off). At the default 3 slots a week that is roughly $2.60 a month.
+X's own API now charges per post, so ReachPilot posts to X through [Buffer](https://buffer.com)'s free plan
+and public API instead: Buffer is an official X partner and publishes the post to your account straight away,
+at no cost. Buffer can't take local files, so the X post carries the README's first image (or GitHub's card for
+the repo). If you'd rather use the paid X API directly, type `api` at the setup prompt; those posts are capped
+by `x_monthly_budget_usd` in `config.json` (about $0.20 per post with a link; default $5 a month).
 
 Once a day `growth.py` grows the audience and points all of it at GitHub:
 

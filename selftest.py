@@ -420,6 +420,56 @@ with tempfile.TemporaryDirectory() as temp_dir:
         channels.requests.post = real_x_post
         channels.SECRETS_PATH = real_secrets_path
 
+
+# X via Buffer (free): account discovery, post payload, no budget cap, setup choice, image choice
+buffer_calls = []
+
+
+def fake_buffer_post(url, **kwargs):
+    buffer_calls.append((url, kwargs))
+    query = kwargs["json"]["query"]
+    if "organizations" in query:
+        return FakeResponse({"data": {"account": {"organizations": [{"id": "org1"}]}}})
+    if "channels(" in query:
+        return FakeResponse({"data": {"channels": [
+            {"id": "li1", "name": "Juwen", "service": "linkedin", "isDisconnected": False},
+            {"id": "tw1", "name": "juw12", "service": "twitter", "isDisconnected": False},
+        ]}})
+    if "createPost" in query:
+        return FakeResponse({"data": {"createPost": {"post": {"id": "p1", "externalLink": "https://x.com/juw12/status/9"}}}})
+    return FakeResponse({"errors": [{"message": "unexpected"}]})
+
+
+real_buffer_post = channels.requests.post
+channels.requests.post = fake_buffer_post
+try:
+    buffer_creds = channels.x_setup("buffer-key", ask=lambda prompt: "1")
+    check(buffer_creds == {"via": "buffer", "api_key": "buffer-key", "channel_id": "tw1", "username": "juw12"},
+          f"x/buffer: setup finds the X account in Buffer ({buffer_creds})")
+    check(channels.x_client(buffer_creds).verify().startswith("@juw12") and isinstance(channels.x_client(buffer_creds), channels.XViaBuffer)
+          and isinstance(channels.x_client({"client_id": "c"}), channels.X), "x/buffer: Buffer creds use Buffer, others the X API")
+    buffer_calls.clear()
+    buffer_url = channels.XViaBuffer(buffer_creds).publish(
+        text=x_post, title="", images=[], link="", extra={"image_url": "https://example.test/shot.png"}, idempotency_key="k")
+    create_call = next(kwargs for url, kwargs in buffer_calls if "createPost" in kwargs["json"]["query"])
+    sent = create_call["json"]["variables"]["input"]
+    check(buffer_url == "https://x.com/juw12/status/9" and create_call["headers"]["Authorization"] == "Bearer buffer-key"
+          and sent == {"text": x_post, "channelId": "tw1", "schedulingType": "automatic", "mode": "shareNow",
+                       "assets": [{"image": {"url": "https://example.test/shot.png"}}]},
+          "x/buffer: posts now to the X channel with text and image")
+finally:
+    channels.requests.post = real_buffer_post
+free_db = sqlite3.connect(":memory:")
+free_secrets = {"channels": {"x": {"via": "buffer", "api_key": "k", "channel_id": "tw1"}}}
+free_config = {"channels": ["x"], "x_monthly_budget_usd": 0}
+free_queued = [channels.prepare(free_db, free_config, free_secrets, f"2026-11-{day:02d} 08:00", "watt-reserve", "launch",
+                                post_body, post_comment, [], facts) for day in (11, 12, 13)]
+check(free_queued == [["x"], ["x"], ["x"]], f"x/buffer: free route ignores the paid budget ({free_queued})")
+check(variants["x"]["extra"]["image_url"] == "https://raw.githubusercontent.com/juw12/watt-reserve/main/shot.png",
+      f"x/buffer: README image used as the post image ({variants['x']['extra'].get('image_url')})")
+check(channels.public_image(type("F", (), {"readme_images": ["https://x.test/a.svg"], "html_url": "https://github.com/juw12/kilat"})())
+      == "https://opengraph.githubassets.com/reachpilot/juw12/kilat", "x/buffer: GitHub card when the README has no photo")
+
 todo = hub.channels_todo({
     "not_connected": ["Bluesky"],
     "failed": [{"slot": "2026-11-11 08:00", "channel": "Mastodon", "error": "HTTP 503"}],
