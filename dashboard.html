@@ -807,6 +807,34 @@ function renderEmail(d) {
       </tbody></table></div>` : `<div class="empty">None.</div>`}</div>`;
 }
 
+function listingsCard(l) {
+  if (!l || !l.projects) return "";
+  const yes = (value, good = "live", bad = "not yet") => value === true ? `<span class="badge good">${good}</span>`
+    : value === false ? `<span class="badge grey">${bad}</span>` : `<span class="hint">–</span>`;
+  const starCell = (r) => `${num(r.stars || 0)}${r.stars_baseline !== null && r.stars_baseline !== undefined && r.stars > r.stars_baseline ? ` <span class="badge good">+${num(r.stars - r.stars_baseline)}</span>` : ""}`;
+  const m8ven = (r) => r.m8ven_grade ? `${r.m8ven_url ? link(r.m8ven_url, r.m8ven_grade) : esc(r.m8ven_grade)}${r.m8ven_grade_baseline && r.m8ven_grade_baseline !== r.m8ven_grade ? ` <span class="hint">was ${esc(r.m8ven_grade_baseline)}</span>` : ""}${r.m8ven_commit ? `<div class="hint">reads ${esc(r.m8ven_commit)}</div>` : ""}` : `<span class="hint">–</span>`;
+  const glama = (r) => r.glama_url ? `${r.glama_live ? link(r.glama_url, "live") : `<span class="badge grey">not yet</span>`}${r.tdqs ? ` <span class="hint">TDQS ${esc(r.tdqs_grade || "")} ${esc(r.tdqs)}/5</span>` : ""}` : `<span class="hint">–</span>`;
+  const badges = (r) => [r.badge_m8ven ? "M8ven" : "", r.badge_glama ? "Glama" : ""].filter(Boolean).join(" + ") || "–";
+  const prBadge = (s) => ({ merged: "good", open: "warn", closed: "bad" }[s] || "grey");
+  return `
+    <div class="card" style="margin-bottom:18px">
+      <h3>Directory listings</h3>
+      <p class="hint">Checked by itself every 6 hours (MCP Registry, M8ven, Glama, mcpservers.org, GitHub stars and PRs). Adds the Glama badge to a README when a listing goes live. Last check ${esc(l.checked_at ? niceDate(l.checked_at) : "never")} · stars counted from ${esc(l.baseline_date || "–")}.</p>
+      <div class="scroll" tabindex="0" role="region" aria-label="Directory listings"><table><thead><tr><th>Project</th><th class="num">Stars</th><th>MCP Registry</th><th>M8ven</th><th>Glama</th><th>mcpservers.org</th><th>README badges</th></tr></thead><tbody>
+      ${l.projects.map((r) => `<tr><td><b>${link(`https://github.com/${r.repo}`, r.id)}</b></td><td class="num">${starCell(r)}</td>
+        <td>${r.mcp_server ? yes(r.registry_active, "active", "missing") : `<span class="hint">n/a</span>`}</td><td>${m8ven(r)}</td><td>${glama(r)}</td>
+        <td>${r.mcp_server ? yes(r.mcpservers_listed, "listed", "waiting") : `<span class="hint">n/a</span>`}</td><td class="hint">${esc(badges(r))}</td></tr>`).join("")}
+      </tbody></table></div>
+      ${(l.prs || []).length ? `<h4 style="margin:14px 0 6px">Pull requests to lists</h4>
+        ${l.prs.map((pr) => `<div>${link(pr.url, pr.key)} <span class="badge ${prBadge(pr.status)}">${esc(pr.status || "?")}</span> <span class="hint">· ${esc(pr.project)}${pr.comments ? ` · ${num(pr.comments)} comment(s)` : ""}</span></div>`).join("")}` : ""}
+      ${(l.steps || []).length ? `<h4 style="margin:14px 0 6px">Your steps (only the ones a script can't do)</h4>
+        ${l.steps.map((s) => `<div class="todo p${s.priority || 2}"><h4>${esc(s.title)}</h4><div class="hint">${esc(s.detail || "")}</div>
+          <div class="actions">${(s.links || []).map((x) => link(x.url, x.label)).join(" ")} ${actionButton(`promote:listingdone:${s.id}`, "Done")}</div></div>`).join("")}`
+        : `<div class="empty" style="margin-top:10px">No listing steps waiting for you.</div>`}
+      <div class="actions" style="margin-top:12px">${actionButton("promote:listings", "Check listings now", true)}</div>
+    </div>`;
+}
+
 function renderPromote(d) {
   const p = d.hub.promote;
   const section = document.getElementById("promote");
@@ -881,6 +909,7 @@ function renderPromote(d) {
     <div class="card" style="margin-bottom:18px"><h3>Recently sent</h3>${p.recent.length ? `<div class="scroll"><table><thead><tr><th>Sent</th><th>Creator</th><th>Project</th><th>Subject</th></tr></thead><tbody>
       ${p.recent.map((r) => `<tr><td>${esc(niceDate(r.at))}</td><td>${link(r.creator.url, r.creator.name)} <span class="badge grey">${esc(r.creator.stage)}</span></td><td>${esc(r.product)}</td><td class="hint">${esc(r.subject)}</td></tr>`).join("")}
       </tbody></table></div>` : `<div class="empty">Nothing sent yet.</div>`}</div>
+    ${listingsCard(p.listings)}
     <div class="card"><h3>Promotion log <span class="hint">(newest first)</span></h3><pre class="log">${esc(p.log.join("\n")) || "No activity yet."}</pre></div>`;
 }
 

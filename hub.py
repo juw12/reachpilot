@@ -323,8 +323,9 @@ def tail(path: Path, lines: int) -> list[str]:
 # ------------------------------------------------------------------ promote module
 
 PROMOTE_SCRIPT = PROMOTE / "promote.py"
-PROMOTE_VERBS = {"approve", "approveall", "send", "skip", "retry", "mark", "mode", "pause", "resume", "plan", "inbox", "discover", "tick"}
-PROMOTE_BACKGROUND = {"discover", "inbox", "tick"}  # slow (network): run without blocking the dashboard
+PROMOTE_VERBS = {"approve", "approveall", "send", "skip", "retry", "mark", "mode", "pause", "resume", "plan", "inbox", "discover", "tick",
+                 "listings", "listingdone"}
+PROMOTE_BACKGROUND = {"discover", "inbox", "tick", "listings"}  # slow (network): run without blocking the dashboard
 
 
 def promote_section() -> dict:
@@ -368,7 +369,8 @@ def promote_action(name: str) -> str:
         subprocess.Popen([str(PYTHONW)] + command[1:], cwd=PROMOTE, creationflags=NO_WINDOW)
         return {"discover": "Searching YouTube for creators in the background; results appear in a few minutes.",
                 "inbox": "Checking for replies in the background.",
-                "tick": "Promotion run started in the background."}[verb]
+                "tick": "Promotion run started in the background.",
+                "listings": "Checking the directory listings in the background; refresh in a minute."}[verb]
     output = subprocess.run(command, cwd=PROMOTE, capture_output=True, text=True, encoding="utf-8", timeout=180, creationflags=NO_WINDOW)
     if output.returncode != 0:
         raise RuntimeError((output.stderr or "promote action failed").strip().splitlines()[-1])
