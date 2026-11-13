@@ -5,6 +5,11 @@ import random
 import sys
 import sqlite3
 import tempfile
+import base64
+import hashlib
+import threading
+import urllib.parse
+import urllib.request
 from pathlib import Path
 
 from openpyxl import Workbook
@@ -244,9 +249,9 @@ check(not any(channels.COMMENT_POINTER.search(part) for part in paragraphs), "ch
 check(tags == ["#OpenSource", "#BuildInPublic", "#PWA"], f"channels: hashtag line split off ({tags})")
 check(parsed_links[0] == ("Try it", "https://juw12.github.io/watt-reserve/"), f"channels: links parsed ({parsed_links[:1]})")
 variants = channels.build_variants(post_body, post_comment, "launch", facts)
-limits = {"bluesky": 300, "mastodon": 500, "telegram": 1024, "discord": 2000}
+limits = {"bluesky": 300, "mastodon": 500, "telegram": 1024, "discord": 2000, "x": 280}
 for name, limit in limits.items():
-    size = len(variants.get(name, {}).get("body", ""))
+    size = (channels.x_length if name == "x" else len)(variants.get(name, {}).get("body", ""))
     check(name in variants and size <= limit, f"channels: {name} fits {limit} chars ({size})")
     check("juw12.github.io/watt-reserve" in variants[name]["body"], f"channels: {name} carries the link")
 check(set(variants) == set(channels.ALL), f"channels: a launch gets every platform ({sorted(variants)})")
@@ -323,6 +328,97 @@ with tempfile.TemporaryDirectory() as temp_dir:
     check(statuses[("2026-11-11 08:00", "mastodon")] == ("failed", channels.MAX_ATTEMPTS),
           f"channels: a failing platform stops after {channels.MAX_ATTEMPTS} tries ({statuses[('2026-11-11 08:00', 'mastodon')]})")
     check(any(call[1] == 1 for call in calls if call[0] == "bluesky"), "channels: screenshot attached")
+
+
+# X: weighted length, monthly budget cap, token refresh (rotating refresh token saved), publish, PKCE sign-in
+check(channels.x_length("see https://juw12.github.io/a/very/long/path/that/x/shortens/") == 4 + 23
+      and channels.x_length("日本") == 4, "x: links count 23, CJK counts 2")
+x_post = variants["x"]["body"]
+check(x_post.count("https://") == 1 and channels.x_cost(x_post) == channels.X_COST_LINK,
+      f"x: one link per post, priced as a link post ({channels.x_cost(x_post)})")
+budget_db = sqlite3.connect(":memory:")
+budget_config = {"channels": ["x"], "x_monthly_budget_usd": 0.3}
+budget_secrets = {"channels": {"x": {"client_id": "id", "access_token": "a", "refresh_token": "r", "expires_at": 0}}}
+first_x = channels.prepare(budget_db, budget_config, budget_secrets, "2026-11-11 08:00", "watt-reserve", "launch",
+                           post_body, post_comment, [], facts)
+second_x = channels.prepare(budget_db, budget_config, budget_secrets, "2026-11-12 08:00", "watt-reserve", "launch",
+                            post_body, post_comment, [], facts)
+check(first_x == ["x"] and second_x == [] and channels.x_spent_this_month(budget_db) == channels.X_COST_LINK,
+      f"x: monthly budget stops queueing ({first_x}, {second_x}, ${channels.x_spent_this_month(budget_db)})")
+zero_budget = channels.prepare(sqlite3.connect(":memory:"), {"channels": ["x"], "x_monthly_budget_usd": 0},
+                               budget_secrets, "2026-11-11 08:00", "watt-reserve", "launch", post_body, post_comment, [], facts)
+check(zero_budget == [], "x: a budget of 0 never posts")
+
+
+class FakeResponse:
+    def __init__(self, payload, status=200):
+        self.payload = payload
+        self.status_code = status
+        self.text = json.dumps(payload)
+        self.headers = {"Content-Type": "application/json"}
+
+    def json(self):
+        return self.payload
+
+
+with tempfile.TemporaryDirectory() as temp_dir:
+    x_calls = []
+
+    def fake_x_post(url, **kwargs):
+        x_calls.append((url, kwargs))
+        if url == channels.X_TOKEN:
+            form = kwargs["data"]
+            if form["grant_type"] == "refresh_token":
+                return FakeResponse({"access_token": "fresh", "refresh_token": "rotated", "expires_in": 7200})
+            return FakeResponse({"access_token": "first", "refresh_token": "r1", "expires_in": 7200})
+        if url.endswith("/2/media/upload"):
+            return FakeResponse({"data": {"id": "m1"}})
+        if url.endswith("/2/tweets"):
+            return FakeResponse({"data": {"id": "123"}}, 201)
+        return FakeResponse({"error": "unexpected"}, 500)
+
+    real_x_post = channels.requests.post
+    real_secrets_path = channels.SECRETS_PATH
+    channels.requests.post = fake_x_post
+    channels.SECRETS_PATH = Path(temp_dir) / "secrets.json"
+    channels.SECRETS_PATH.write_text(json.dumps({"client_id": "linkedin", "channels": {"bluesky": {"handle": "b"}}}))
+    try:
+        shot = Path(temp_dir) / "shot.png"
+        PILImage.new("RGB", (400, 300), "white").save(shot)
+        x_creds = {"client_id": "cid", "client_secret": "sec", "access_token": "old", "refresh_token": "r0",
+                   "expires_at": 0, "username": "juw12"}
+        x_url = channels.X(x_creds).publish(text=x_post, title="", images=[shot], link="", extra={}, idempotency_key="k")
+        saved = json.loads(channels.SECRETS_PATH.read_text())
+        tweet_call = next(kwargs for url, kwargs in x_calls if url.endswith("/2/tweets"))
+        refresh_call = next(kwargs for url, kwargs in x_calls if url == channels.X_TOKEN)
+        check(x_url == "https://x.com/juw12/status/123", f"x: post URL ({x_url})")
+        check(tweet_call["json"] == {"text": x_post, "media": {"media_ids": ["m1"]}}
+              and tweet_call["headers"]["Authorization"] == "Bearer fresh", "x: post sent with screenshot and fresh token")
+        check(refresh_call["auth"] == ("cid", "sec") and refresh_call["data"]["refresh_token"] == "r0",
+              "x: confidential app refreshes with Basic auth")
+        check(saved["channels"]["x"]["refresh_token"] == "rotated" and saved["client_id"] == "linkedin"
+              and "bluesky" in saved["channels"], "x: rotated refresh token saved, other secrets kept")
+
+        def fake_browser(authorize_url):
+            query = urllib.parse.parse_qs(urllib.parse.urlparse(authorize_url).query)
+            fake_browser.challenge = query["code_challenge"][0]
+            callback = f"{channels.X_REDIRECT}?code=abc&state={query['state'][0]}"
+            threading.Thread(target=lambda: urllib.request.urlopen(callback, timeout=10).read(), daemon=True).start()
+
+        x_calls.clear()
+        signed_in = channels.x_sign_in("cid", "", open_browser=fake_browser, wait_seconds=20)
+        exchange = next(kwargs for url, kwargs in x_calls if url == channels.X_TOKEN)
+        verifier = exchange["data"]["code_verifier"]
+        expected_challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
+        check(signed_in["access_token"] == "first" and signed_in["refresh_token"] == "r1"
+              and "client_secret" not in signed_in and exchange["auth"] is None
+              and exchange["data"]["client_id"] == "cid" and exchange["data"]["code"] == "abc",
+              "x: browser sign-in swaps the code for tokens (public app)")
+        check(fake_browser.challenge == expected_challenge and 43 <= len(verifier) <= 128,
+              "x: PKCE S256 challenge matches the verifier")
+    finally:
+        channels.requests.post = real_x_post
+        channels.SECRETS_PATH = real_secrets_path
 
 todo = hub.channels_todo({
     "not_connected": ["Bluesky"],
@@ -437,8 +533,8 @@ check(made == {"handle": "me.bsky.social", "app_password": "wxyz-wxyz-wxyz-wxyz"
 import growth
 
 check([analytics.platform_of(name) for name in ("linkedin.com", "lnkd.in", "mastodon.social", "bsky.app", "dev.to",
-                                                  "google.com", "github.com", "example.org")]
-      == ["LinkedIn", "LinkedIn", "Mastodon", "Bluesky", "Dev.to", "Search", "GitHub", "Other"],
+                                                  "t.co", "x.com", "netflix.com", "google.com", "github.com", "example.org")]
+      == ["LinkedIn", "LinkedIn", "Mastodon", "Bluesky", "Dev.to", "X", "X", "Other", "Search", "GitHub", "Other"],
       "growth: GitHub referrers mapped to platforms")
 people = [{"id": str(number), "bot": number == 3} for number in range(40)]
 targets = growth.follow_back_targets(people, {"0", "1"}, cap=25)

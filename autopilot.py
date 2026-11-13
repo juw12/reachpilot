@@ -8,8 +8,8 @@ Runs every 30 minutes from Windows Task Scheduler (`autopilot.py install`). Each
        -> recycled project with a fresh angle (Thompson sampling on your engagement data),
   4. never posts near-duplicates, invented numbers, or more than the weekly cap.
 
-Each post also goes to the other platforms you connected (channels.py): Bluesky, Mastodon, Dev.to, Telegram and
-Discord. Each platform publishes and retries on its own.
+Each post also goes to the other platforms you connected (channels.py): Bluesky, Mastodon, Dev.to, Telegram,
+Discord and X (pay-per-use, capped by x_monthly_budget_usd). Each platform publishes and retries on its own.
 
 Commands:  init | auth | channels | tick | preview [N] | status | install | uninstall
 Kill switch: create a file named PAUSE in this folder.

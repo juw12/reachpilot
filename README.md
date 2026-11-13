@@ -51,7 +51,7 @@ Every 30 minutes, Windows Task Scheduler runs one pass:
 It also repairs garbled characters in READMEs (text saved in the wrong encoding), skips install/run steps when picking
 feature bullets, and puts links in the first comment.
 
-### Other platforms (free, official APIs)
+### Other platforms (official APIs; all free except X)
 
 Every LinkedIn slot also goes to the platforms you connect, each cut to fit from the same fact-checked post
 (a platform can shorten a post, never add a claim):
@@ -63,9 +63,14 @@ Every LinkedIn slot also goes to the platforms you connect, each cut to fit from
 | Dev.to | an article for launches and releases (max one per project every 60 days), canonical URL back to you | an API key |
 | Telegram | the full post with the first screenshot, in your own channel | a bot token + channel |
 | Discord | the full post with the first screenshot, in your own server | a webhook URL |
+| X | short post (280 characters as X counts them), up to 4 screenshots, one link | an X developer app with a few dollars of pay-per-use credit (setup signs in through your browser) |
 
 Each platform publishes and retries on its own (3 attempts within 3 days), so one platform failing never blocks
-LinkedIn or the others. X is left out on purpose: its API is pay-per-post. `preview` shows every platform's version.
+LinkedIn or the others. `preview` shows every platform's version.
+
+X charges per post (about $0.015, or $0.20 when the post has a link, and every ReachPilot post links to the
+project), so X posts stop for the month once `x_monthly_budget_usd` in `config.json` would be passed
+(default $5, about 25 posts; 0 turns X off). At the default 3 slots a week that is roughly $2.60 a month.
 
 Once a day `growth.py` grows the audience and points all of it at GitHub:
 
@@ -106,7 +111,7 @@ python autopilot.py init             # baseline your repos (+ optional seed_queu
 python autopilot.py auth             # LinkedIn app with "Share on LinkedIn" + "Sign In with LinkedIn (OpenID)",
                                      # redirect URL http://localhost:8765/callback
 python autopilot.py preview 5        # first result: the next 5 posts as drafts in drafts/, nothing is posted
-python autopilot.py channels         # optional: connect Bluesky, Mastodon, Dev.to, Telegram, Discord (each verified)
+python autopilot.py channels         # optional: connect Bluesky, Mastodon, Dev.to, Telegram, Discord, X (each verified)
 python autopilot.py goatcounter      # optional: free GoatCounter site + token for "Try it" clicks
 python autopilot.py install          # scheduled task \ReachPilot\LinkedIn posts: every 30 min + at sign-in
 python selfupdate.py install         # optional: task \ReachPilot\Updates keeps the code current (fast-forward only)

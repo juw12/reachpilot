@@ -49,8 +49,10 @@
     "mastodon",
     "devto",
     "telegram",
-    "discord"
+    "discord",
+    "x"
   ],
+  "x_monthly_budget_usd": 5,
   "goatcounter_code": "juw12",
   "profile": {
     "name": "Juwen Lie",

@@ -24,6 +24,7 @@ PLATFORM_REFERRERS = [
     ("Mastodon", re.compile(r"mastodon|mstdn|fosstodon|hachyderm|infosec\.exchange", re.IGNORECASE)),
     ("Bluesky", re.compile(r"bsky", re.IGNORECASE)),
     ("Dev.to", re.compile(r"dev\.to", re.IGNORECASE)),
+    ("X", re.compile(r"(^|\.)(t\.co|x\.com|twitter\.com)$", re.IGNORECASE)),
     ("Search", re.compile(r"google|bing|duckduckgo|yahoo|baidu", re.IGNORECASE)),
     ("GitHub", re.compile(r"github", re.IGNORECASE)),
 ]

@@ -1,12 +1,14 @@
-"""Other platforms for every ReachPilot post: Bluesky, Mastodon, Dev.to, Telegram, Discord.
+"""Other platforms for every ReachPilot post: Bluesky, Mastodon, Dev.to, Telegram, Discord, X.
 
-Free, official APIs only (no scraping, no browser bots, no paid tiers):
+Official APIs only (no scraping, no browser bots). All free except X, which is pay-per-use and capped:
   bluesky    AT Protocol; setup turns your password into an    short post (300 chars), screenshots, clickable link
              app password once and stores only that
   mastodon   your instance's REST API with an access token      short post (500 chars), screenshots
   devto      Forem API key                                      an article per launch / release, canonical URL back to you
   telegram   Bot API, posts into your own channel               full post with the first screenshot
   discord    a webhook into your own server                     full post with the first screenshot
+  x          X API v2, OAuth 2.0 (PKCE) sign-in in the browser   short post (280 weighted chars), screenshots, link;
+             pay-per-use credits, so a monthly budget cap        ~$0.20 per post with a link (x_monthly_budget_usd)
 
 Every variant is cut from the LinkedIn post that already passed the no-invented-facts guard, so a platform can
 shorten a post but never add a claim; anything with a number not in the source is dropped.
@@ -14,11 +16,14 @@ Credentials live in secrets.json under "channels" (git-ignored). Set up with:  p
 """
 from __future__ import annotations
 
+import base64
 import getpass
+import hashlib
 import io
 import json
 import re
 import secrets as token_tools
+import time
 import urllib.parse
 import webbrowser
 from datetime import datetime, timedelta, timezone
@@ -30,7 +35,7 @@ from PIL import Image
 
 import composer
 
-AUTO = ["bluesky", "mastodon", "devto", "telegram", "discord"]
+AUTO = ["bluesky", "mastodon", "devto", "telegram", "discord", "x"]
 ALL = AUTO
 LABELS = {
     "bluesky": "Bluesky",
@@ -38,11 +43,19 @@ LABELS = {
     "devto": "Dev.to",
     "telegram": "Telegram",
     "discord": "Discord",
+    "x": "X",
 }
 MAX_ATTEMPTS = 3
 RETRY_WINDOW_DAYS = 3
 DEVTO_COOLDOWN_DAYS = 60
 TIMEOUT = 60
+SECRETS_PATH = Path(__file__).with_name("secrets.json")  # X rotates its refresh token on every use; saved here
+
+# X API pay-per-use prices (docs.x.com pricing, Nov 2026): a post costs $0.015, or $0.20 when it contains a URL.
+X_COST_POST = 0.015
+X_COST_LINK = 0.20
+X_DEFAULT_MONTHLY_BUDGET = 5.0  # USD; override with "x_monthly_budget_usd" in config.json (0 = never post to X)
+X_URL_WEIGHT = 23  # X counts every link as 23 characters (t.co)
 
 URL_PATTERN = re.compile(r"https?://[^\s)\]>]+")
 HASHTAG_PATTERN = re.compile(r"(?<![\w#])#([A-Za-z][A-Za-z0-9_]*)")
@@ -116,13 +129,30 @@ def _truncate(text: str, limit: int) -> str:
     return cut[: cut.rfind(" ")].rstrip(",;:- ") + "…" if " " in cut else cut + "…"
 
 
-def fit(paragraphs: list[str], tail: str, limit: int) -> str:
+X_LIGHT_RANGES = ((0, 4351), (8192, 8205), (8208, 8223), (8242, 8247))
+
+
+def x_length(text: str) -> int:
+    """Length as X counts it: every link is 23, Latin text 1 per character, CJK and emoji 2."""
+    total = 0
+    position = 0
+    for match in URL_PATTERN.finditer(text):
+        total += _x_plain_length(text[position:match.start()]) + X_URL_WEIGHT
+        position = match.end()
+    return total + _x_plain_length(text[position:])
+
+
+def _x_plain_length(text: str) -> int:
+    return sum(1 if any(low <= ord(char) <= high for low, high in X_LIGHT_RANGES) else 2 for char in text)
+
+
+def fit(paragraphs: list[str], tail: str, limit: int, measure=len) -> str:
     """As many whole paragraphs as fit before the tail (links, tags); the first one is shortened if it alone is too long."""
-    room = limit - len(tail)
+    room = limit - measure(tail)
     kept: list[str] = []
     for part in paragraphs:
         candidate = "\n\n".join(kept + [part])
-        if len(candidate) <= room:
+        if measure(candidate) <= room:
             kept.append(part)
         elif not kept:
             kept.append(_truncate(part, room))
@@ -132,7 +162,8 @@ def fit(paragraphs: list[str], tail: str, limit: int) -> str:
     return ("\n\n".join(kept) + tail).strip()
 
 
-def short_post(body: str, comment: str, limit: int, max_links: int, max_tags: int, labelled: bool = True) -> str:
+def short_post(body: str, comment: str, limit: int, max_links: int, max_tags: int, labelled: bool = True,
+               measure=len) -> str:
     paragraphs, tags, links = split_post(body, comment)
     link_lines = [f"{label}: {url}" if labelled and label else url for label, url in links[:max_links]]
     tail = ""
@@ -140,7 +171,7 @@ def short_post(body: str, comment: str, limit: int, max_links: int, max_tags: in
         tail += "\n\n" + "\n".join(link_lines)
     if tags and max_tags:
         tail += "\n\n" + " ".join(tags[:max_tags])
-    return fit(paragraphs, tail, limit)
+    return fit(paragraphs, tail, limit, measure)
 
 
 def primary_link(comment: str, facts=None) -> str:
@@ -196,11 +227,14 @@ def build_variants(body: str, comment: str, angle: str | None, facts=None, chann
         "mastodon": dict(limit=500, max_links=2, max_tags=3),
         "telegram": dict(limit=1024, max_links=3, max_tags=3),
         "discord": dict(limit=2000, max_links=3, max_tags=0),
+        "x": dict(limit=280, max_links=1, max_tags=2, labelled=False, measure=x_length),
     }
     link = primary_link(comment, facts)
     for channel, rules in short.items():
         if channel in channels:
             text = short_post(body, comment, **rules)
+            if channel == "x" and x_length(text) > rules["limit"]:
+                continue
             if text and not composer.invented_numbers(text, source):
                 variants[channel] = {"title": "", "body": text, "extra": {"link": link}}
     if "devto" in channels and angle in ("launch", "update"):
@@ -226,6 +260,10 @@ def prepare(db, config: dict, secrets: dict, slot: str, repo: str | None, angle:
         ).fetchone()[0]
         if recent and datetime.now() - datetime.strptime(recent[:16], "%Y-%m-%d %H:%M") < timedelta(days=DEVTO_COOLDOWN_DAYS):
             wanted.remove("devto")
+    if "x" in wanted and x_spent_this_month(db) + X_COST_LINK > x_monthly_budget(config):
+        wanted.remove("x")
+    if not wanted:  # build_variants treats an empty list as 'every platform'
+        return []
     variants = build_variants(body, comment, angle, facts, wanted)
     stamp = datetime.now().strftime("%Y-%m-%d %H:%M")
     for channel, variant in variants.items():
@@ -233,10 +271,29 @@ def prepare(db, config: dict, secrets: dict, slot: str, repo: str | None, angle:
             """INSERT OR IGNORE INTO channel_posts(slot, channel, repo, angle, title, body, extra, images, status, url, created_at)
                VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
             (slot, channel, repo, angle, variant["title"], variant["body"], json.dumps(variant["extra"]),
-             json.dumps(images if channel in ("bluesky", "mastodon", "telegram", "discord") else []), "ready", None, stamp),
+             json.dumps(images if channel in ("bluesky", "mastodon", "telegram", "discord", "x") else []), "ready", None, stamp),
         )
     db.commit()
     return list(variants)
+
+
+def x_monthly_budget(config: dict) -> float:
+    return float(config.get("x_monthly_budget_usd", X_DEFAULT_MONTHLY_BUDGET))
+
+
+def x_cost(text: str) -> float:
+    return X_COST_LINK if URL_PATTERN.search(text or "") else X_COST_POST
+
+
+def x_spent_this_month(db) -> float:
+    """Estimated X API spend this calendar month: posts made plus posts still queued (they will be charged)."""
+    ensure_schema(db)
+    month = datetime.now().strftime("%Y-%m")
+    rows = db.execute(
+        "SELECT body FROM channel_posts WHERE channel='x' AND status IN ('posted','ready') AND created_at LIKE ?",
+        (month + "%",),
+    ).fetchall()
+    return round(sum(x_cost(body) for (body,) in rows), 3)
 
 
 def publish_pending(db, secrets: dict, rewrite, log) -> list[tuple[str, str, str]]:
@@ -493,7 +550,49 @@ class Discord:
             if message.get("guild_id") else ""
 
 
-CLIENTS = {"bluesky": Bluesky, "mastodon": Mastodon, "devto": DevTo, "telegram": Telegram, "discord": Discord}
+class X:
+    """X API v2 with an OAuth 2.0 user token. Access tokens last 2 hours; the refresh token rotates on every use."""
+    API = "https://api.x.com"
+
+    def __init__(self, creds: dict):
+        self.creds = creds  # same dict as in secrets, so a refreshed token is used by the next post in this run
+
+    def token(self) -> str:
+        if float(self.creds.get("expires_at", 0)) - 120 > time.time():
+            return self.creds["access_token"]
+        refreshed = _x_token_request(self.creds, {
+            "grant_type": "refresh_token",
+            "refresh_token": self.creds["refresh_token"],
+        }, "X token refresh")
+        self.creds.update(refreshed)
+        save_channel(SECRETS_PATH, "x", self.creds)  # the old refresh token is now dead: save the new one at once
+        return self.creds["access_token"]
+
+    def verify(self) -> str:
+        me = _check(requests.get(f"{self.API}/2/users/me", headers={"Authorization": f"Bearer {self.token()}"},
+                                 timeout=TIMEOUT), "X sign-in").json()
+        return "@" + me["data"]["username"]
+
+    def publish(self, text, title, images, link, extra, idempotency_key) -> str:
+        headers = {"Authorization": f"Bearer {self.token()}"}
+        media_ids = []
+        for path in images[:4]:
+            data, _, _ = jpeg(path, 4_900_000)
+            media = _check(requests.post(
+                f"{self.API}/2/media/upload", headers=headers,
+                files={"media": (path.stem + ".jpg", data, "image/jpeg")},
+                data={"media_category": "tweet_image", "media_type": "image/jpeg"}, timeout=120,
+            ), "X image upload").json()
+            media_ids.append(media["data"]["id"])
+        payload = {"text": text}
+        if media_ids:
+            payload["media"] = {"media_ids": media_ids}
+        created = _check(requests.post(f"{self.API}/2/tweets", headers=headers, json=payload, timeout=TIMEOUT),
+                         "X post").json()
+        return f"https://x.com/{self.creds.get('username') or 'i/web'}/status/{created['data']['id']}"
+
+
+CLIENTS = {"bluesky": Bluesky, "mastodon": Mastodon, "devto": DevTo, "telegram": Telegram, "discord": Discord, "x": X}
 
 
 # ------------------------------------------------------------------ Mastodon: sign in with the browser (no token to copy)
@@ -503,17 +602,9 @@ MASTODON_REDIRECT = f"http://127.0.0.1:{MASTODON_PORT}/callback"
 MASTODON_SCOPES = "read:accounts read:follows write:statuses write:media write:accounts write:follows"
 
 
-def mastodon_sign_in(instance: str, open_browser=webbrowser.open, wait_seconds: int = 300, trace=None) -> dict:
-    """Register a ReachPilot app on the instance, open its Authorize page, catch the code on localhost, swap it for a token."""
-    base = instance.strip().rstrip("/")
-    base = base if base.startswith("http") else "https://" + base
-    app = _check(requests.post(f"{base}/api/v1/apps", data={
-        "client_name": "ReachPilot",
-        "redirect_uris": MASTODON_REDIRECT,
-        "scopes": MASTODON_SCOPES,
-        "website": "https://github.com/juw12/reachpilot",
-    }, timeout=TIMEOUT), "Mastodon app registration").json()
-    state = token_tools.token_urlsafe(16)
+def browser_authorize(authorize_url: str, port: int, service: str, open_browser=webbrowser.open,
+                      wait_seconds: int = 300, trace=None) -> dict:
+    """Open an OAuth Authorize page and catch the redirect (?code=...&state=...) on 127.0.0.1:<port>."""
     received: dict = {}
 
     class Handler(BaseHTTPRequestHandler):
@@ -530,20 +621,13 @@ def mastodon_sign_in(instance: str, open_browser=webbrowser.open, wait_seconds: 
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.end_headers()
-            self.wfile.write("<h2>ReachPilot is connected to Mastodon. You can close this tab.</h2>".encode())
+            self.wfile.write(f"<h2>ReachPilot is connected to {service}. You can close this tab.</h2>".encode())
 
         def log_message(self, *args):
             pass
 
-    server = HTTPServer(("127.0.0.1", MASTODON_PORT), Handler)
+    server = HTTPServer(("127.0.0.1", port), Handler)
     server.timeout = 5
-    authorize_url = f"{base}/oauth/authorize?" + urllib.parse.urlencode({
-        "client_id": app["client_id"],
-        "redirect_uri": MASTODON_REDIRECT,
-        "response_type": "code",
-        "scope": MASTODON_SCOPES,
-        "state": state,
-    })
     if trace:
         trace("AUTHORIZE " + authorize_url.split("?")[0])
     open_browser(authorize_url)
@@ -551,6 +635,28 @@ def mastodon_sign_in(instance: str, open_browser=webbrowser.open, wait_seconds: 
     while "code" not in received and "error" not in received and datetime.now() < deadline:
         server.handle_request()
     server.server_close()
+    return received
+
+
+def mastodon_sign_in(instance: str, open_browser=webbrowser.open, wait_seconds: int = 300, trace=None) -> dict:
+    """Register a ReachPilot app on the instance, open its Authorize page, catch the code on localhost, swap it for a token."""
+    base = instance.strip().rstrip("/")
+    base = base if base.startswith("http") else "https://" + base
+    app = _check(requests.post(f"{base}/api/v1/apps", data={
+        "client_name": "ReachPilot",
+        "redirect_uris": MASTODON_REDIRECT,
+        "scopes": MASTODON_SCOPES,
+        "website": "https://github.com/juw12/reachpilot",
+    }, timeout=TIMEOUT), "Mastodon app registration").json()
+    state = token_tools.token_urlsafe(16)
+    authorize_url = f"{base}/oauth/authorize?" + urllib.parse.urlencode({
+        "client_id": app["client_id"],
+        "redirect_uri": MASTODON_REDIRECT,
+        "response_type": "code",
+        "scope": MASTODON_SCOPES,
+        "state": state,
+    })
+    received = browser_authorize(authorize_url, MASTODON_PORT, "Mastodon", open_browser, wait_seconds, trace)
     if received.get("state") != state or "code" not in received:
         raise RuntimeError(f"Mastodon sign-in failed: {received.get('error_description') or received.get('error') or 'timed out'}")
     token = _check(requests.post(f"{base}/oauth/token", data={
@@ -562,6 +668,58 @@ def mastodon_sign_in(instance: str, open_browser=webbrowser.open, wait_seconds: 
         "scope": MASTODON_SCOPES,
     }, timeout=TIMEOUT), "Mastodon token").json()
     return {"instance": base, "access_token": token["access_token"]}
+
+
+# ------------------------------------------------------------------ X: OAuth 2.0 with PKCE in the browser
+
+X_PORT = 8768
+X_REDIRECT = f"http://127.0.0.1:{X_PORT}/callback"
+X_SCOPES = "tweet.read tweet.write users.read media.write offline.access"
+X_AUTHORIZE = "https://x.com/i/oauth2/authorize"
+X_TOKEN = "https://api.x.com/2/oauth2/token"
+
+
+def _x_token_request(creds: dict, form: dict, what: str) -> dict:
+    """POST to X's token endpoint. A confidential app (with a client secret) uses Basic auth, a public one sends its id."""
+    secret = creds.get("client_secret")
+    form = {**form, "client_id": creds["client_id"]}
+    token = _check(requests.post(X_TOKEN, data=form, auth=(creds["client_id"], secret) if secret else None,
+                                 timeout=TIMEOUT), what).json()
+    return {
+        "access_token": token["access_token"],
+        "refresh_token": token.get("refresh_token") or creds.get("refresh_token", ""),
+        "expires_at": time.time() + int(token.get("expires_in", 7200)),
+    }
+
+
+def x_sign_in(client_id: str, client_secret: str = "", open_browser=webbrowser.open, wait_seconds: int = 300,
+              trace=None) -> dict:
+    """Open X's Authorize page (PKCE), catch the code on localhost, swap it for an access + refresh token."""
+    verifier = token_tools.token_urlsafe(64)[:96]
+    challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
+    state = token_tools.token_urlsafe(16)
+    authorize_url = X_AUTHORIZE + "?" + urllib.parse.urlencode({
+        "response_type": "code",
+        "client_id": client_id,
+        "redirect_uri": X_REDIRECT,
+        "scope": X_SCOPES,
+        "state": state,
+        "code_challenge": challenge,
+        "code_challenge_method": "S256",
+    })
+    received = browser_authorize(authorize_url, X_PORT, "X", open_browser, wait_seconds, trace)
+    if received.get("state") != state or "code" not in received:
+        raise RuntimeError(f"X sign-in failed: {received.get('error_description') or received.get('error') or 'timed out'}")
+    creds = {"client_id": client_id}
+    if client_secret:
+        creds["client_secret"] = client_secret
+    creds.update(_x_token_request(creds, {
+        "grant_type": "authorization_code",
+        "code": received["code"],
+        "redirect_uri": X_REDIRECT,
+        "code_verifier": verifier,
+    }, "X token"))
+    return creds
 
 
 def save_channel(secrets_path: Path, channel: str, values: dict | None) -> None:
@@ -604,11 +762,20 @@ SETUP = {
         "steps": "Your server > Server settings > Integrations > Webhooks > New webhook > pick the channel > Copy webhook URL.",
         "fields": [("webhook_url", "Webhook URL", True)],
     },
+    "x": {
+        "steps": "X is pay-per-use: about $0.20 per post with a link, capped by x_monthly_budget_usd in config.json "
+                 "(default $5 a month). Once: console.x.com > buy a few dollars of credits > your app > User "
+                 "authentication settings: permissions 'Read and write', type 'Web App, Automated App or Bot', "
+                 f"callback URI {X_REDIRECT}, website your GitHub. Then Keys and tokens > OAuth 2.0 Client ID "
+                 "(and Client Secret). Your browser opens next: press Authorize app.",
+        "fields": [("client_id", "OAuth 2.0 Client ID", False),
+                   ("client_secret", "Client Secret (Enter if your app has none)", True)],
+    },
 }
 
 
 def setup_interactive(secrets_path: Path) -> None:
-    print("ReachPilot: connect other platforms (all free). Press Enter to skip one.\n")
+    print("ReachPilot: connect other platforms (all free except X). Press Enter to skip one.\n")
     for channel in AUTO:
         label = LABELS[channel]
         creds = credentials(json.loads(secrets_path.read_text(encoding="utf-8")) if secrets_path.exists() else {})
@@ -638,6 +805,13 @@ def setup_interactive(secrets_path: Path) -> None:
             except Exception as error:
                 print(f"  {error}\n")
                 continue
+        if channel == "x" and values.get("client_id"):
+            try:
+                print("  Opening X in your browser: press Authorize app there.")
+                values = x_sign_in(values["client_id"], values.get("client_secret", ""))
+            except Exception as error:
+                print(f"  {error}\n  Nothing saved for {label}.\n")
+                continue
         if not all(values.values()):
             print("  Skipped (empty value).\n")
             continue
@@ -646,6 +820,8 @@ def setup_interactive(secrets_path: Path) -> None:
         except Exception as error:
             print(f"  Could not connect: {error}\n  Nothing saved for {label}.\n")
             continue
+        if channel == "x":
+            values["username"] = who.lstrip("@")  # for post links, without a paid lookup per post
         save_channel(secrets_path, channel, values)
         print(f"  {label} connected as {who}.\n")
     final = credentials(json.loads(secrets_path.read_text(encoding="utf-8")) if secrets_path.exists() else {})
