@@ -3,9 +3,10 @@
 </p>
 
 <p align="center">
-  <b>Turns your GitHub into a LinkedIn schedule.</b><br>
+  <b>Turns your GitHub into a posting schedule.</b><br>
   For developers who ship side projects but never get round to posting them. ReachPilot writes each post from
-  your repo's real facts, adds a fresh screenshot, posts it through LinkedIn's official API and learns which projects people click.
+  your repo's real facts, adds a fresh screenshot, posts it through LinkedIn's official API, cuts it to fit Bluesky,
+  Mastodon, Dev.to, and X, Threads and Substack (free through Buffer), and learns which projects people click.
 </p>
 
 <p align="center">
