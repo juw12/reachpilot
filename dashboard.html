@@ -52,7 +52,7 @@
   main { max-width: 1180px; margin: 0 auto; padding: 20px; }
   @media (min-width: 761px) { .navrow { display: contents; } .more { display: none; } }
   section[hidden] { display: none; }
-nav button[hidden] { display: none !important; }
+  nav button[hidden] { display: none !important; }
   h2 { font-size: 18px; margin: 0 0 12px; }
   h3 { font-size: 15px; margin: 0 0 10px; }
   .grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(165px, 1fr)); margin-bottom: 18px; }
@@ -189,7 +189,7 @@ nav button[hidden] { display: none !important; }
   header.top { background: var(--bg); border-bottom: 2px solid var(--ink); }
   .brand { font-size: 19px; }
   @media (min-width: 761px) {
-    nav button { border-radius: 0; }
+    nav button { border-radius: 0; padding: 8px 8px; }
     nav button:hover { background: none; text-decoration: underline; text-underline-offset: 6px; }
     nav button[aria-selected="true"] { background: none; color: var(--ink); text-decoration: underline 2px var(--blue); text-underline-offset: 8px; }
   }
@@ -230,7 +230,7 @@ nav button[hidden] { display: none !important; }
       <button role="tab" data-tab="jobs">Jobs</button>
       <button role="tab" class="sec" data-tab="email">Email</button>
       <button role="tab" class="sec" data-tab="promote">Promote</button>
-<button role="tab" class="sec" data-tab="podcast" hidden>Podcast</button>
+      <button role="tab" class="sec" data-tab="podcast" hidden>Podcast</button>
       <button role="tab" class="sec" data-tab="log">Log</button>
     </nav>
     <button type="button" class="more" id="nav-more" aria-expanded="false" aria-controls="tabs">More ▾</button>
