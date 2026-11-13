@@ -463,7 +463,8 @@ def track_links(config, db, text: str) -> str:
     """Swap live-site links for tracked go-links (publishing any missing go page first).
 
     A failed or slow go-page sync must not block the post: keep the existing cached
-    go_pages, log a warning, and post with the plain link.
+    go_pages, log a warning, and post: links that already have a go page are still tracked,
+    new ones go out as the plain link.
     """
     goat = trylinks.load_goatcounter(config, SECRETS_PATH)
     if not goat or not text:

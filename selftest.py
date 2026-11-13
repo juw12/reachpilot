@@ -153,8 +153,8 @@ config = {"github_user": "juw12", "goatcounter_code": "juw12"}
 text = "Try it: https://juw12.github.io/watt-reserve/\nNew: https://juw12.github.io/dawn-falcon/"
 with mock.patch("autopilot.trylinks.sync_go_pages", side_effect=RuntimeError("diverged .pages")):
     out = autopilot.track_links(config, track_db, text)
-check(out == text and "go/watt-reserve" in out,
-      f"track_links: a failed go-page sync keeps the plain link and does not crash ({out!r})")
+check("go/watt-reserve/" in out and "juw12.github.io/dawn-falcon/" in out and "go/dawn-falcon" not in out,
+      f"track_links: a failed go-page sync keeps the plain link for new pages, cached go-links still used ({out!r})")
 stored = json.loads(track_db.execute("SELECT value FROM kv WHERE key='go_pages'").fetchone()[0])
 check(stored == ["watt-reserve"],
       f"track_links: a failed sync preserves the cached go_pages, doesn't overwrite with [] ({stored})")
@@ -536,6 +536,10 @@ try:
           "hub: podcast feed link + review state")
     check(len(section["series"]) == 3 and all(item["next_run"] for item in section["series"]),
           f"hub: next run per series computed ({[item['next_run'] for item in section['series']]})")
+    friday_after_run = hub._podcast_series_next_run({"days": ["Friday"], "time": "07:30"}, datetime(2026, 11, 13, 9, 0))
+    friday_before_run = hub._podcast_series_next_run({"days": ["Friday"], "time": "07:30"}, datetime(2026, 11, 13, 6, 0))
+    check(friday_after_run.startswith("Fri 20 Nov") and friday_before_run.startswith("Fri 13 Nov"),
+          f"hub: on a series' own day after its time, the next run is next week ({friday_after_run!r}, {friday_before_run!r})")
     check(section["published_by_day"] == {"2026-11-01": 1}, "hub: podcast episodes per day")
     check(section["last_run"].get("held") is True and section["last_run"].get("awaiting_review") == 1,
           "hub: last run's held state reaches the tile")

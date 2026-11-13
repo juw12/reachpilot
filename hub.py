@@ -386,7 +386,7 @@ def _podcast_series_next_run(series: dict, now: datetime) -> str:
     except ValueError:
         return ""
     day = now.date()
-    for _ in range(7):
+    for _ in range(8):  # 8 days: on the series' own weekday after its time, the next run is a week later
         if day.weekday() in wanted:
             candidate = datetime(day.year, day.month, day.day, hour, minute)
             if candidate > now:
