@@ -1,4 +1,4 @@
-"""Other platforms for every ReachPilot post: Bluesky, Mastodon, Dev.to, Telegram, Discord, X.
+"""Other platforms for every ReachPilot post: Bluesky, Mastodon, Dev.to, Telegram, Discord, X, Threads, Substack.
 
 Official APIs only (no scraping, no browser bots), all free:
   bluesky    AT Protocol; setup turns your password into an    short post (300 chars), screenshots, clickable link
@@ -10,6 +10,8 @@ Official APIs only (no scraping, no browser bots), all free:
   x          free through Buffer's API: Buffer (an official X     short post (280 weighted chars), project image, link
              partner) publishes to your X account, no X fees.
              Optional fallback: the paid X API v2 (OAuth 2.0 PKCE), capped by x_monthly_budget_usd
+  threads    free through the same Buffer key                    short post (500 chars), one tag, project image, link
+  substack   free through the same Buffer key (Substack Notes)   the post with links, project image
 
 Every variant is cut from the LinkedIn post that already passed the no-invented-facts guard, so a platform can
 shorten a post but never add a claim; anything with a number not in the source is dropped.
@@ -36,7 +38,7 @@ from PIL import Image
 
 import composer
 
-AUTO = ["bluesky", "mastodon", "devto", "telegram", "discord", "x"]
+AUTO = ["bluesky", "mastodon", "devto", "telegram", "discord", "x", "threads", "substack"]
 ALL = AUTO
 LABELS = {
     "bluesky": "Bluesky",
@@ -45,6 +47,8 @@ LABELS = {
     "telegram": "Telegram",
     "discord": "Discord",
     "x": "X",
+    "threads": "Threads",
+    "substack": "Substack",
 }
 MAX_ATTEMPTS = 3
 RETRY_WINDOW_DAYS = 3
@@ -61,6 +65,8 @@ BUFFER_API = "https://api.buffer.com"
 BUFFER_API_SETTINGS = "https://publish.buffer.com/settings/api"
 BUFFER_CHANNELS = "https://publish.buffer.com/channels"
 BUFFER_X_SERVICES = ("twitter", "x")
+BUFFER_SERVICES = {"x": BUFFER_X_SERVICES, "threads": ("threads",), "substack": ("substack",)}
+BUFFER_ONLY = ("threads", "substack")  # channels that only exist through Buffer
 PUBLIC_IMAGE = re.compile(r"^https://\S+\.(png|jpe?g|webp)(\?\S*)?$", re.I)
 
 URL_PATTERN = re.compile(r"https?://[^\s)\]>]+")
@@ -246,6 +252,8 @@ def build_variants(body: str, comment: str, angle: str | None, facts=None, chann
         "telegram": dict(limit=1024, max_links=3, max_tags=3),
         "discord": dict(limit=2000, max_links=3, max_tags=0),
         "x": dict(limit=280, max_links=1, max_tags=2, labelled=False, measure=x_length),
+        "threads": dict(limit=500, max_links=1, max_tags=1, labelled=False),  # Threads links one topic per post
+        "substack": dict(limit=1500, max_links=2, max_tags=0),
     }
     link = primary_link(comment, facts)
     for channel, rules in short.items():
@@ -255,8 +263,8 @@ def build_variants(body: str, comment: str, angle: str | None, facts=None, chann
                 continue
             if text and not composer.invented_numbers(text, source):
                 extra = {"link": link}
-                if channel == "x":
-                    extra["image_url"] = public_image(facts)
+                if channel in BUFFER_SERVICES:
+                    extra["image_url"] = public_image(facts)  # Buffer takes hosted images only
                 variants[channel] = {"title": "", "body": text, "extra": extra}
     if "devto" in channels and angle in ("launch", "update"):
         article = devto_article(body, comment, facts)
@@ -633,6 +641,11 @@ def buffer_graphql(api_key: str, query: str, variables: dict | None = None, what
 
 def buffer_x_channels(api_key: str) -> list[dict]:
     """Every X account connected to this Buffer login: [{id, name, disconnected}]."""
+    return buffer_channels(api_key, BUFFER_X_SERVICES)
+
+
+def buffer_channels(api_key: str, services) -> list[dict]:
+    """Every Buffer channel of these services (e.g. ("threads",)): [{id, name, service, disconnected}]."""
     organizations = buffer_graphql(api_key, "query { account { organizations { id } } }", what="Buffer sign-in")
     found = []
     for organization in organizations.get("account", {}).get("organizations", []):
@@ -643,8 +656,9 @@ def buffer_x_channels(api_key: str) -> list[dict]:
             "Buffer channels",
         )
         for channel in channels.get("channels", []):
-            if str(channel.get("service", "")).lower() in BUFFER_X_SERVICES:
+            if str(channel.get("service", "")).lower() in services:
                 found.append({"id": channel["id"], "name": channel.get("name") or channel.get("displayName") or "",
+                              "service": str(channel.get("service", "")).lower(),
                               "disconnected": bool(channel.get("isDisconnected"))})
     return found
 
@@ -657,8 +671,8 @@ BUFFER_CREATE_POST = """mutation CreatePost($input: CreatePostInput!) {
 }"""
 
 
-class XViaBuffer:
-    """X for free: Buffer (an official X partner, free plan) publishes the post to your X account right away."""
+class BufferChannel:
+    """Free posting through Buffer (free plan + public API): Buffer publishes the post to the account right away."""
 
     def __init__(self, creds: dict):
         self.api_key = creds["api_key"]
@@ -666,11 +680,13 @@ class XViaBuffer:
         self.username = creds.get("username", "").lstrip("@")
 
     def verify(self) -> str:
-        channel = next((item for item in buffer_x_channels(self.api_key) if item["id"] == self.channel_id), None)
+        every_service = tuple(service for services in BUFFER_SERVICES.values() for service in services)
+        channel = next((item for item in buffer_channels(self.api_key, every_service)
+                        if item["id"] == self.channel_id), None)
         if channel is None:
-            raise RuntimeError("Buffer: that X account is no longer connected to this Buffer login")
+            raise RuntimeError("Buffer: that account is no longer connected to this Buffer login")
         if channel["disconnected"]:
-            raise RuntimeError(f"Buffer: reconnect X at {BUFFER_CHANNELS}")
+            raise RuntimeError(f"Buffer: reconnect {channel['service']} at {BUFFER_CHANNELS}")
         return f"@{channel['name']} (via Buffer, free)"
 
     def publish(self, text, title, images, link, extra, idempotency_key) -> str:
@@ -681,11 +697,19 @@ class XViaBuffer:
             "mode": "shareNow",
             "assets": [{"image": {"url": extra["image_url"]}}] if extra.get("image_url") else [],
         }
-        result = buffer_graphql(self.api_key, BUFFER_CREATE_POST, {"input": post_input}, "X post via Buffer")
+        result = buffer_graphql(self.api_key, BUFFER_CREATE_POST, {"input": post_input}, "Post via Buffer")
         created = result.get("createPost") or {}
         if "post" not in created:
-            raise RuntimeError(f"X post via Buffer failed: {created.get('message') or created}")
-        return created["post"].get("externalLink") or (f"https://x.com/{self.username}" if self.username else "")
+            raise RuntimeError(f"Post via Buffer failed: {created.get('message') or created}")
+        return created["post"].get("externalLink") or ""
+
+
+class XViaBuffer(BufferChannel):
+    """X for free: Buffer is an official X partner, so no X API fees."""
+
+    def publish(self, text, title, images, link, extra, idempotency_key) -> str:
+        url = super().publish(text, title, images, link, extra, idempotency_key)
+        return url or (f"https://x.com/{self.username}" if self.username else "")
 
 
 def x_client(creds: dict):
@@ -694,7 +718,7 @@ def x_client(creds: dict):
 
 
 CLIENTS = {"bluesky": Bluesky, "mastodon": Mastodon, "devto": DevTo, "telegram": Telegram, "discord": Discord,
-           "x": x_client}
+           "x": x_client, "threads": BufferChannel, "substack": BufferChannel}
 
 
 # ------------------------------------------------------------------ Mastodon: sign in with the browser (no token to copy)
@@ -870,6 +894,14 @@ SETUP = {
                  "(opening it now) and paste it here. Type 'api' instead to use the paid X API.",
         "fields": [("api_key", "Buffer API key (or 'api')", True)],
     },
+    "threads": {
+        "steps": f"Free through Buffer: connect Threads at {BUFFER_CHANNELS}. Uses the same Buffer API key as X.",
+        "fields": [("api_key", "Buffer API key (Enter = the one saved for X)", True)],
+    },
+    "substack": {
+        "steps": f"Free through Buffer (posts Substack Notes): connect Substack at {BUFFER_CHANNELS}. Same Buffer API key.",
+        "fields": [("api_key", "Buffer API key (Enter = the one saved for X)", True)],
+    },
 }
 
 
@@ -882,16 +914,21 @@ def x_setup(answer: str, ask=input, ask_secret=getpass.getpass) -> dict:
         client_secret = ask_secret("  Client Secret (Enter if none): ").strip()
         print("  Opening X in your browser: press Authorize app there.")
         return x_sign_in(client_id, client_secret)
-    api_key = answer.strip()
-    accounts = [account for account in buffer_x_channels(api_key) if not account["disconnected"]]
+    return buffer_setup(answer.strip(), "x", ask)
+
+
+def buffer_setup(api_key: str, channel: str, ask=input) -> dict:
+    """Find this platform's account in Buffer (asks only if there are several) and return its credentials."""
+    label = LABELS[channel]
+    accounts = [account for account in buffer_channels(api_key, BUFFER_SERVICES[channel]) if not account["disconnected"]]
     if not accounts:
         webbrowser.open(BUFFER_CHANNELS)
-        raise RuntimeError(f"No X account in Buffer yet: connect it at {BUFFER_CHANNELS} (opened), then run this again.")
+        raise RuntimeError(f"No {label} account in Buffer yet: connect it at {BUFFER_CHANNELS} (opened), then run this again.")
     chosen = accounts[0]
     if len(accounts) > 1:
         for number, account in enumerate(accounts, 1):
-            print(f"  {number}. @{account['name']}")
-        picked = ask("  Which X account? [1]: ").strip() or "1"
+            print(f"  {number}. {account['name']}")
+        picked = ask(f"  Which {label} account? [1]: ").strip() or "1"
         chosen = accounts[int(picked) - 1]
     return {"via": "buffer", "api_key": api_key, "channel_id": chosen["id"], "username": chosen["name"]}
 
@@ -929,6 +966,14 @@ def setup_interactive(secrets_path: Path) -> None:
             except Exception as error:
                 print(f"  {error}\n")
                 continue
+        if channel in BUFFER_ONLY:
+            buffer_key = values.get("api_key") or creds.get("x", {}).get("api_key", "")
+            if buffer_key:
+                try:
+                    values = buffer_setup(buffer_key, channel)
+                except Exception as error:
+                    print(f"  {error}\n  Nothing saved for {label}.\n")
+                    continue
         if channel == "x" and values.get("api_key"):
             try:
                 values = x_setup(values["api_key"])

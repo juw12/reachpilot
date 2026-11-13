@@ -249,7 +249,7 @@ check(not any(channels.COMMENT_POINTER.search(part) for part in paragraphs), "ch
 check(tags == ["#OpenSource", "#BuildInPublic", "#PWA"], f"channels: hashtag line split off ({tags})")
 check(parsed_links[0] == ("Try it", "https://juw12.github.io/watt-reserve/"), f"channels: links parsed ({parsed_links[:1]})")
 variants = channels.build_variants(post_body, post_comment, "launch", facts)
-limits = {"bluesky": 300, "mastodon": 500, "telegram": 1024, "discord": 2000, "x": 280}
+limits = {"bluesky": 300, "mastodon": 500, "telegram": 1024, "discord": 2000, "x": 280, "threads": 500, "substack": 1500}
 for name, limit in limits.items():
     size = (channels.x_length if name == "x" else len)(variants.get(name, {}).get("body", ""))
     check(name in variants and size <= limit, f"channels: {name} fits {limit} chars ({size})")
@@ -434,6 +434,8 @@ def fake_buffer_post(url, **kwargs):
         return FakeResponse({"data": {"channels": [
             {"id": "li1", "name": "Juwen", "service": "linkedin", "isDisconnected": False},
             {"id": "tw1", "name": "juw12", "service": "twitter", "isDisconnected": False},
+            {"id": "th1", "name": "juw12", "service": "threads", "isDisconnected": False},
+            {"id": "ss1", "name": "Juwen Lie", "service": "substack", "isDisconnected": False},
         ]}})
     if "createPost" in query:
         return FakeResponse({"data": {"createPost": {"post": {"id": "p1", "externalLink": "https://x.com/juw12/status/9"}}}})
@@ -457,8 +459,21 @@ try:
           and sent == {"text": x_post, "channelId": "tw1", "schedulingType": "automatic", "mode": "shareNow",
                        "assets": [{"image": {"url": "https://example.test/shot.png"}}]},
           "x/buffer: posts now to the X channel with text and image")
+    threads_creds = channels.buffer_setup("buffer-key", "threads")
+    substack_creds = channels.buffer_setup("buffer-key", "substack")
+    check(threads_creds["channel_id"] == "th1" and substack_creds["channel_id"] == "ss1"
+          and substack_creds["username"] == "Juwen Lie", "threads/substack: setup finds each account in Buffer")
+    buffer_calls.clear()
+    channels.CLIENTS["threads"](threads_creds).publish(
+        text=variants["threads"]["body"], title="", images=[], link="", extra=variants["threads"]["extra"], idempotency_key="k")
+    threads_sent = next(kwargs for url, kwargs in buffer_calls if "createPost" in kwargs["json"]["query"])["json"]["variables"]["input"]
+    check(threads_sent["channelId"] == "th1" and threads_sent["mode"] == "shareNow" and threads_sent["assets"],
+          "threads: posted now through Buffer with the project image")
 finally:
     channels.requests.post = real_buffer_post
+threads_post = variants["threads"]["body"]
+check(threads_post.count("#") <= 1 and threads_post.count("https://") == 1 and "juw12.github.io/watt-reserve" in threads_post,
+      f"threads: one tag and the project link ({len(threads_post)} chars)")
 free_db = sqlite3.connect(":memory:")
 free_secrets = {"channels": {"x": {"via": "buffer", "api_key": "k", "channel_id": "tw1"}}}
 free_config = {"channels": ["x"], "x_monthly_budget_usd": 0}

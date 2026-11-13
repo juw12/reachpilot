@@ -50,7 +50,9 @@
     "devto",
     "telegram",
     "discord",
-    "x"
+    "x",
+    "threads",
+    "substack"
   ],
   "x_monthly_budget_usd": 5,
   "goatcounter_code": "juw12",

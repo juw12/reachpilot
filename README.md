@@ -64,6 +64,8 @@ Every LinkedIn slot also goes to the platforms you connect, each cut to fit from
 | Telegram | the full post with the first screenshot, in your own channel | a bot token + channel |
 | Discord | the full post with the first screenshot, in your own server | a webhook URL |
 | X | short post (280 characters as X counts them), the project's image, one link | a free Buffer account with your X connected, and a Buffer API key (Buffer publishes it, so no X API fees) |
+| Threads | short post (500 characters), one topic tag, the project's image, one link | Threads connected in the same Buffer account (same API key) |
+| Substack | a Substack Note with the post and links, the project's image | Substack connected in the same Buffer account (same API key) |
 
 Each platform publishes and retries on its own (3 attempts within 3 days), so one platform failing never blocks
 LinkedIn or the others. `preview` shows every platform's version.
