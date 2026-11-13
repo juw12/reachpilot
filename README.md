@@ -172,6 +172,11 @@ which is git-ignored and never committed; the dashboard only shows a module that
 Task Scheduler under `\ReachPilot\`, dashboard actions are whitelisted and need a per-session token from the same origin,
 and the `?` button explains per module when it runs, what it does by itself and what it needs from you.
 
+When the podcast module ships `promotion.py`, a **Podcast** tab tracks its promotion: which directories list the show
+(with Mark as submitted for the ones that can't be checked), downloads per week and per episode from OP3, series compared,
+where each episode was announced and the follower counts on those channels. The tab only reads files; when the download
+numbers are older than 15 minutes it starts `promotion.py refresh` in the background.
+
 ## Files
 
 | File | Role |

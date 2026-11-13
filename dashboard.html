@@ -52,6 +52,7 @@
   main { max-width: 1180px; margin: 0 auto; padding: 20px; }
   @media (min-width: 761px) { .navrow { display: contents; } .more { display: none; } }
   section[hidden] { display: none; }
+nav button[hidden] { display: none !important; }
   h2 { font-size: 18px; margin: 0 0 12px; }
   h3 { font-size: 15px; margin: 0 0 10px; }
   .grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(165px, 1fr)); margin-bottom: 18px; }
@@ -229,6 +230,7 @@
       <button role="tab" data-tab="jobs">Jobs</button>
       <button role="tab" class="sec" data-tab="email">Email</button>
       <button role="tab" class="sec" data-tab="promote">Promote</button>
+<button role="tab" class="sec" data-tab="podcast" hidden>Podcast</button>
       <button role="tab" class="sec" data-tab="log">Log</button>
     </nav>
     <button type="button" class="more" id="nav-more" aria-expanded="false" aria-controls="tabs">More ▾</button>
@@ -249,6 +251,7 @@
   <section id="jobs" hidden></section>
   <section id="email" hidden></section>
   <section id="promote" hidden></section>
+<section id="podcast" hidden></section>
   <section id="log" hidden></section>
 </main>
 <div class="toast" id="toast" role="status" hidden></div>
@@ -566,6 +569,12 @@ document.addEventListener("click", (event) => {
   if (button) act(button.dataset.action, button);
   const jump = event.target.closest("[data-goto]");
   if (jump) showTab(jump.dataset.goto);
+  const copy = event.target.closest("[data-copy]");
+  if (copy) {
+    navigator.clipboard.writeText(copy.dataset.copy)
+      .then(() => toast("Feed address copied. Paste it on the directory's page."))
+      .catch(() => toast("Copy didn't work here; select the address and copy it by hand."));
+  }
   const done = event.target.closest("[data-done]");
   if (done) {
     const keys = dismissed();
@@ -589,7 +598,7 @@ function link(url, label) {
   return url ? `<a href="${esc(url)}" target="_blank" rel="noopener">${esc(label)}</a>` : esc(label);
 }
 
-const MODULE_TAB = { jobs: "jobs", "job search": "jobs", "e-mail": "email", email: "email", linkedin: "linkedin", promote: "promote", "creator outreach": "promote" };
+const MODULE_TAB = { jobs: "jobs", "job search": "jobs", "e-mail": "email", email: "email", linkedin: "linkedin", promote: "promote", "creator outreach": "promote", podcast: "podcast" };
 
 function todoKey(item) {
   return `${item.module}|${item.title}|${item.detail}`;
@@ -694,12 +703,17 @@ function renderOverview(d) {
           ? `Review on: each episode waits for your OK. ${actionButton("podcast:review:off", "publish straight away", true)}`
           : `Review off: episodes publish straight away. ${actionButton("podcast:review:on", "hold each episode", true)}`;
         return `<div class="card module podcast">
-          <h3>${esc(p.show_title || "Podcast")} ${link(p.feed_url || p.site_url, "Feed")}</h3>
+          <h3>${esc(p.show_title || "Podcast")} <span>${link(p.feed_url || p.site_url, "Feed")}${(h.podcast_promotion || {}).installed ? ` <button class="btn ghost" data-goto="podcast">Open</button>` : ""}</span></h3>
           ${latest ? `<div class="hint">ep ${num(latest.number)} · ${esc(latest.series_name || "–")} · ${mmss(latest.seconds)} min</div>
             <div class="big">${esc(latest.title)}</div>` : `<div class="big">No episodes yet</div>
             <div class="hint">The first one is built on the next slot.</div>`}
           ${nextRuns ? `<div class="hint" style="margin-top:6px">Next: ${nextRuns}</div>` : ""}
-          <div class="hint">${num(p.episodes_total)} published</div>
+          <div class="hint">${num(p.episodes_total)} published${(() => {
+            const promo = h.podcast_promotion || {};
+            if (!promo.installed) return "";
+            const week = promo.latest_week === null || promo.latest_week === undefined ? "no download numbers yet" : `${num(promo.latest_week)} downloads last week`;
+            return ` · listed on ${num(promo.listed)} / ${num((promo.directories || []).length)} directories · ${week}`;
+          })()}</div>
           <div class="hint">${reviewLine}</div>
           ${held.length ? `<div class="badge warn" style="margin-top:6px">${num(held.length)} held for review</div>
             <div class="actions">${actionButton("podcast:approve:all", "Approve & publish")}${actionButton("podcast:skip", "Skip", true)}</div>` : ""}
@@ -870,6 +884,147 @@ function renderPromote(d) {
     <div class="card"><h3>Promotion log <span class="hint">(newest first)</span></h3><pre class="log">${esc(p.log.join("\n")) || "No activity yet."}</pre></div>`;
 }
 
+function weekBars(weeks) {
+  if (!weeks || !weeks.length) return `<div class="empty">No weekly numbers yet.</div>`;
+  const shown = weeks.slice(-12);
+  const W = 520, H = 150, L = 36, B = 22, T = 12, gap = 6;
+  const max = Math.max(1, ...shown);
+  const step = (W - L) / shown.length;
+  const bars = shown.map((value, i) => {
+    const h = value ? Math.max(2, (value * (H - T - B)) / max) : 1;
+    const label = i === shown.length - 1 ? "latest week" : `${shown.length - 1 - i} week${shown.length - 1 - i === 1 ? "" : "s"} before`;
+    return `<rect class="${value ? "on" : "off"}" x="${(L + i * step + gap / 2).toFixed(1)}" y="${(H - B - h).toFixed(1)}" width="${(step - gap).toFixed(1)}" height="${h.toFixed(1)}"><title>${esc(label)}: ${num(value)}</title></rect>`;
+  }).join("");
+  const summary = `Downloads per week, last ${shown.length} weeks: ${shown.map(num).join(", ")}`;
+  return `<svg class="chart spark" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(summary)}">
+    <line class="axis" x1="${L}" y1="${H - B}" x2="${W}" y2="${H - B}"/>
+    <text x="${L - 6}" y="${T + 4}" text-anchor="end">${num(max)}</text>
+    <text x="${L - 6}" y="${H - B + 4}" text-anchor="end">0</text>
+    ${bars}
+    <text x="${L}" y="${H - 4}">${shown.length} weeks ago</text>
+    <text x="${W}" y="${H - 4}" text-anchor="end">latest week</text>
+  </svg>`;
+}
+
+function renderPodcast(d) {
+  const p = d.hub.podcast_promotion || {};
+  const section = document.getElementById("podcast");
+  const tabButton = document.querySelector('nav button[data-tab="podcast"]');
+  if (tabButton) tabButton.hidden = !p.installed;
+  if (!p.installed) {
+    section.innerHTML = `<div class="empty">Podcast promotion isn't set up${p.error ? `: ${esc(p.error)}` : ""}.</div>`;
+    return;
+  }
+  const mmss = (s) => (s === null || s === undefined) ? "–" : `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")}`;
+  const when = (stamp) => (stamp ? niceDate(String(stamp).replace("T", " ").slice(0, 16)) : "never");
+  const dl = p.downloads || {};
+  const directories = p.directories || [];
+  const episodes = p.episodes || [];
+  const STATUS_BADGE = {
+    listed: `<span class="badge good">listed</span>`,
+    submitted: `<span class="badge warn">submitted</span>`,
+    todo: `<span class="badge bad">to do</span>`,
+    unknown: `<span class="badge grey">could not check</span>`,
+  };
+  const downloadsNotice = {
+    ok: "",
+    waiting: "OP3 hasn't counted a download yet. It starts once podcast apps fetch episodes through the feed, which follows the directory listings above.",
+    off: "Download counting is off: there is no \"analytics\" prefix in podcast_config.json.",
+    error: `Couldn't reach OP3 (${esc(dl.detail || "no detail")}). No numbers are shown rather than zeros; it tries again within 15 minutes.`,
+    checking: "Asking OP3 for the first time…",
+  }[dl.status || "checking"] || "";
+
+  const directoryRows = directories.map((row) => {
+    const mark = row.marked
+      ? actionButton(`podcast:unlisted:${row.id}`, "Undo", true)
+      : row.status === "todo" || row.status === "unknown" ? actionButton(`podcast:listed:${row.id}`, "Mark as submitted") : "";
+    const state = row.status === "listed"
+      ? `checked by ${esc(row.checked_by)}${row.link ? ` · ${link(row.link, "their page")}` : ""}`
+      : row.status === "submitted" ? `your mark, ${esc(when(row.marked))}`
+      : row.status === "unknown" ? esc(row.detail || "") : "";
+    return `<tr>
+      <td><b>${esc(row.name)}</b><div class="hint">${esc(row.why)}</div></td>
+      <td>${STATUS_BADGE[row.status] || esc(row.status)}<div class="hint">${state}</div></td>
+      <td class="hint">${esc(row.needs)}</td>
+      <td><div class="actions" style="margin-top:0">${link(row.url, "Open")}${mark}</div></td>
+    </tr>`;
+  }).join("");
+
+  const announcedCell = (episode) => {
+    const posts = (episode.announced || []).filter((post) => post.status === "posted");
+    const other = (episode.announced || []).filter((post) => post.status !== "posted");
+    return posts.map((post) => link(post.url, post.channel)).join(", ")
+      + (other.length ? ` <span class="hint">(${other.map((post) => `${esc(post.channel)}: ${esc(post.status)}`).join(", ")})</span>` : "")
+      || `<span class="hint">not announced</span>`;
+  };
+  const episodeRows = episodes.map((episode, index) => {
+    const counts = episode.downloads || {};
+    return `<tr>
+      <td class="num">${index + 1}</td>
+      <td>${link(episode.page, episode.title)} ${episode.top ? `<span class="badge good">most listened</span>` : ""}
+        <div class="hint">ep ${num(episode.number)} · ${esc(episode.series_name)} · ${esc(when(episode.published))} · ${mmss(episode.seconds)} min</div></td>
+      <td class="num">${num(counts.day7)}</td>
+      <td class="num">${num(counts.all)}</td>
+      <td>${announcedCell(episode)}</td>
+    </tr>`;
+  }).join("");
+
+  const seriesRows = (p.series_comparison || []).map((row) => `<tr>
+      <td><b>${esc(row.name)}</b></td>
+      <td class="num">${num(row.episodes)}</td>
+      <td class="num">${mmss(row.average_seconds)}</td>
+      <td class="num">${row.average_downloads === null || row.average_downloads === undefined ? "–" : num(Math.round(row.average_downloads))}
+        ${row.counted_episodes && row.counted_episodes < row.episodes ? `<div class="hint">${num(row.counted_episodes)} counted</div>` : ""}</td>
+    </tr>`).join("");
+
+  const audienceRows = (p.audience || []).map((row) => `<tr>
+      <td><b>${esc(row.channel)}</b></td>
+      <td class="num">${num(row.followers)}</td>
+      <td class="num">${row.change > 0 ? "+" : ""}${num(row.change)} <span class="hint">since ${esc(when(row.first_day))}</span></td>
+      <td class="hint">${esc(when(row.as_of))}</td>
+    </tr>`).join("");
+
+  section.innerHTML = `
+    <div class="grid">
+      ${kpi("Listed on", `${num(p.listed)} / ${num(directories.length)}`, p.todo && p.todo.length ? `To do: ${esc(p.todo.join(", "))}` : "Every directory done")}
+      ${kpi("Downloads last week", dl.status === "ok" ? num(p.latest_week) : "–", dl.status === "ok" ? "From OP3" : esc(dl.status || "checking"))}
+      ${kpi("Last 30 days", dl.status === "ok" ? num(dl.monthly) : "–", dl.counted_to ? `Counted to ${esc(when(dl.counted_to))}` : "")}
+      ${kpi("Episodes announced", `${num(p.announced_episodes)} / ${num(episodes.length)}`, "Posted on at least one channel")}
+    </div>
+    <div class="card" style="margin-bottom:18px">
+      <h3>Get listed</h3>
+      <p class="hint">Paste the feed address once on each directory. Apple is checked by itself every 6 hours and Podcast Index once OP3 counts the show; for the others your "Mark as submitted" is the record.</p>
+      <div class="actions" style="align-items:center">
+        <code style="font-size:14px;padding:8px 10px;background:#eef0f2;border-radius:6px;word-break:break-all">${esc(p.feed_url)}</code>
+        <button class="btn ghost" data-copy="${esc(p.feed_url)}">Copy feed address</button>
+      </div>
+      <div class="scroll" style="margin-top:12px"><table>
+        <thead><tr><th>Directory</th><th>Status</th><th>What it needs</th><th></th></tr></thead>
+        <tbody>${directoryRows}</tbody></table></div>
+    </div>
+    <div class="card" style="margin-bottom:18px">
+      <h3>Listeners <span class="hint">· downloads from OP3, checked ${esc(when((p.checked || {}).downloads))}${p.refreshing ? " · checking now" : ""}</span></h3>
+      ${downloadsNotice ? `<p class="hint">${downloadsNotice}</p>` : ""}
+      ${dl.status === "ok" ? weekBars(dl.weekly) : ""}
+      <div class="actions">${actionButton("podcast:promo-refresh", "Check now", true)}${dl.stats_url ? link(dl.stats_url, "Full stats on OP3") : ""}</div>
+    </div>
+    <div class="card" style="margin-bottom:18px">
+      <h3>Episodes <span class="hint">· most listened first, then newest</span></h3>
+      ${episodes.length ? `<div class="scroll"><table>
+        <thead><tr><th class="num">#</th><th>Episode</th><th class="num">7 days</th><th class="num">All time</th><th>Announced on</th></tr></thead>
+        <tbody>${episodeRows}</tbody></table></div>` : `<div class="empty">No published episodes yet.</div>`}
+    </div>
+    <div class="two">
+      <div class="card"><h3>Series compared</h3>
+        ${seriesRows ? `<div class="scroll"><table><thead><tr><th>Series</th><th class="num">Episodes</th><th class="num">Avg length</th><th class="num">Avg downloads</th></tr></thead>
+        <tbody>${seriesRows}</tbody></table></div>` : `<div class="empty">No published episodes yet.</div>`}</div>
+      <div class="card"><h3>Followers where it's announced</h3>
+        <p class="hint">Account followers on the channels that carry the episode posts, not podcast listeners.</p>
+        ${audienceRows ? `<div class="scroll"><table><thead><tr><th>Channel</th><th class="num">Followers</th><th class="num">Change</th><th>As of</th></tr></thead>
+        <tbody>${audienceRows}</tbody></table></div>` : `<div class="empty">No follower counts yet. ReachPilot records them once a day for connected channels.</div>`}</div>
+    </div>`;
+}
+
 function renderHelp(d) {
   document.getElementById("help-body").innerHTML = `
     <h2>How ReachPilot works</h2>
@@ -910,6 +1065,7 @@ async function load() {
     renderJobs(data);
     renderEmail(data);
     renderPromote(data);
+    renderPodcast(data);
     renderSchedule(data);
     renderReach(data);
     renderGithub(data);

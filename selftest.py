@@ -552,6 +552,83 @@ try:
     finally:
         hub.PODCAST = real_podcast_home
     check(missing == {"installed": False}, "hub: missing podcast module shows as not set up")
+
+    # hub: the Podcast tab reads the module's promotion.py (files only) and refreshes OP3 in the background when stale
+    hub.PODCAST = podcast_home
+    hub._cache.pop("podcast_promotion", None)
+    try:
+        check(hub.podcast_promotion_section() == {"installed": False}, "hub: no promotion.py means no Podcast tab")
+    finally:
+        hub.PODCAST = real_podcast_home
+    (podcast_home / "promotion.py").write_text(
+        "import json\n"
+        "from pathlib import Path\n"
+        "STALE = Path(__file__).with_name('stale.flag')\n"
+        "MARKS = Path(__file__).with_name('marks.json')\n"
+        "def view():\n"
+        "    return {'installed': True, 'stale': STALE.exists(), 'listed': 1, 'todo': ['Spotify'],\n"
+        "            'feed_url': 'https://example.test/feed/feed.xml',\n"
+        "            'directories': [{'id': 'apple', 'name': 'Apple Podcasts', 'url': 'https://a.test', 'status': 'listed', 'why': 'big'},\n"
+        "                            {'id': 'spotify', 'name': 'Spotify', 'url': 'https://s.test', 'status': 'todo', 'why': 'second'}]}\n"
+        "def set_mark(directory, done):\n"
+        "    if directory not in ('apple', 'spotify'):\n"
+        "        raise ValueError('Unknown directory: ' + directory)\n"
+        "    marks = json.loads(MARKS.read_text()) if MARKS.exists() else {}\n"
+        "    marks[directory] = done\n"
+        "    MARKS.write_text(json.dumps(marks))\n"
+        "    return 'marked' if done else 'unmarked'\n",
+        encoding="utf-8")
+    started = []
+
+    class FakeRefresh:
+        def __init__(self, command, **kwargs):
+            started.append(command)
+
+        def poll(self):
+            return None  # still running
+
+    real_popen = hub.subprocess.Popen
+    hub.PODCAST = podcast_home
+    hub.subprocess.Popen = FakeRefresh
+    hub._promotion_refresh = None
+    hub._cache.pop("podcast_promotion", None)
+    try:
+        promo = hub.podcast_promotion_section()
+        check(promo["installed"] and promo["listed"] == 1 and promo["refreshing"] is False and not started,
+              "hub: Podcast tab passes promotion.view() through, no refresh while the numbers are fresh")
+        promo_todo = hub.podcast_promotion_todo(promo)
+        check(len(promo_todo) == 1 and promo_todo[0]["priority"] == 3 and promo_todo[0]["module"] == "Podcast"
+              and [entry["url"] for entry in promo_todo[0]["links"]] == ["https://s.test"],
+              "hub: directories still to do become one low-priority to-do with their links")
+        check(hub.podcast_promotion_todo({"installed": True, "todo": []}) == [], "hub: no listing to-do once every directory is done")
+
+        check(hub.run_action("podcast:listed:spotify") == "marked"
+              and json.loads((podcast_home / "marks.json").read_text()) == {"spotify": True},
+              "hub: Mark as submitted goes to promotion.set_mark")
+        check(hub.run_action("podcast:unlisted:spotify") == "unmarked", "hub: Undo clears the mark")
+        try:
+            hub.run_action("podcast:listed:nowhere")
+            check(False, "hub: unknown directory is refused")
+        except ValueError:
+            check(True, "hub: unknown directory is refused")
+
+        (podcast_home / "stale.flag").write_text("", encoding="utf-8")
+        hub._cache.pop("podcast_promotion", None)
+        promo = hub.podcast_promotion_section()
+        hub._cache.pop("podcast_promotion", None)
+        hub.podcast_promotion_section()
+        check(promo["refreshing"] is True and len(started) == 1 and started[0][-1] == "refresh",
+              f"hub: stale numbers start one background refresh, never two ({started})")
+        check("already running" in hub.run_action("podcast:promo-refresh") and len(started) == 1,
+              "hub: Check now waits for a refresh that is already running")
+        hub._promotion_refresh = None
+        hub.run_action("podcast:promo-refresh")
+        check(started[-1][-2:] == ["refresh", "--force"], "hub: Check now forces Apple too")
+    finally:
+        hub.PODCAST = real_podcast_home
+        hub.subprocess.Popen = real_popen
+        hub._promotion_refresh = None
+        hub._cache.pop("podcast_promotion", None)
 finally:
     import shutil
     shutil.rmtree(podcast_home, ignore_errors=True)

@@ -487,6 +487,8 @@ def podcast_action(name: str) -> str:
             os.startfile(PODCAST / "site")
             return "Site folder opened."
         raise ValueError("The site folder isn't there yet (no episodes built).")
+    if verb in PROMOTION_VERBS:
+        return podcast_promotion_action(verb, argument)
     if verb not in PODCAST_VERBS:
         raise ValueError(f"Unknown action: {name}")
     for key in [key for key in _cache if key.startswith("podcast:")]:
@@ -507,6 +509,86 @@ def podcast_action(name: str) -> str:
     if output.returncode != 0:
         raise RuntimeError((output.stderr or "podcast action failed").strip().splitlines()[-1])
     return (output.stdout.strip().splitlines() or ["Done."])[-1]
+
+
+# ------------------------------------------------------------------ podcast promotion (listings, downloads, announcements)
+
+_promotion_refresh: subprocess.Popen | None = None  # the background 'promotion.py refresh', so it never runs twice
+
+
+def _load_promotion():
+    """The podcast module's promotion.py, loaded from its file (it is not on the import path). None if missing."""
+    script = PODCAST / "promotion.py"
+    if not script.exists():
+        return None
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("podcast_promotion", script)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _start_promotion_refresh(force: bool = False) -> bool:
+    """Ask OP3 (and Apple) in the background; the next dashboard refresh shows the answer. False if one is running."""
+    global _promotion_refresh
+    if _promotion_refresh is not None and _promotion_refresh.poll() is None:
+        return False
+    command = [str(PYTHONW), str(PODCAST / "promotion.py"), "refresh"] + (["--force"] if force else [])
+    _promotion_refresh = subprocess.Popen(command, cwd=PODCAST, creationflags=NO_WINDOW)
+    return True
+
+
+def podcast_promotion_section() -> dict:
+    """What the Podcast tab shows: directories, downloads, ranked episodes, series compared, where each episode was
+    announced and follower counts. promotion.view() only reads files; when the OP3 answer is old it starts a
+    background refresh, so opening the dashboard never waits on the network."""
+    def build():
+        promotion = _load_promotion()
+        if promotion is None:
+            return {"installed": False}
+        data = promotion.view()
+        refreshing = _promotion_refresh is not None and _promotion_refresh.poll() is None
+        if data.get("stale") and not refreshing:
+            refreshing = _start_promotion_refresh()
+        data["refreshing"] = refreshing
+        return data
+
+    return cached("podcast_promotion", 60, build)
+
+
+def podcast_promotion_todo(promotion: dict | None) -> list[dict]:
+    """One reminder while directories are still to do (it stays until each is listed or marked as submitted)."""
+    if not promotion or not promotion.get("installed") or not promotion.get("todo"):
+        return []
+    rows = [row for row in promotion.get("directories") or [] if row.get("status") == "todo"]
+    return [{
+        "priority": 3,
+        "module": "Podcast",
+        "title": f"List the podcast on {len(rows)} more director{'y' if len(rows) == 1 else 'ies'}",
+        "detail": "Paste the feed address on each site, then press Mark as submitted in the Podcast tab. "
+                  "Feed: " + str(promotion.get("feed_url") or ""),
+        "action": None,
+        "action_label": None,
+        "links": [{"label": row.get("name"), "url": row.get("url"), "note": row.get("why")} for row in rows],
+    }]
+
+
+PROMOTION_VERBS = {"listed", "unlisted", "promo-refresh"}
+
+
+def podcast_promotion_action(verb: str, argument: str) -> str:
+    promotion = _load_promotion()
+    if promotion is None:
+        raise ValueError("The podcast module has no promotion.py yet; update it first.")
+    if verb == "promo-refresh":
+        _cache.pop("podcast_promotion", None)
+        if _start_promotion_refresh(force=True):
+            return "Checking OP3 and Apple now; the numbers update in under a minute."
+        return "A check is already running; the numbers update in under a minute."
+    message = promotion.set_mark(argument, verb == "listed")  # raises ValueError for an unknown directory
+    _cache.pop("podcast_promotion", None)
+    return message
 
 
 # ------------------------------------------------------------------ per-day numbers for every automation
@@ -835,7 +917,9 @@ def help_sections(tasks: dict, podcast: dict | None = None) -> list[dict]:
                 "module": "Podcast",
                 "runs": f"{podcast.get('show_title') or 'The podcast'}, one episode per series: {schedule}. " + when("podcast_brief", ""),
                 "auto": "Picks the day's stories from the RSS feeds, writes the script, records it with AI voices (disclosed in the feed), builds the site and pushes the episode to the RSS feed, then announces it on the connected channels.",
-                "you": "With review on (default) each episode waits in the podcast tile: listen to it, then Approve & publish or skip it. Turn review off in the tile and episodes publish on their own.",
+                "you": "With review on (default) each episode waits in the podcast tile: listen to it, then Approve & publish or skip it. Turn review off in the tile and episodes publish on their own. "
+                       "The Podcast tab tracks promotion: which directories list the show (submit the feed once on each), downloads per episode and per week from OP3, "
+                       "series compared, and where each episode was announced. The Bits & Tickers Studio shows only the production side.",
             })
     return entries
 
@@ -913,7 +997,8 @@ def build(linkedin_overview: dict | None) -> dict:
     tasks = task_status()
     sections = {}
     for key, reader in (("jobs", jobs_section), ("email", email_section), ("promote", promote_section),
-                        ("channels", channels_section), ("podcast", podcast_section)):
+                        ("channels", channels_section), ("podcast", podcast_section),
+                        ("podcast_promotion", podcast_promotion_section)):
         try:
             sections[key] = reader()
         except Exception as error:  # one broken module must not take the dashboard down
@@ -930,7 +1015,8 @@ def build(linkedin_overview: dict | None) -> dict:
         "todo": sorted(
             todo_items(linkedin_overview, sections["jobs"], sections["email"], tasks, sections.get("podcast"))
             + sections["promote"].get("todo", [])
-            + channels_todo(sections["channels"]),
+            + channels_todo(sections["channels"])
+            + podcast_promotion_todo(sections.get("podcast_promotion")),
             key=lambda item: item["priority"],
         ),
         "help": help_sections(tasks, sections.get("podcast")),
