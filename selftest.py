@@ -962,6 +962,43 @@ with tempfile.TemporaryDirectory() as record_dir:
     check(raw_recorder.call_args.kwargs["served"] == built_served and built_page in handed_over,
           "demo video: a built page is handed to the recording browser instead of being published")
 
+import io  # noqa: E402
+from PIL import ImageDraw as PILDraw  # noqa: E402
+
+empty_frame = PILImage.new("RGB", (900, 1240), "#ffffff")
+pointer_frame = empty_frame.copy()
+PILDraw.Draw(pointer_frame).polygon([(400, 600), (400, 640), (428, 628)], fill="#111111")
+page_frame = empty_frame.copy()
+page_pen = PILDraw.Draw(page_frame)
+page_pen.rectangle((40, 60, 860, 200), fill="#2563eb")
+for text_row in range(260, 1100, 44):
+    page_pen.rectangle((60, text_row, 700, text_row + 10), fill="#334155")
+check(visuals.is_blank(empty_frame) and visuals.is_blank(pointer_frame) and not visuals.is_blank(page_frame)
+      and visuals.is_blank(PILImage.new("RGB", (900, 1240), "#0f172a")),
+      "demo video: a frame of one flat colour (with or without the pointer) is blank, a drawn page is not")
+
+
+def frames_from(*pictures):
+    """A stand-in for ffmpeg that hands recording_is_blank these frames, one per look."""
+    shots = []
+    for picture in pictures:
+        packed = io.BytesIO()
+        picture.save(packed, "PNG")
+        shots.append(mock.Mock(stdout=packed.getvalue()))
+    return shots
+
+
+with mock.patch("visuals._ffmpeg", return_value="ffmpeg"):
+    with mock.patch("visuals.subprocess.run", side_effect=frames_from(empty_frame, pointer_frame, empty_frame)) as looks:
+        never_showed = visuals.recording_is_blank(Path("raw.webm"), 4.0, 20.0)
+    looked_at = [call.args[0][call.args[0].index("-ss") + 1] for call in looks.call_args_list]
+    with mock.patch("visuals.subprocess.run", side_effect=frames_from(empty_frame, page_frame)):
+        showed_later = visuals.recording_is_blank(Path("raw.webm"), 4.0, 20.0)
+    with mock.patch("visuals.subprocess.run", return_value=mock.Mock(stdout=b"")):
+        unreadable = visuals.recording_is_blank(Path("raw.webm"), 4.0, 20.0)
+check(never_showed and unreadable and not showed_later and looked_at == ["7.00", "14.00", "21.00"],
+      f"demo video: a recording whose page never showed is refused, one that shows the page is kept (looked at {looked_at})")
+
 page_handler = visuals._serve_page(built_served[built_page])
 asked_route = mock.Mock()
 page_handler(asked_route)

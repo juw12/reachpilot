@@ -11,7 +11,7 @@ import time
 import urllib.parse
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFilter, ImageFont
+from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 
 from github_source import CREATE_NO_WINDOW, RepoFacts, gh_api
 
@@ -148,6 +148,9 @@ DEMO_MAX_SECONDS = 22
 DEMO_MAX_CLICKS = 3
 DEMO_MAX_SCREENS = 5
 DEMO_MIN_BYTES = 100_000  # LinkedIn refuses videos under 75 KB; a file this small is a blank page anyway
+BLANK_SHARE = 0.995  # a frame with this much of it in one colour shows no page (the pointer alone covers far less)
+BLANK_TOLERANCE = 12  # how far a pixel may be from that colour and still count as it (video compression noise)
+BLANK_SAMPLES = (0.15, 0.5, 0.85)  # where in the tour a recording is looked at
 # Buttons the demo never presses: anything that signs in, pays, leaves the page or throws work away.
 DEMO_SKIP_LABEL = re.compile(
     r"delete|remove|reset|clear|sign.?in|log.?in|sign.?up|log.?out|subscribe|buy|pay|donate|checkout|download|install|"
@@ -320,6 +323,31 @@ def _serve_page(body: str):
     return lambda route: route.fulfill(content_type="text/html; charset=utf-8", body=body)
 
 
+def is_blank(picture: Image.Image) -> bool:
+    """True when the picture is one flat colour all over: nothing was drawn there."""
+    small = picture.convert("RGB").resize((180, 180), Image.NEAREST)
+    _, colour = max(small.getcolors(maxcolors=small.width * small.height))
+    distance = ImageChops.difference(small, Image.new("RGB", small.size, colour)).convert("L")
+    same = sum(distance.histogram()[:BLANK_TOLERANCE])
+    return same >= BLANK_SHARE * small.width * small.height
+
+
+def recording_is_blank(raw: Path, lead_in: float, tour_seconds: float) -> bool:
+    """True when the recorded page is a flat colour from start to end: the browser recorded, the page never showed.
+
+    The file size cannot tell: the videos made from such a recording carry captions and still weigh enough.
+    """
+    for share in BLANK_SAMPLES:
+        shot = subprocess.run(
+            [_ffmpeg(), "-loglevel", "error", "-ss", f"{lead_in + tour_seconds * share:.2f}", "-i", str(raw),
+             "-frames:v", "1", "-f", "image2pipe", "-c:v", "png", "-"],
+            capture_output=True, timeout=120, creationflags=CREATE_NO_WINDOW,
+        ).stdout
+        if shot and not is_blank(Image.open(io.BytesIO(shot))):
+            return False
+    return True
+
+
 def record_raw(url: str, folder: Path, phone: bool = False, served: dict[str, str] | None = None) -> tuple[Path, float, float]:
     """Record the page being used into folder. Returns (raw video, seconds of loading to cut, seconds of use).
 
@@ -377,6 +405,8 @@ def record_raw(url: str, folder: Path, phone: bool = False, served: dict[str, st
         finally:
             context.close()  # this is what writes the recording to disk
             browser.close()
+    if recording_is_blank(raw, lead_in, tour_seconds):
+        raise RuntimeError(f"the recording of {url} shows an empty page")
     return raw, lead_in, tour_seconds
 
 
