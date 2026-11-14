@@ -11,8 +11,10 @@ Runs every 30 minutes from Windows Task Scheduler (`autopilot.py install`). Each
 Each post also goes to the other platforms you connected (channels.py): Bluesky, Mastodon, Dev.to, Telegram,
 Discord, and X, Threads and Substack (free through Buffer). Each platform publishes and retries on its own.
 
-A post about one project with a live site also gets a demo video: a short screen recording of the site being used
-(visuals.record_demo). The video leads the post wherever the platform takes one and the screenshots are the fallback.
+A post about one project with a live site also gets a demo video of the site being used: a short vertical video
+with a hook, captions and a "star it" end card in one of the formats in "video_formats" (reels.py), or the plain
+screen recording (visuals.record_demo) when that fails or no format is switched on. The video leads the post
+wherever the platform takes one and the screenshots are the fallback.
 Switch it off with "demo_video": false in config.json.
 
 Commands:  init | auth | channels | tick | preview [N] | status | install | uninstall
@@ -41,6 +43,7 @@ import channels  # noqa: E402
 import composer  # noqa: E402
 import github_source as gh  # noqa: E402
 import growth  # noqa: E402
+import reels  # noqa: E402
 import trylinks  # noqa: E402
 import visuals  # noqa: E402
 
@@ -98,6 +101,8 @@ def connect_db() -> sqlite3.Connection:
         CREATE TABLE IF NOT EXISTS try_clicks(day TEXT, repo TEXT, clicks INTEGER, PRIMARY KEY(day, repo));
         """
     )
+    if "video_format" not in [column[1] for column in db.execute("PRAGMA table_info(posts)")]:
+        db.execute("ALTER TABLE posts ADD COLUMN video_format TEXT")  # which reels.py format the post's video used
     channels.ensure_schema(db)
     return db
 
@@ -402,7 +407,32 @@ class Picker:
         return None
 
 
-def build_images(config, choice, slot: str) -> list[str]:
+def styled_videos(config, choice, out_dir: Path, db=None, used=()) -> list[Path]:
+    """The post's demo as a short vertical video in every cut (reels.py); [] when the plain recording should be tried.
+
+    used is [(repo, format)] of videos made earlier in this run, newest first (the preview makes several at once).
+    Sets choice["video"] to the format and the hook line that goes on top of the post.
+    """
+    facts = visuals.demo_site(choice["angle"], choice["facts"])
+    enabled = config.get("video_formats") or []
+    if facts is None or not enabled:
+        return []
+    try:
+        rng = random.Random()
+        past = list(used) + (reels.history(db) if db else [])
+        video_format = reels.choose_format(enabled, facts, choice["angle"], past, reels.format_records(db) if db else [], rng)
+        if video_format is None:
+            return []
+        plan = reels.plan(facts, video_format, rng, (config.get("video_hooks") or {}).get(facts.name))
+        videos = reels.record(plan, out_dir)
+    except Exception as error:
+        log.warning("Styled demo video failed (%s); trying the plain recording", error)
+        return []
+    choice["video"] = {"format": video_format, "hook": plan.post_line}
+    return videos
+
+
+def build_images(config, choice, slot: str, db=None, used=()) -> list[str]:
     """The post's media: the demo video first (when the project has a live site), then the screenshots."""
     if choice.get("images"):
         return choice["images"]
@@ -412,13 +442,23 @@ def build_images(config, choice, slot: str) -> list[str]:
     except Exception as error:
         log.warning("Image capture failed (%s); posting text-only", error)
         paths = []
-    video = None
+    videos: list[Path] = []
     if config.get("demo_video", True):
-        try:
-            video = visuals.demo_for_post(choice["angle"], choice["facts"], out_dir)
-        except Exception as error:
-            log.warning("Demo video failed (%s); posting the screenshots only", error)
-    return [str(path) for path in ([video] if video else []) + list(paths)]
+        videos = styled_videos(config, choice, out_dir, db, used)
+        if not videos:
+            try:
+                video = visuals.demo_for_post(choice["angle"], choice["facts"], out_dir)
+                videos = [video] if video else []
+            except Exception as error:
+                log.warning("Demo video failed (%s); posting the screenshots only", error)
+    return [str(path) for path in videos + list(paths)]
+
+
+def lead_with_hook(config, choice) -> None:
+    """Open the post with the same line the video opens with, so the text and the video pull the same way."""
+    hook = (choice.get("video") or {}).get("hook")
+    if hook and config.get("video_hook_in_post", True) and not choice["body"].startswith(hook):
+        choice["body"] = f"{hook}\n\n{choice['body']}"
 
 
 # ------------------------------------------------------------------ posting
@@ -590,11 +630,13 @@ def queue_channels(config, db, slot: str, row, facts) -> None:
     source, repo, angle, body, comment, images_json = row[:6]
     media = json.loads(images_json or "[]")
     secrets = load_secrets()
-    video, _ = channels.split_media(media)
+    video, _ = channels.split_media(media, cut="tall")  # X and Threads show a full-height video
     video_url = ""
     if video and repo and video.exists() and channels.needs_video_url(db, config, secrets, slot):
+        styled = channels.STYLED_VIDEO.match(video.stem)
+        hosted_name = f"{repo}-{styled['format']}" if styled else repo  # each format is hosted as its own file
         try:  # X and Threads go through Buffer, which fetches media by public URL
-            video_url = trylinks.host_demo_video(config["github_user"], repo, video, PAGES_CHECKOUT, log)
+            video_url = trylinks.host_demo_video(config["github_user"], hosted_name, video, PAGES_CHECKOUT, log)
         except Exception as error:
             log.warning("Hosting the demo video failed (%s); X and Threads get the image", error)
     queued = channels.prepare(db, config, secrets, slot, repo, angle, body, comment or "", media, facts, video_url)
@@ -662,12 +704,13 @@ def tick(config, db) -> None:
             db.execute("INSERT OR REPLACE INTO posts(slot, status, source) VALUES(?, 'skipped', 'nothing-new')", (slot,))
             db.commit()
             return
-        images = build_images(config, choice, slot)
+        images = build_images(config, choice, slot, db)
+        lead_with_hook(config, choice)
         db.execute(
-            """INSERT INTO posts(slot, source, repo, angle, body, comment, images, status, used_bullets)
-               VALUES(?,?,?,?,?,?,?,?,?)""",
+            """INSERT INTO posts(slot, source, repo, angle, body, comment, images, status, used_bullets, video_format)
+               VALUES(?,?,?,?,?,?,?,?,?,?)""",
             (slot, choice["source"], choice["repo"], choice["angle"], choice["body"], choice["comment"],
-             json.dumps(images), "ready", json.dumps(choice["used_bullets"])),
+             json.dumps(images), "ready", json.dumps(choice["used_bullets"]), (choice.get("video") or {}).get("format")),
         )
         db.commit()
         write_draft(slot, choice["body"], choice["comment"], images)
@@ -702,11 +745,12 @@ def tick(config, db) -> None:
 def write_draft(slot: str, body: str, comment: str, images: list[str], variants: dict | None = None) -> Path:
     DRAFTS.mkdir(exist_ok=True)
     path = DRAFTS / (slot.replace(":", "").replace(" ", "_") + ".md")
-    video, pictures = channels.split_media(images)
+    _, pictures = channels.split_media(images)
+    videos = [Path(item) for item in images if Path(item).suffix.lower() in channels.VIDEO_SUFFIXES]  # every cut
     image_lines = "\n".join(f"- {image}" for image in pictures)
     text = f"# Slot {slot}\n\n{body}\n\n## First comment\n\n{comment}\n\n"
-    if video:
-        text += f"## Demo video\n\n- {video}\n\n"
+    if videos:
+        text += "## Demo video\n\n" + "\n".join(f"- {video}" for video in videos) + "\n\n"
     text += f"## Images\n\n{image_lines}\n"
     for channel, variant in (variants or {}).items():
         heading = channels.LABELS[channel] + (f": {variant['title']}" if variant["title"] else "")
@@ -757,6 +801,7 @@ def cmd_preview(config, db, count: int) -> None:
     preview_dir.mkdir(parents=True, exist_ok=True)
     picker = Picker(config, db, repos, now, random.Random())
     savepoint_events = db.execute("SELECT id FROM events WHERE consumed=0").fetchall()
+    videos_made: list[tuple[str, str]] = []  # (repo, format), newest first, so the previews rotate formats like real posts
     for index in range(count):
         choice = picker.from_events() or picker.from_activity() or picker.recycle()
         if not choice:
@@ -766,7 +811,10 @@ def cmd_preview(config, db, count: int) -> None:
         if choice["repo"]:
             picker.simulated_recent.add(choice["repo"])
         slot = f"preview-{index + 1:02d}"
-        images = build_images(config, choice, slot)
+        images = build_images(config, choice, slot, db, videos_made)
+        lead_with_hook(config, choice)
+        if choice.get("video"):
+            videos_made.insert(0, (choice["repo"], choice["video"]["format"]))
         facts = choice["facts"][0] if choice["facts"] and choice["repo"] else None
         variants = channels.build_variants(choice["body"], choice["comment"], choice["angle"], facts, channels.enabled(config))
         path = write_draft(slot, choice["body"], choice["comment"], images, variants)

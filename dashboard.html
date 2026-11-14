@@ -80,7 +80,8 @@
   .post .num { display: inline-block; min-width: 26px; text-align: center; background: var(--ink); color: #fff; border-radius: 4px; margin-right: 8px; font-size: 12px; }
   .post h4 { margin: 6px 0 0; font-size: 16px; }
   .post .hook { color: #38434f; margin: 2px 0 8px; }
-  .thumbs { display: flex; gap: 8px; overflow-x: auto; }
+  .thumbs { display: flex; gap: 8px; overflow-x: auto; align-items: flex-start; }
+  .thumbs video.reel { width: 152px; height: 190px; }
   .thumbs img, .thumbs video { flex: none; width: 170px; height: 96px; object-fit: cover; border-radius: 6px; border: 1px solid var(--line); background: #eef0f2; }
   details summary { cursor: pointer; color: var(--blue); font-weight: 600; margin-top: 8px; }
   pre.text { white-space: pre-wrap; font: inherit; background: #f8f9fa; padding: 12px; border-radius: 6px; margin: 8px 0 0; }
@@ -346,16 +347,22 @@ function kpi(label, value, note = "") {
   return `<div class="card kpi"><div class="label">${esc(label)}</div><div class="value${size}">${value}</div><div class="note">${note}</div></div>`;
 }
 
+const REEL_FORMATS = { hook: "hook", pov: "POV", question: "question", listicle: "3 things", speedrun: "speedrun" };
+
 function postCard(entry, index) {
   const [kindLabel, kindClass] = KIND[entry.kind] || [entry.kind, ""];
-  const thumbs = entry.images.length ? `<div class="thumbs">${entry.images.map((src) => /\.mp4$/i.test(src) ? `<video src="${esc(src)}" muted controls preload="metadata" title="Demo video"></video>` : `<img src="${esc(src)}" alt="" loading="lazy">`).join("")}</div>` : "";
+  const reel = entry.images.map((src) => /_demo_([a-z]+)_(feed|tall)\.mp4$/i.exec(src)).find(Boolean);
+  const reelLabel = reel ? REEL_FORMATS[reel[1]] || reel[1] : "";
+  const thumbs = entry.images.length ? `<div class="thumbs">${entry.images.map((src) => /\.mp4$/i.test(src)
+    ? `<video src="${esc(src)}" muted controls preload="metadata" ${reel ? `class="reel" title="Short video: ${esc(reelLabel)}"` : `title="Demo video"`}></video>`
+    : `<img src="${esc(src)}" alt="" loading="lazy">`).join("")}</div>` : "";
   const full = entry.body
     ? `<details><summary>Full post text</summary><pre class="text">${esc(entry.body)}</pre>${entry.comment ? `<div class="hint" style="margin-top:8px"><b>First comment</b></div><pre class="text">${esc(entry.comment)}</pre>` : ""}</details>`
     : "";
   return `<article class="post ${esc(entry.kind)}">
     <div class="head">
       <div class="when"><span class="num">${index + 1}</span>${esc(niceDate(entry.slot))} WIB</div>
-      <div><span class="badge ${kindClass}">${esc(kindLabel)}</span> ${entry.angle && entry.angle !== "auto" && entry.angle !== "-" ? `<span class="badge grey">${esc(entry.angle)}</span>` : ""}</div>
+      <div><span class="badge ${kindClass}">${esc(kindLabel)}</span> ${entry.angle && entry.angle !== "auto" && entry.angle !== "-" ? `<span class="badge grey">${esc(entry.angle)}</span>` : ""}${reel ? ` <span class="badge grey">video: ${esc(reelLabel)}</span>` : ""}</div>
     </div>
     <h4>${esc(entry.title)}</h4>
     <p class="hook">${esc(entry.hook)}</p>

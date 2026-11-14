@@ -73,6 +73,12 @@ def image_url(path: str) -> str:
     return "/img?p=" + quote(str(path))
 
 
+def post_media(paths: list[str]) -> list:
+    """What a post card shows: its video once (a styled video is kept in two cuts; the feed cut is shown), then the pictures."""
+    video, pictures = channels.split_media(paths)
+    return ([video] if video else []) + pictures
+
+
 def week_start(moment: datetime) -> str:
     return (moment - timedelta(days=moment.weekday())).strftime("%Y-%m-%d")
 
@@ -143,7 +149,7 @@ def forecast(db, config: dict, now: datetime) -> list[dict]:
             plan.append({**entry, "kind": "drafted", "status": row["status"], "repo": row["repo"], "angle": row["angle"],
                          "title": title_for(row["repo"], row["angle"]), "hook": first_line(row["body"]),
                          "body": row["body"] or "", "comment": row["comment"] or "",
-                         "images": [image_url(path) for path in images]})
+                         "images": [image_url(path) for path in post_media(images)]})
         elif events:
             repo = events.pop(0)
             plan.append({**entry, "kind": "event", "repo": repo, "angle": "launch", "title": repo,

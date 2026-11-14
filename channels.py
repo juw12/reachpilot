@@ -13,8 +13,10 @@ Official APIs only (no scraping, no browser bots), all free:
   threads    free through the same Buffer key                    short post (500 chars), one tag, demo video or image, link
   substack   free through the same Buffer key (Substack Notes)   the post with links, project image
 
-The demo video is the short screen recording of the live site that visuals.record_demo makes for a single-project post.
-A platform that refuses the video gets the screenshots instead, so a video problem never costs a post.
+The demo video is the short screen recording of the live site made for a single-project post: a styled vertical
+video from reels.py in two cuts ("feed" 4:5 for the platforms posted to here, "tall" 9:16 for X and Threads), or
+the plain recording from visuals.record_demo. A platform that refuses the video gets the screenshots instead, so a
+video problem never costs a post.
 
 Every variant is cut from the LinkedIn post that already passed the no-invented-facts guard, so a platform can
 shorten a post but never add a claim; anything with a number not in the source is dropped.
@@ -75,6 +77,8 @@ BUFFER_VIDEO = ("x", "threads")  # Buffer channels that get the demo video (by p
 PUBLIC_IMAGE = re.compile(r"^https://\S+\.(png|jpe?g|webp)(\?\S*)?$", re.I)
 VIDEO_SUFFIXES = (".mp4",)
 DEMO_VIDEO_SIZE = (1280, 720)  # what visuals.record_demo makes; selftest keeps the two in step
+VIDEO_CUTS = {"feed": (1080, 1350), "tall": (1080, 1920)}  # what reels.record makes; selftest keeps the two in step
+STYLED_VIDEO = re.compile(r"^(?P<base>.*_demo)_(?P<format>[a-z]+)_(?P<cut>feed|tall)$")  # <repo>_demo_<format>_<cut>
 VIDEO_POLL_SECONDS = 3
 VIDEO_POLL_TRIES = 40  # two minutes for a platform to process a short clip
 DISCORD_MAX_VIDEO_BYTES = 9_500_000  # webhook uploads stop at 10 MB
@@ -171,19 +175,26 @@ def _x_plain_length(text: str) -> int:
     return sum(1 if any(low <= ord(char) <= high for low, high in X_LIGHT_RANGES) else 2 for char in text)
 
 
+OPENER_CHARS = 60  # shorter than this, what was kept is only a hook line: the post still has to say something
+OPENER_SPARE = 40  # ... so the next paragraph is shortened into the room left, when there is at least this much
+
+
 def fit(paragraphs: list[str], tail: str, limit: int, measure=len) -> str:
-    """As many whole paragraphs as fit before the tail (links, tags); the first one is shortened if it alone is too long."""
+    """As many whole paragraphs as fit before the tail (links, tags); the first one is shortened if it alone is too long.
+
+    When all that fits is a short opener, the paragraph after it is shortened to fit too.
+    """
     room = limit - measure(tail)
     kept: list[str] = []
     for part in paragraphs:
         candidate = "\n\n".join(kept + [part])
         if measure(candidate) <= room:
             kept.append(part)
-        elif not kept:
-            kept.append(_truncate(part, room))
-            break
-        else:
-            break
+            continue
+        used = measure("\n\n".join(kept)) + 2 if kept else 0
+        if not kept or (used < OPENER_CHARS and room - used >= OPENER_SPARE):
+            kept.append(_truncate(part, room - used))
+        break
     return ("\n\n".join(kept) + tail).strip()
 
 
@@ -401,21 +412,32 @@ def publish_pending(db, secrets: dict, rewrite, log) -> list[tuple[str, str, str
 
 # ------------------------------------------------------------------ images and the demo video
 
-def split_media(paths) -> tuple[Path | None, list[Path]]:
-    """A post's stored media list -> (the demo video or None, the screenshots)."""
-    video = None
+def split_media(paths, cut: str = "feed") -> tuple[Path | None, list[Path]]:
+    """A post's stored media list -> (the demo video or None, the screenshots).
+
+    A styled video comes in several cuts; the one asked for is picked, and the first video otherwise.
+    """
+    videos = []
     images = []
     for item in paths:
         path = Path(item)
         if path.suffix.lower() in VIDEO_SUFFIXES:
-            video = video or path
+            videos.append(path)
         else:
             images.append(path)
+    video = next((path for path in videos if path.stem.endswith(f"_{cut}")), videos[0] if videos else None)
     return video, images
 
 
+def video_size(path: Path) -> tuple[int, int]:
+    """(width, height) of a demo video, told from its name."""
+    styled = STYLED_VIDEO.match(Path(path).stem)
+    return VIDEO_CUTS[styled["cut"]] if styled else DEMO_VIDEO_SIZE
+
+
 def video_alt(path: Path) -> str:
-    return "Screen recording: " + path.stem.replace("_", " ").strip()
+    styled = STYLED_VIDEO.match(path.stem)
+    return "Screen recording: " + (styled["base"] if styled else path.stem).replace("_", " ").strip()
 
 
 def jpeg(path: Path, max_bytes: int, max_side: int = 2000) -> tuple[bytes, int, int]:
@@ -525,7 +547,7 @@ class Bluesky:
             try:
                 record["embed"] = {
                     "$type": "app.bsky.embed.video", "video": self.upload_video(session, video),
-                    "aspectRatio": {"width": DEMO_VIDEO_SIZE[0], "height": DEMO_VIDEO_SIZE[1]}, "alt": video_alt(video),
+                    "aspectRatio": dict(zip(("width", "height"), video_size(video))), "alt": video_alt(video),
                 }
                 images = []
             except Exception as error:
@@ -668,7 +690,7 @@ class Telegram:
                     message = self._call(
                         "sendVideo",
                         data={"chat_id": self.chat, "caption": text[:1024], "supports_streaming": "true",
-                              "width": DEMO_VIDEO_SIZE[0], "height": DEMO_VIDEO_SIZE[1]},
+                              **dict(zip(("width", "height"), video_size(video)))},
                         files={"video": (video.name, handle, "video/mp4")},
                     )
             except RuntimeError as error:

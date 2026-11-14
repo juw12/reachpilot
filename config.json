@@ -25,6 +25,15 @@
   "mode": "auto",
   "links_in_first_comment": true,
   "demo_video": true,
+  "video_formats": [
+    "hook",
+    "pov",
+    "question",
+    "listicle",
+    "speedrun"
+  ],
+  "video_hook_in_post": true,
+  "video_hooks": {},
   "linkedin_api_version": "202609",
   "ollama_model": "",
   "exclude_repos": [

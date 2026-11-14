@@ -1128,5 +1128,291 @@ with tempfile.TemporaryDirectory() as temp_dir:
     finally:
         logging.disable(logging.NOTSET)
 
+# Short videos (reels.py): captions cut only from the repo's own words, formats that rotate and learn, two cuts.
+# Nothing here opens a browser or runs ffmpeg.
+import reels  # noqa: E402
+
+reel_facts = gh.RepoFacts(
+    name="watt-reserve", description="Watt Reserve: plan home battery backup for blackouts, offline.",
+    html_url="https://github.com/juw12/watt-reserve", homepage="https://juw12.github.io/watt-reserve/",
+    topics=["offline-first", "pwa", "energy"], language="TypeScript", pushed_at="2026-11-01T00:00:00Z", license="MIT",
+    tagline="Know how long your battery lasts.", title="Watt Reserve",
+    bullets=["Adds up every appliance you choose", "Shows runtime for 3 battery sizes", "Works offline as an installable app",
+             "Exports the plan as a printable page"],
+)
+star_facts = gh.RepoFacts(
+    name="earlystar", title="EarlyStar", html_url="https://github.com/juw12/earlystar", homepage="https://juw12.github.io/earlystar/",
+    description="EarlyStar: Find GitHub repos before they trend: real star gains, activity, Trending history, badges and "
+                "a free JSON API. Runs in your browser.",
+    topics=[], language="TypeScript", pushed_at="2026-11-01T00:00:00Z", license="",
+    bullets=[
+        "Works offline as an installable app",
+        "Price: free for every user forever",
+        "Kilat | 12 ms | Python | 40 ms here",
+        "in a headless browser on every push",
+        "Fast",
+        "Scores every repository by the stars it gained in the last day, week and month against its own history",
+        "Works only in Chrome on the desktop",
+        "If the site is down it shows a note",
+        "It does not track anything you type",
+        "Based on Smith et al for the scoring model",
+        "Shows runtime for 3 battery sizes",
+    ],
+)
+
+long_line = "Tracks every appliance you own, adds up the watts they draw, and shows how long each battery size would keep them running."
+comma_cut = reels.short(long_line, 60)
+colon_head = reels.short(star_facts.description.split(": ", 1)[1], reels.CAPTION_CHARS)
+check(reels.short("Works offline as an installable app.", 84) == "Works offline as an installable app",
+      "reels: a sentence that fits is kept whole")
+check(comma_cut == "Tracks every appliance you own, adds up the watts they draw\u2026" and len(comma_cut) <= 60,
+      f"reels: a long sentence is cut at a comma and marked ({comma_cut!r})")
+check(reels.short("A small typed scripting language with units of measure and checked dimensions for engineers", 60)
+      == "A small typed scripting language with units of measure\u2026", "reels: a cut never ends on a dangling 'and'")
+check(colon_head == "Find GitHub repos before they trend", f"reels: a statement before a colon stands alone, unmarked ({colon_head!r})")
+shortened_ok = True
+for limit in (40, 60, 84):
+    for source_line in [long_line, star_facts.description] + star_facts.bullets:
+        cut_line = reels.short(source_line, limit)
+        shortened_ok = shortened_ok and len(cut_line) <= limit and reels._clean(source_line).startswith(cut_line.rstrip("\u2026"))
+check(shortened_ok, "reels: shortening only ever removes words from the end and respects the limit")
+
+check(reels.what_it_is(reel_facts) == "Plan home battery backup for blackouts, offline",
+      f"reels: the intro is the description without the project's name ({reels.what_it_is(reel_facts)!r})")
+check(reels.pitch_lines(star_facts) == ["Real star gains, activity, Trending history, badges and a free JSON API", "Runs in your browser"],
+      f"reels: the rest of the description becomes captions ({reels.pitch_lines(star_facts)})")
+check(reels.readme_lines(star_facts) == ["Works offline as an installable app", "Shows runtime for 3 battery sizes"],
+      f"reels: labels, table rows, fragments, long lines, caveats and citations are not captions ({reels.readme_lines(star_facts)})")
+thin_facts = copy.deepcopy(reel_facts)
+thin_facts.description, thin_facts.tagline, thin_facts.bullets = "", "", ["Works offline as an installable app"]
+few_facts = copy.deepcopy(reel_facts)
+few_facts.bullets = reel_facts.bullets[:2]
+check(reels.available(reel_facts) == list(reels.FORMATS), "reels: a project with a description and features gets every format")
+check("listicle" not in reels.available(few_facts) and "hook" in reels.available(few_facts),
+      '"3 things" needs three features; the other formats do not')
+check(reels.available(thin_facts) == [], "reels: a project with nearly nothing to say gets no styled video")
+
+source_lower = reels._clean(reel_facts.source_text()).lower()
+github_address = "github.com/juw12/watt-reserve"
+allowed_leads = {"This is Watt Reserve.", "Yes. MIT licence, source on GitHub.", f"All on GitHub: {github_address}", "Watch."}
+plans_ok = True
+seen_free = False
+for video_format in reels.FORMATS:
+    for seed in range(40):
+        video_plan = reels.plan(reel_facts, video_format, random.Random(seed))
+        rows = video_plan.timeline()
+        grounded = all(
+            beat in allowed_leads or re.sub(r"^\d\. ", "", beat).rstrip("\u2026").lower() in source_lower
+            for beat in video_plan.beats
+        )
+        plans_ok = plans_ok and (
+            1 <= len(video_plan.beats) <= 3 and grounded and video_plan.hook and video_plan.github == github_address
+            and video_plan.seconds == (reels.SPEEDRUN_SECONDS if video_format == "speedrun" else reels.SECONDS)
+            and rows[0] == ("hook", video_plan.hook, 0.0, reels.HOOK_SECONDS) and rows[-1][0] == "end"
+            and rows[-1][3] == video_plan.seconds
+            and all(abs(before[3] - after[2]) < 1e-9 for before, after in zip(rows, rows[1:]))
+            and composer.invented_numbers(video_plan.post_line, reel_facts.source_text()) == []
+        )
+        seen_free = seen_free or video_plan.hook == "is it really free?"
+check(plans_ok, "reels: every format gives 1-3 captions from the repo's own words on a gapless timeline, no invented numbers")
+check(seen_free and all(reels.plan(star_facts, "question", random.Random(seed)).hook != "is it really free?" for seed in range(60)),
+      'reels: "is it really free?" is only asked when the repo has a licence')
+listicle_plan = reels.plan(reel_facts, "listicle", random.Random(1))
+check(listicle_plan.hook == "3 things about Watt Reserve" and [beat[:3] for beat in listicle_plan.beats] == ["1. ", "2. ", "3. "],
+      "reels: the listicle counts its three features")
+own_plan = reels.plan(reel_facts, "hook", random.Random(1), ["Blackout tonight? Open {name}."])
+check(own_plan.hook == own_plan.post_line == "Blackout tonight? Open Watt Reserve.", 'reels: "video_hooks" replaces the stock hooks')
+numbered_plan = reels.plan(reel_facts, "hook", random.Random(1), ["9000 people use {name}."])
+check(numbered_plan.post_line == "", "reels: a hook with a number the repo never states is kept out of the post text")
+try:
+    reels.plan(reel_facts, "dance", random.Random(1))
+    unknown_refused = False
+except ValueError:
+    unknown_refused = True
+check(unknown_refused, "reels: an unknown format is refused")
+
+# Rotation: never back to back, the angle nudges, results decide
+rotation_past = [("kilat", "hook"), ("watt-reserve", "pov")]
+rotated = {reels.choose_format(reels.FORMATS, reel_facts, "launch", rotation_past, [], random.Random(seed)) for seed in range(200)}
+check(rotated and not rotated & {"hook", "pov"}, f"reels: never the previous video's format nor this project's last one ({sorted(rotated)})")
+check(reels.choose_format(["hook"], reel_facts, "launch", rotation_past, [], random.Random(1)) == "hook",
+      "reels: the only enabled format is used even right after itself")
+check(reels.choose_format([], reel_facts, "launch", [], [], random.Random(1)) is None
+      and reels.choose_format(reels.FORMATS, thin_facts, "launch", [], [], random.Random(1)) is None,
+      "reels: no format when none is enabled or the project has nothing to caption")
+feedback_picks = [reels.choose_format(reels.FORMATS, reel_facts, "feedback", [], [], random.Random(seed)) for seed in range(1500)]
+feedback_counts = {name: feedback_picks.count(name) for name in reels.FORMATS}
+check(feedback_counts["question"] > 1.5 * max(count for name, count in feedback_counts.items() if name != "question"),
+      f"reels: a feedback post leans towards the question format ({feedback_counts})")
+learned_records = [
+    {"impressions": 5000, "engagements": 1000, "format": "speedrun"},
+    {"impressions": 5000, "engagements": 10, "format": "hook"},
+]
+learned_picks = [reels.choose_format(reels.FORMATS, reel_facts, "", [], learned_records, random.Random(seed)) for seed in range(300)]
+check(learned_picks.count("speedrun") > 270 and "hook" not in learned_picks,
+      f"reels: the format that earned the most is picked the most ({learned_picks.count('speedrun')}/300)")
+shipped_config = json.loads((Path(__file__).parent / "config.json").read_text(encoding="utf-8"))
+check(all(name in reels.FORMATS for fits in reels.ANGLE_FIT.values() for name in fits)
+      and set(shipped_config["video_formats"]) <= set(reels.FORMATS)
+      and shipped_config.get("demo_video", True),
+      "reels: config.json and the angle table only name real formats")
+
+# Two cuts: sizes agree across modules, each platform gets the right one, captions stay in their zone
+feed_video = Path("watt-reserve_demo_hook_feed.mp4")
+tall_video = Path("watt-reserve_demo_hook_tall.mp4")
+plain_video = Path("watt-reserve_demo.mp4")
+picture = Path("card.png")
+check(channels.VIDEO_CUTS == reels.CUTS, "reels: channels and reels agree on the video sizes")
+check(channels.split_media([feed_video, tall_video, picture]) == (feed_video, [picture])
+      and channels.split_media([feed_video, tall_video, picture], cut="tall") == (tall_video, [picture])
+      and channels.split_media([plain_video, picture], cut="tall") == (plain_video, [picture]),
+      "channels: the feed cut by default, the tall cut for X and Threads, the plain clip when that is all there is")
+check(channels.video_size(feed_video) == (1080, 1350) and channels.video_size(tall_video) == (1080, 1920)
+      and channels.video_size(plain_video) == channels.DEMO_VIDEO_SIZE, "channels: a video's size is told from its name")
+check(channels.video_alt(feed_video) == channels.video_alt(plain_video) == "Screen recording: watt-reserve demo",
+      "channels: the alt text leaves the format and cut out")
+layout_ok = True
+captions_ok = True
+phone_ratio = visuals.PHONE_SIZE[0] / visuals.PHONE_SIZE[1]
+for cut, (cut_width, cut_height) in reels.CUTS.items():
+    zone_left, zone_top, zone_right, zone_bottom = reels.LAYOUTS[cut]["zone"]
+    screen_left, screen_top, screen_width, screen_height = reels.LAYOUTS[cut]["screen"]
+    layout_ok = layout_ok and (
+        screen_width % 2 == 0 and screen_height % 2 == 0 and abs(screen_width / screen_height - phone_ratio) < 0.005
+        and screen_left >= 0 and screen_left + screen_width <= cut_width and screen_top + screen_height <= cut_height
+        and zone_bottom <= screen_top and 0 <= zone_left < zone_right <= cut_width
+    )
+    for style in reels.STYLES:
+        for caption in ("Watch.", "Real star gains, activity, Trending history, badges and a free JSON API, in your browser"):
+            caption_picture, (caption_x, caption_y) = reels.caption_image(caption, cut, style)
+            captions_ok = captions_ok and (
+                zone_left <= caption_x and zone_top <= caption_y
+                and caption_x + caption_picture.width <= zone_right and caption_y + caption_picture.height <= zone_bottom
+            )
+    backdrop = reels.frame_image(cut, "watt-reserve", github_address)
+    screen_centre = (screen_left + screen_width // 2, screen_top + screen_height // 2)
+    layout_ok = layout_ok and backdrop.size == (cut_width, cut_height) and backdrop.getpixel(screen_centre)[3] == 0 \
+        and backdrop.getpixel((2, 2))[3] == 255 and reels.end_image(cut, github_address).size == (cut_width, cut_height)
+check(layout_ok, "reels: in both cuts the recording keeps the phone's shape, sits inside the picture, and shows through the frame")
+check(captions_ok, "reels: every caption style stays inside its zone above the phone, in both cuts")
+
+timed_overlays = [(Path(f"caption_{index}.png"), 10, 20, start, end)
+                  for index, (_, _, start, end) in enumerate(listicle_plan.timeline())]
+for cut, scale in (("feed", "scale=696:960"), ("tall", "scale=894:1232")):
+    command = reels.ffmpeg_args("ffmpeg", Path("raw.webm"), 1.5, 1.1, cut, 18, Path("frame.png"), timed_overlays,
+                                Path("bar.png"), Path("out.mp4"))
+    filters = command[command.index("-filter_complex") + 1]
+    check(scale in filters and "between(t,0.00,3.20)" in filters and "between(t,15.20,18.00)" in filters
+          and command[command.index("-t") + 1] == "18" and command.count("-i") == len(timed_overlays) + 4
+          and command[-1] == "out.mp4" and command[command.index("-ss") + 1] == "1.50",
+          f"reels: the {cut} cut is scaled into its phone, timed caption by caption, and cut to length")
+check(urllib.parse.urljoin(reel_facts.homepage, visuals.PHONE_WRAPPER_PATH).startswith("https://juw12.github.io/"),
+      "visuals: the phone view is served from the site's own origin, so the site keeps its storage")
+
+# autopilot: styled video first, the plain recording when that fails, screenshots always; the hook opens the post
+logging.disable(logging.CRITICAL)
+try:
+    styled_pair = [Path("watt-reserve_demo_hook_feed.mp4"), Path("watt-reserve_demo_hook_tall.mp4")]
+    styled_config = {"github_user": "juw12", "video_formats": ["hook"], "video_hooks": {"watt-reserve": ["Blackout tonight? Open {name}."]}}
+
+    def media_for(video_config, angle="launch", subjects=None, record_result=None):
+        video_choice = {"angle": angle, "facts": subjects or [reel_facts], "body": "The post itself."}
+        with mock.patch("autopilot.visuals.images_for_post", return_value=[picture]), \
+             mock.patch("autopilot.reels.record", **(record_result or {"return_value": styled_pair})) as styled_recorder, \
+             mock.patch("autopilot.visuals.demo_for_post", return_value=plain_video) as plain_recorder:
+            made = autopilot.build_images(video_config, video_choice, "2026-12-01 08:00")
+        return made, video_choice, styled_recorder, plain_recorder
+
+    made, video_choice, styled_recorder, plain_recorder = media_for(styled_config)
+    check(made == [str(path) for path in styled_pair + [picture]] and not plain_recorder.called
+          and styled_recorder.call_args[0][0].format == "hook"
+          and video_choice["video"] == {"format": "hook", "hook": "Blackout tonight? Open Watt Reserve."},
+          f"autopilot: a styled video leads the media in both cuts and names its format and hook ({video_choice.get('video')})")
+    made, video_choice, _, plain_recorder = media_for(styled_config, record_result={"side_effect": RuntimeError("no browser")})
+    check(made == [str(plain_video), str(picture)] and "video" not in video_choice and plain_recorder.called,
+          "autopilot: when the styled video fails the plain recording is used and no hook is added")
+    made, video_choice, styled_recorder, _ = media_for({"github_user": "juw12", "video_formats": []})
+    check(made == [str(plain_video), str(picture)] and not styled_recorder.called and "video" not in video_choice,
+          'autopilot: "video_formats": [] keeps the plain recording')
+    made, _, styled_recorder, plain_recorder = media_for({**styled_config, "demo_video": False})
+    check(made == [str(picture)] and not styled_recorder.called and not plain_recorder.called,
+          'autopilot: "demo_video": false makes no video of either kind')
+    _, video_choice, styled_recorder, _ = media_for(styled_config, angle="roundup", subjects=[reel_facts, star_facts])
+    check(not styled_recorder.called and "video" not in video_choice, "autopilot: a roundup of several projects gets no styled video")
+
+    hooked = {"body": "The post itself.", "video": {"format": "hook", "hook": "Stop scrolling for a second."}}
+    autopilot.lead_with_hook({}, hooked)
+    autopilot.lead_with_hook({}, hooked)
+    check(hooked["body"] == "Stop scrolling for a second.\n\nThe post itself.", "autopilot: the video's hook opens the post, once")
+    untouched = [
+        ({"video_hook_in_post": False}, {"body": "The post itself.", "video": {"format": "hook", "hook": "Stop scrolling."}}),
+        ({}, {"body": "The post itself.", "video": {"format": "hook", "hook": ""}}),
+        ({}, {"body": "The post itself."}),
+    ]
+    for hook_config, hook_choice in untouched:
+        autopilot.lead_with_hook(hook_config, hook_choice)
+    check(all(hook_choice["body"] == "The post itself." for _, hook_choice in untouched),
+          'autopilot: no hook line without a styled video, without a safe line, or with "video_hook_in_post": false')
+
+    # A hook on top must not push the substance out of the short platforms
+    opener = "Stop scrolling for a second."
+    hooked_body = opener + "\n\n" + composer.compose_launch(reel_facts, random.Random(3), set(), True) + "\n\n#OpenSource #PWA"
+    hooked_variants = channels.build_variants(hooked_body, composer.links_for(reel_facts), "launch", reel_facts)
+    for name in ("x", "bluesky"):
+        short_body = hooked_variants[name]["body"]
+        said = re.sub(r"https?://\S+|#\w+", "", short_body.replace(opener, "")).strip()
+        check(short_body.startswith(opener) and len(said) >= 40 and "juw12.github.io/watt-reserve" in short_body,
+              f"channels: {name} keeps the hook, real content and the link ({len(said)} chars of content)")
+    paragraph = "This sentence says something about the project and it goes on for a while. " * 4
+    check(channels.fit([opener, paragraph], "\n\nhttps://x.test", 200).startswith(opener + "\n\nThis sentence says")
+          and len(channels.fit([opener, paragraph], "\n\nhttps://x.test", 200)) <= 200,
+          "channels: after a short opener the next paragraph is shortened to fit")
+    check(channels.fit([paragraph[:76].strip(), paragraph], "\n\nhttps://x.test", 200) == paragraph[:76].strip() + "\n\nhttps://x.test",
+          "channels: after a full first paragraph nothing is cut in half")
+
+    check(dashboard.post_media([str(feed_video), str(tall_video), str(picture)]) == [feed_video, picture],
+          "dashboard: a post card shows its video once, then the pictures")
+    dashboard_page = (Path(__file__).parent / "dashboard.html").read_text(encoding="utf-8")
+    reel_labels = re.search(r"const REEL_FORMATS = \{([^}]*)\}", dashboard_page)
+    check(reel_labels is not None and all(f"{name}:" in reel_labels[1] for name in reels.FORMATS) and "video.reel" in dashboard_page,
+          "dashboard: the page labels every video format")
+
+    # The format is stored with the post and read back for the rotation and for learning
+    with tempfile.TemporaryDirectory() as reel_dir:
+        real_paths = (autopilot.DB_PATH, autopilot.SECRETS_PATH, autopilot.TOKEN_PATH)
+        autopilot.DB_PATH = Path(reel_dir) / "state.db"
+        autopilot.SECRETS_PATH = Path(reel_dir) / "secrets.json"
+        autopilot.TOKEN_PATH = Path(reel_dir) / "token.json"
+        try:
+            reel_db = autopilot.connect_db()
+            reel_db.close()
+            reel_db = autopilot.connect_db()  # a second start must not try to add the column again
+            stored_posts = [
+                ("2026-11-03 08:00", "watt-reserve", "posted", "2026-11-03 08:01", "hook"),
+                ("2026-11-04 08:00", "kilat", "posted", "2026-11-04 08:01", "speedrun"),
+                ("2026-11-05 08:00", "cairn", "posted", "2026-11-05 08:01", None),
+                ("2026-11-10 08:00", "earlystar", "ready", None, "pov"),
+            ]
+            reel_db.executemany(
+                "INSERT INTO posts(slot, source, repo, angle, body, status, posted_at, video_format) VALUES(?,'x',?,'launch','b',?,?,?)",
+                stored_posts,
+            )
+            reel_db.execute("INSERT INTO metrics VALUES(?,?,?,?,datetime('now'))", ("u1", "2026-11-03", 900, 30))
+            reel_db.execute("INSERT INTO metrics VALUES(?,?,?,?,datetime('now'))", ("u2", "2026-11-05", 700, 20))
+            reel_db.commit()
+            stored_history = [tuple(row) for row in reels.history(reel_db)]
+            stored_records = reels.format_records(reel_db)
+            reel_db.close()
+        finally:
+            autopilot.DB_PATH, autopilot.SECRETS_PATH, autopilot.TOKEN_PATH = real_paths
+    check(stored_history == [("earlystar", "pov"), ("kilat", "speedrun"), ("watt-reserve", "hook")],
+          f"reels: the posts table remembers each video's format, newest first ({stored_history})")
+    check([(record["repo"], record["format"], record["impressions"]) for record in stored_records
+           if record["repo"] == "watt-reserve"] == [("watt-reserve", "hook", 900)]
+          and all(record["repo"] != "cairn" for record in stored_records),
+          f"reels: results are credited to the format of the post that earned them ({stored_records})")
+finally:
+    logging.disable(logging.NOTSET)
+
 print("\nALL PASSED" if not failures else f"\n{len(failures)} FAILED")
 sys.exit(1 if failures else 0)

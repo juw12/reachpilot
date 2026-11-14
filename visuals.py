@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+import urllib.parse
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
@@ -139,6 +140,9 @@ def images_for_post(user: str, angle: str, subjects: list[RepoFacts], out_dir: P
 # ------------------------------------------------------------------ demo video (a short screen recording of the live site)
 
 DEMO_SIZE = (1280, 720)
+PHONE_SIZE = (450, 620)  # the phone-sized view the vertical videos (reels.py) record, in CSS pixels
+PHONE_SCALE = 2  # ... shown twice as large, so the recording is 900x1240 and stays sharp
+PHONE_WRAPPER_PATH = "/reachpilot-phone-view"  # where record_raw serves the page that holds the phone frame
 DEMO_MIN_SECONDS = 8
 DEMO_MAX_SECONDS = 22
 DEMO_MAX_CLICKS = 3
@@ -221,9 +225,55 @@ def _demo_speed(recorded_seconds: float) -> float:
     return max(1.0, recorded_seconds / DEMO_MAX_SECONDS)
 
 
-def _demo_tour(page, deadline: float) -> None:
+class _ScaledMouse:
+    """The real mouse, addressed in the phone view's own pixels."""
+
+    def __init__(self, mouse, scale: float, frame):
+        self.mouse = mouse
+        self.scale = scale
+        self.frame = frame
+
+    def move(self, x, y, **options) -> None:
+        self.mouse.move(x * self.scale, y * self.scale, **options)
+
+    def click(self, x, y) -> None:
+        self.mouse.click(x * self.scale, y * self.scale)
+
+    def wheel(self, delta_x, delta_y) -> None:
+        # A real wheel turn does not reach a site inside the enlarged frame, so the frame scrolls itself.
+        self.frame.evaluate("([x, y]) => window.scrollBy(x, y)", [delta_x, delta_y])
+
+
+class _PhoneView:
+    """What _demo_tour needs from a page, for a site shown inside the enlarged phone-sized frame."""
+
+    def __init__(self, page, frame):
+        self.frame = frame
+        self.mouse = _ScaledMouse(page.mouse, PHONE_SCALE, frame)
+        self.wait_for_timeout = page.wait_for_timeout
+
+    @property
+    def url(self) -> str:
+        return self.frame.url
+
+    def evaluate(self, script):
+        return self.frame.evaluate(script)
+
+
+def _phone_wrapper() -> str:
+    """A blank page holding one frame of PHONE_SIZE drawn PHONE_SCALE times larger: sites lay out as on a phone."""
+    width, height = PHONE_SIZE
+    return (
+        "<html><head><style>html > #rp-demo-cursor { display: none }</style></head>"  # only the site draws the pointer
+        "<body style='margin:0;overflow:hidden;background:#fff'>"
+        f"<iframe id='phone' style='border:0;width:{width}px;height:{height}px;"
+        f"transform:scale({PHONE_SCALE});transform-origin:0 0'></iframe></body></html>"
+    )
+
+
+def _demo_tour(page, deadline: float, size: tuple[int, int] = DEMO_SIZE) -> None:
     """Use the page the way a visitor would: look, press a few controls, scroll through it, come back up."""
-    width, height = DEMO_SIZE
+    width, height = size
     start_url = page.url.split("#")[0]
     page.mouse.move(width * 0.78, height * 0.82)
     page.mouse.move(width * 0.5, height * 0.45, steps=30)
@@ -245,11 +295,13 @@ def _demo_tour(page, deadline: float) -> None:
                 return
             if screen or len(pressed) >= 2:  # two controls on the first screen, then one per screen
                 break
-        if time.monotonic() > deadline - 3:
+        if screen and time.monotonic() > deadline - 3:  # the first screen always scrolls: a demo has to move
             break
         before = page.evaluate("window.scrollY")
         page.mouse.move(width * 0.5, height * 0.55, steps=12)
         for _ in range(26):
+            if screen and time.monotonic() > deadline:  # on a busy PC one scroll step can stall for seconds
+                break
             page.mouse.wheel(0, height * 0.8 / 26)
             page.wait_for_timeout(28)
         page.wait_for_timeout(1000)
@@ -259,50 +311,68 @@ def _demo_tour(page, deadline: float) -> None:
     page.wait_for_timeout(1300)
 
 
-def record_demo(url: str, output: Path) -> Path:
-    """Record a short silent MP4 of the live page being used. Raises when the page or the encoding fails.
+def record_raw(url: str, folder: Path, phone: bool = False) -> tuple[Path, float, float]:
+    """Record the live page being used into folder. Returns (raw video, seconds of loading to cut, seconds of use).
 
     The browser is a throwaway profile that only reads: every request that is not a GET is blocked, so the
     recording can press buttons without ever submitting, signing up or saving anything.
+    phone=True records the site at phone width (PHONE_SIZE, drawn PHONE_SCALE times larger) for the vertical videos.
     """
     from playwright.sync_api import sync_playwright
 
-    width, height = DEMO_SIZE
+    view_size = PHONE_SIZE if phone else DEMO_SIZE
+    scale = PHONE_SCALE if phone else 1
+    video_size = {"width": view_size[0] * scale, "height": view_size[1] * scale}
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(channel="msedge", headless=True)
+        context = browser.new_context(
+            viewport=video_size, record_video_dir=str(folder), record_video_size=video_size, color_scheme="light",
+        )
+        context.route("**/*", lambda route: route.continue_() if route.request.method == "GET" else route.abort())
+        context.add_init_script(DEMO_CURSOR_JS)
+        context.on("page", lambda popup: popup.close() if len(context.pages) > 1 else None)
+        page = context.new_page()
+        page.on("dialog", lambda dialog: dialog.dismiss())
+        started = time.monotonic()
+        try:
+            view = page
+            if phone:
+                # The frame's page is served from the site's own address: framed by a page from anywhere else the
+                # site is "third party", and the browser denies it localStorage (apps then show an error, not the app).
+                wrapper_url = urllib.parse.urljoin(url, PHONE_WRAPPER_PATH)
+                page.route(wrapper_url, lambda route: route.fulfill(content_type="text/html", body=_phone_wrapper()))
+                page.goto(wrapper_url)
+                frame = page.frames[1]
+                response = frame.goto(url, wait_until="networkidle", timeout=45000)
+                view = _PhoneView(page, frame)
+            else:
+                response = page.goto(url, wait_until="networkidle", timeout=45000)
+            if response is None or response.status >= 400:
+                raise RuntimeError(f"{url} answered HTTP {response.status if response else 'nothing'}")
+            page.wait_for_timeout(1200)
+            lead_in = max(time.monotonic() - started - 0.4, 0.0)  # the blank loading part, cut from the video
+            tour_start = time.monotonic()
+            try:
+                _demo_tour(view, tour_start + DEMO_MAX_SECONDS, view_size)
+            except Exception:
+                pass  # a control that misbehaves ends the tour early; what was recorded so far is still a demo
+            remaining = DEMO_MIN_SECONDS - (time.monotonic() - tour_start)
+            if remaining > 0:
+                page.wait_for_timeout(remaining * 1000)
+            tour_seconds = time.monotonic() - tour_start + 0.4
+            raw = Path(page.video.path())
+        finally:
+            context.close()  # this is what writes the recording to disk
+            browser.close()
+    return raw, lead_in, tour_seconds
+
+
+def record_demo(url: str, output: Path) -> Path:
+    """Record a short silent MP4 of the live page being used. Raises when the page or the encoding fails."""
     output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="reachpilot_demo_") as folder:
-        with sync_playwright() as playwright:
-            browser = playwright.chromium.launch(channel="msedge", headless=True)
-            context = browser.new_context(
-                viewport={"width": width, "height": height},
-                record_video_dir=folder,
-                record_video_size={"width": width, "height": height},
-                color_scheme="light",
-            )
-            context.route("**/*", lambda route: route.continue_() if route.request.method == "GET" else route.abort())
-            context.add_init_script(DEMO_CURSOR_JS)
-            context.on("page", lambda popup: popup.close() if len(context.pages) > 1 else None)
-            page = context.new_page()
-            page.on("dialog", lambda dialog: dialog.dismiss())
-            started = time.monotonic()
-            try:
-                response = page.goto(url, wait_until="networkidle", timeout=45000)
-                if response is None or response.status >= 400:
-                    raise RuntimeError(f"{url} answered HTTP {response.status if response else 'nothing'}")
-                page.wait_for_timeout(1200)
-                lead_in = max(time.monotonic() - started - 0.4, 0.0)  # the blank loading part, cut from the video
-                tour_start = time.monotonic()
-                try:
-                    _demo_tour(page, tour_start + DEMO_MAX_SECONDS)
-                except Exception:
-                    pass  # a control that misbehaves ends the tour early; what was recorded so far is still a demo
-                remaining = DEMO_MIN_SECONDS - (time.monotonic() - tour_start)
-                if remaining > 0:
-                    page.wait_for_timeout(remaining * 1000)
-                speed = _demo_speed(time.monotonic() - tour_start + 0.4)
-                raw = Path(page.video.path())
-            finally:
-                context.close()  # this is what writes the recording to disk
-                browser.close()
+        raw, lead_in, tour_seconds = record_raw(url, Path(folder))
+        speed = _demo_speed(tour_seconds)
         subprocess.run(
             [_ffmpeg(), "-y", "-loglevel", "error", "-ss", f"{lead_in:.2f}", "-i", str(raw),
              "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",  # silent track: some players need one
@@ -317,11 +387,19 @@ def record_demo(url: str, output: Path) -> Path:
     return output
 
 
-def demo_for_post(angle: str, subjects: list[RepoFacts], out_dir: Path) -> Path | None:
-    """The demo video for a post about one project with a live site; None for roundups and repos without a site."""
+def demo_site(angle: str, subjects: list[RepoFacts]) -> RepoFacts | None:
+    """The one project whose live site a post can show in a video; None for roundups and repos without a site."""
     if angle == "roundup" or len(subjects) != 1:
         return None
     facts = subjects[0]
     if not facts.homepage or "//github.com/" in facts.homepage:
+        return None
+    return facts
+
+
+def demo_for_post(angle: str, subjects: list[RepoFacts], out_dir: Path) -> Path | None:
+    """The plain demo video for a post about one project with a live site; None when demo_site says there is none."""
+    facts = demo_site(angle, subjects)
+    if facts is None:
         return None
     return record_demo(facts.homepage, out_dir / f"{facts.name}_demo.mp4")
