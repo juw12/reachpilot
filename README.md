@@ -279,6 +279,22 @@ only reads a public `summary.json` that the tested project publishes; it never w
 file can't be reached, the card shows the last good answer and says so. Steps that should not be public go in
 `launch_private.json` next to the code; that file is git-ignored and is shown only on this dashboard.
 
+**Patent screen.** `python patents.py install` adds a weekly task (`\ReachPilot\Patent screen`, Mondays 09:00) and a
+card on the Overview. Each run reads the description and README of every repository you own, private ones included
+when `gh` is signed in, and answers three questions per project:
+
+- **Score**: how much technical mechanism the text describes, with the sentence it was found in. An app, a game or a
+  list is capped below "maybe" whatever words it uses.
+- **Filing window**: a private repo has disclosed nothing. A public repo is counted as disclosed on the day it was
+  created, which leaves 12 months in the US, Japan, South Korea and Taiwan. Europe has no such period.
+- **Next step**: an attorney look, a defensive publication, a licence, or nothing.
+
+Dates inside 90 days become to-dos, and you record your own decision on the card: file, publish defensively, licence
+only or skip. It is a keyword screen, not legal advice: it does not search prior art, cannot judge novelty and does
+not know what you showed people outside GitHub. Results stay on this PC in `data/patents/` (git-ignored) because they
+name private repositories. Your own notes in `data/patents/overrides.json` are never overwritten by a scan.
+`python patents.py show` prints the ranked list; the public demo shows the card with made-up projects.
+
 ## Files
 
 | File | Role |
@@ -297,6 +313,7 @@ file can't be reached, the card shows the last good answer and says so. Steps th
 | `creators.py` | the thank-you for creators who covered a project |
 | `dashboard.py` + `dashboard.html` | local dashboard (restarts itself onto new code) |
 | `hub.py` | dashboard modules, to-do list and whitelisted actions |
+| `patents.py` | weekly patent screen of your GitHub projects: score, filing date, next step |
 | `selfupdate.py` | fast-forward updater used by the dashboard and the Updates task |
 | `selftest.py` | tests (run in CI) |
 

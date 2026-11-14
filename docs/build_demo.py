@@ -16,6 +16,11 @@ from pathlib import Path
 
 DOCS = Path(__file__).resolve().parent
 ROOT = DOCS.parent
+sys.path.insert(0, str(ROOT))
+
+import hub  # noqa: E402  (the real card, to-do and help builders, fed with the made-up projects below)
+import patents  # noqa: E402  (the real scorer)
+
 TODAY = date(2026, 11, 7)
 
 
@@ -125,6 +130,118 @@ DAILY = [
               "Posting days are fixed, so most days show 0."),
 ]
 
+# ------------------------------------------------------------------ patent screen
+
+def patent_project(name, description, readme, created, private=False, licence="mit", fork=False):
+    """One made-up repository in the shape GitHub returns, with its made-up README."""
+    return ({
+        "name": name, "full_name": f"demo/{name}", "html_url": "#", "description": description,
+        "private": private, "fork": fork, "archived": False, "created_at": created, "pushed_at": day(-9),
+        "license": {"key": licence} if licence else None,
+    }, readme)
+
+
+PATENT_PROJECTS = [
+    patent_project(
+        "hinge-lab", "Friction hinge with a printed torque limiter for laptop-style lids.",
+        """# hinge-lab
+
+A friction hinge whose torque stays flat over 20,000 cycles. A printed wave spring preloads a split bearing,
+and a fixture with a torque sensor logs every cycle.
+
+Unfiled patentable material: do not publish this repository before a filing decision.
+
+## How it works
+
+The solver fits the spring compliance to the logged torque curve, and an interpolation table sets the preload.
+
+## Results
+
+Measured torque drift is within about 4 percent after 20,000 cycles, compared with 18 percent for the stock hinge.
+""", day(-120), private=True, licence=""),
+    patent_project(
+        "pocket-cad", "A tiny parametric CAD sketcher in the browser.",
+        """# pocket-cad
+
+Sketch, constrain and export STL without installing anything.
+
+## How it works
+
+A constraint solver written from scratch turns each sketch into a signed-distance field. Marching squares traces
+the outlines, and a small parser reads dimension expressions.
+
+## Results
+
+Benchmarks: a sketch with 200 constraints re-solves in 12 ms, 3x faster than the Newton solver it replaced.
+""", day(-340)),
+    patent_project(
+        "gear-calc", "Spur gear sizing calculator: module, centre distance and backlash on one screen.",
+        """# gear-calc
+
+Spur gear sizing in one screen, no spreadsheet.
+
+## How it works
+
+It runs a worst-case and a root-sum-square stack over tooth thickness and centre distance. A Monte Carlo run of
+10,000 pairs then counts how often a pair binds, and an interpolation algorithm reads the form factor from a table.
+A heuristic picks the nearest standard module.
+
+## Checked
+
+Predicted backlash was compared with 30 printed pairs: every measured value was within about 0.02 mm.
+""", day(-290)),
+    patent_project(
+        "weather-kit", "A $9 weather station that logs to a spreadsheet.",
+        """# weather-kit
+
+One board, one pressure and humidity sensor, and firmware that sleeps between readings. The enclosure prints
+without supports on any FDM printer.
+
+## How it works
+
+Every reading carries a checksum. Readings taken during an outage are stored and replayed when the network returns.
+
+## Results
+
+Measured battery life: 11 months on two AA cells.
+""", day(-700)),
+    patent_project(
+        "lab-notes", "Every test log, searchable the moment it lands.",
+        """# lab-notes
+
+A small CLI and dashboard that index test logs as they are written, so a failed run can be found by serial number.
+""", day(-200), licence=""),
+    patent_project(
+        "tile-garden", "A cozy tile-laying game for the browser.",
+        """# tile-garden
+
+Lay tiles, grow a garden. Twelve levels, works offline.
+""", day(-60)),
+    patent_project("awesome-mechanisms", "A curated list of mechanism references.", "", day(-400), fork=True),
+]
+PATENT_NOTES = {
+    "gear-calc": {"rating": "maybe", "reviewed": day(-3),
+                  "verdict": "The stack maths is textbook. Only the binding count might be new; look for earlier work first."},
+    "weather-kit": {"decision": "publish", "reviewed": day(-3),
+                    "verdict": "Public for almost two years, so it is prior art already."},
+    "lab-notes": {"owner": "employer?", "rating": "low", "reviewed": day(-3),
+                  "verdict": "A search index over log files: nothing a patent would cover."},
+}
+
+
+def patent_demo() -> dict:
+    """The Patent screen card exactly as the app builds it, from the made-up projects above."""
+    entries = [patents.build_entry(repo, readme) for repo, readme in PATENT_PROJECTS]
+    last_week = [dict(entry, band="unlikely") if entry["name"] == "gear-calc" else entry for entry in entries]
+    scan = {
+        "scanned_at": f"{day(-5)} 09:00", "includes_private": True, "repos": entries,
+        "changes": patents.changes_since(last_week, entries),
+    }
+    return hub.patents_summary(scan, PATENT_NOTES, TODAY)
+
+
+PATENTS = patent_demo()
+
 DEMO = {
     "overview": {
         "now": f"{TODAY} 09:45", "mode": "auto", "paused": False, "token_days_left": 41, "click_tracking": True,
@@ -164,7 +281,9 @@ DEMO = {
             "jobs": task("Job search", "Sat 7 Nov · 07:30", "Sat 7 Nov · 12:30"),
             "email": task("Email applications", "Sat 7 Nov · 09:00", "Sat 7 Nov · 10:00"),
             "bigtech": task("Big Tech watch", "Sat 7 Nov · 08:00", "Sat 7 Nov · 12:00"),
+            "patents": task("Patent screen", "Mon 2 Nov · 09:00", "Mon 9 Nov · 09:00"),
         },
+        "patents": PATENTS,
         "todo": [
             {"priority": 1, "module": "Jobs", "title": "1 application stopped and needs you",
              "detail": "The site asked for an e-mailed verification code. ReachPilot never answers human checks; open the apply session and finish it.",
@@ -229,7 +348,11 @@ DEMO = {
     ],
 }
 
+DEMO["hub"]["todo"] = sorted(DEMO["hub"]["todo"] + hub.patents_todo(PATENTS), key=lambda item: item["priority"])
+DEMO["hub"]["help"] += [entry for entry in hub.help_sections({}, None, None, PATENTS) if entry["module"] == "Patents"]
+
 ACTION_REPLIES = {
+    "patents_run_now": "Demo: on your PC this reads every repository you own again and updates this card in about a minute.",
     "jobs_apply": "Demo: on your PC this opens the apply session, which fills each form and waits for you to press Submit.",
     "email_open_leads": "Demo: on your PC this opens the list of good jobs that have no recruiter e-mail.",
 }
@@ -247,7 +370,10 @@ SHIM = """<script>
     if (path.endsWith("/api/action")) {
       let name = "";
       try { name = JSON.parse(options.body || "{}").name || ""; } catch (error) { name = ""; }
-      return json({ message: REPLIES[name] || "Demo: on your PC this button runs that task right away." });
+      const fallback = name.startsWith("patents:decide:")
+        ? "Demo: on your PC this records your decision for that project, and its to-do item goes away."
+        : "Demo: on your PC this button runs that task right away.";
+      return json({ message: REPLIES[name] || fallback });
     }
     return realFetch(url, options);
   };

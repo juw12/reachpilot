@@ -11,6 +11,8 @@ Other platforms (Bluesky, Mastodon, Dev.to, Telegram, Discord) are part of the p
 (channels.py); channels_section() reads their state from state.db.
 Launch tests (launch_section) are read from a project's public summary.json, plus private steps from
 launch_private.json (git-ignored) when that file exists.
+The patent screen (patents_section) reads the last weekly scan written by patents.py into data/patents/
+(git-ignored); it shows only where that folder exists.
 
 This file only reads their files, builds the "what I need from you" list, and runs a short whitelist of actions.
 Every reader is defensive: a missing or half-written file shows as "not set up" instead of breaking the dashboard.
@@ -57,6 +59,8 @@ def podcast_tasks(folder: Path) -> dict[str, str]:
 
 if (PODCAST / "podcast.py").exists():  # only where the private podcast module is present
     TASKS.update(podcast_tasks(PODCAST))
+if (ROOT / "data" / "patents").exists():  # only where `python patents.py install` has been run
+    TASKS["patents"] = "Patent screen"
 PYTHONW = Path(sys.executable).with_name("pythonw.exe")
 PYTHON = Path(sys.executable).with_name("python.exe")
 NO_WINDOW = 0x08000000
@@ -1020,6 +1024,129 @@ def launch_todo(section: dict | None, today: date | None = None) -> list[dict]:
     return items
 
 
+# ------------------------------------------------------------------ patent screen (patents.py)
+
+PATENTS_DISCLAIMER = (
+    "A keyword screen, not legal advice. It does not search prior art and cannot judge novelty. "
+    "A public repo is counted as disclosed on the day it was created. Talk to a patent attorney before "
+    "filing, and before publishing anything you want to protect."
+)
+
+
+def patents_section(today: date | None = None) -> dict:
+    """The last scan with today's deadlines and my own notes. Shown only where the screen has been installed."""
+    import patents
+
+    if not patents.DATA_DIR.exists():
+        return {"installed": False}
+    return patents_summary(patents._load(patents.SCAN_FILE, None), patents.load_overrides(), today)
+
+
+def patents_summary(scan, overrides, today: date | None = None) -> dict:
+    """What the Patent screen card shows, from a scan and my notes. Reads no files: the public demo feeds it made-up projects."""
+    import patents
+
+    empty = {
+        "installed": True, "has_scan": False, "scanned_at": "", "includes_private": False, "total": 0,
+        "counts": {"look": 0, "maybe": 0, "unlikely": 0, "forks": 0, "undecided": 0, "exposed": 0},
+        "next_deadline": None, "candidates": [], "others": [], "changes": [], "disclaimer": PATENTS_DISCLAIMER,
+    }
+    if not isinstance(scan, dict) or not isinstance(scan.get("repos"), list):
+        return empty
+    rows = patents.view(scan, overrides, today)
+    own = [row for row in rows if not row["fork"]]
+    candidates = [row for row in own if row["band"] != "unlikely"]
+    waiting = [row for row in candidates if not row["decision"]]
+    dated = sorted(
+        (row for row in waiting if row["window"]["state"] == "grace"),
+        key=lambda row: row["window"]["days_left"],
+    )
+    names = {row["name"] for row in rows}
+    changes = [
+        {"repo": str(change.get("repo") or ""), "kind": str(change.get("kind") or ""), "text": str(change.get("text") or "")[:200]}
+        for change in scan.get("changes") or []
+        if isinstance(change, dict) and change.get("repo") in names
+    ]
+    return {
+        **empty,
+        "has_scan": True,
+        "scanned_at": str(scan.get("scanned_at") or ""),
+        "includes_private": bool(scan.get("includes_private")),
+        "total": len(own),
+        "counts": {
+            "look": sum(1 for row in own if row["band"] == "look"),
+            "maybe": sum(1 for row in own if row["band"] == "maybe"),
+            "unlikely": sum(1 for row in own if row["band"] == "unlikely"),
+            "forks": len(rows) - len(own),
+            "undecided": len(waiting),
+            "exposed": sum(1 for row in own if row["exposed"]),
+        },
+        "next_deadline": {
+            "name": dated[0]["name"], "date": dated[0]["window"]["deadline"], "days_left": dated[0]["window"]["days_left"],
+        } if dated else None,
+        "candidates": candidates,
+        "others": [{
+            "name": row["name"], "url": row["url"], "private": row["private"], "score": row["score"],
+            "screen_band": row["screen_band"], "rating": row["rating"], "licence": row["licence"],
+            "route": row["route"]["text"], "verdict": row["verdict"], "exposed": row["exposed"],
+        } for row in own if row["band"] == "unlikely"],
+        "changes": changes,
+    }
+
+
+def patents_todo(section: dict | None) -> list[dict]:
+    """Deadlines that are close, a private note sitting in a public repo, and candidates nobody has decided on."""
+    import patents
+
+    if not section or not section.get("installed") or not section.get("has_scan"):
+        return []
+    items = []
+
+    def add(priority, title, detail, row):
+        items.append({
+            "priority": priority, "module": "Patents", "title": title, "detail": detail,
+            "action": None, "action_label": None,
+            "links": [{"label": "Open the repository", "url": row["url"], "note": ""}] if row.get("url") else [],
+        })
+
+    for row in list(section.get("candidates") or []) + list(section.get("others") or []):
+        if row.get("exposed"):
+            add(1, f"{row['name']} says it must stay private, but the repo is public",
+                "Its README says so. Make the repo private again or take the note out. What was public already counts as disclosed.", row)
+    quiet = []
+    for row in section.get("candidates") or []:
+        if row["decision"]:
+            continue
+        when = row["window"]
+        days = when.get("days_left")
+        if when["state"] == "grace" and days is not None and days <= patents.SOON_DAYS:
+            urgent = days <= patents.URGENT_DAYS and row["band"] == "look"
+            add(1 if urgent else 2,
+                f"{row['name']}: {days} day{'' if days == 1 else 's'} left to file where a grace period applies",
+                f"Public since it was created, so the 12-month date is {when['deadline']} (US, Japan, Korea, Taiwan). "
+                f"{row['route']['text']} Then record your decision on the Patent screen card.", row)
+        elif row["band"] == "look":
+            quiet.append(row["name"])
+    if quiet:
+        shown = ", ".join(quiet[:5]) + (f" and {len(quiet) - 5} more" if len(quiet) > 5 else "")
+        items.append({
+            "priority": 3, "module": "Patents",
+            "title": f"{len(quiet)} project{'' if len(quiet) == 1 else 's'} worth an attorney look, no decision yet",
+            "detail": f"{shown}. Read the evidence on the Patent screen card in Overview, then choose file, publish, licence only or skip.",
+            "action": None, "action_label": None, "links": [],
+        })
+    return items
+
+
+def patents_action(name: str) -> str:
+    import patents
+
+    parts = name.split(":")
+    if len(parts) == 4 and parts[1] == "decide" and re.fullmatch(r"[A-Za-z0-9._-]{1,100}", parts[2]):
+        return patents.decide(parts[2], parts[3])
+    raise ValueError(f"Unknown action: {name}")
+
+
 # ------------------------------------------------------------------ what I need from you
 
 def todo_items(linkedin: dict | None, jobs: dict, email: dict, tasks: dict, podcast: dict | None = None) -> list[dict]:
@@ -1105,7 +1232,8 @@ def todo_items(linkedin: dict | None, jobs: dict, email: dict, tasks: dict, podc
 
 # ------------------------------------------------------------------ help text
 
-def help_sections(tasks: dict, podcast: dict | None = None, launch: dict | None = None) -> list[dict]:
+def help_sections(tasks: dict, podcast: dict | None = None, launch: dict | None = None,
+                  patents: dict | None = None) -> list[dict]:
     def when(key, fallback):
         task = tasks.get(key, {})
         return f"Next run: {task['next_run']}" if task.get("next_run") and task.get("installed") else fallback
@@ -1156,6 +1284,19 @@ def help_sections(tasks: dict, podcast: dict | None = None, launch: dict | None 
                     "the verdict, and the steps that still need you. Offline it shows the last good answer and says so. "
                     "Steps that must stay private are read from launch_private.json on this PC (git-ignored).",
             "you": "Do the steps marked 'one tap left', 'blocked' or 'only you'. They also sit in the To do list, urgent from 3 days before their date.",
+        })
+    if patents and patents.get("installed"):
+        entries.append({
+            "module": "Patents",
+            "runs": "Every Monday 09:00, or when you press Scan now. " + when("patents", ""),
+            "auto": "Reads the description and README of every repository you own, public and private. Scores how much technical "
+                    "mechanism the text describes and quotes the sentence it found, works out the filing date (12 months from "
+                    "the day a public repo was created; open while a repo is private) and names the realistic route: attorney, "
+                    "defensive publication, licence or nothing. Reports new projects and repos that turned public. "
+                    "Results stay on this PC (data/patents, git-ignored).",
+            "you": "Read the candidates on the Overview card and record a decision on each: file, publish, licence only or skip. "
+                   "It is a keyword screen, not legal advice: it does not search prior art and cannot judge novelty. "
+                   "See a patent attorney before filing, and before publishing anything you want to protect.",
         })
     return entries
 
@@ -1224,6 +1365,13 @@ def run_action(name: str) -> str:
         return promote_action(name)
     if name.startswith("podcast:"):
         return podcast_action(name)
+    if name == "patents_run_now":
+        runner = PYTHONW if PYTHONW.exists() else Path(sys.executable)
+        subprocess.Popen([str(runner), str(ROOT / "patents.py")], cwd=ROOT, creationflags=NO_WINDOW)
+        _cache.pop("tasks", None)
+        return "Patent screen started; the card updates in about a minute."
+    if name.startswith("patents:"):
+        return patents_action(name)
     raise ValueError(f"Unknown action: {name}")
 
 
@@ -1234,7 +1382,8 @@ def build(linkedin_overview: dict | None) -> dict:
     sections = {}
     for key, reader in (("jobs", jobs_section), ("email", email_section), ("promote", promote_section),
                         ("channels", channels_section), ("podcast", podcast_section),
-                        ("podcast_promotion", podcast_promotion_section), ("launch", launch_section)):
+                        ("podcast_promotion", podcast_promotion_section), ("launch", launch_section),
+                        ("patents", patents_section)):
         try:
             sections[key] = reader()
         except Exception as error:  # one broken module must not take the dashboard down
@@ -1253,8 +1402,9 @@ def build(linkedin_overview: dict | None) -> dict:
             + sections["promote"].get("todo", [])
             + channels_todo(sections["channels"])
             + podcast_promotion_todo(sections.get("podcast_promotion"))
-            + launch_todo(sections.get("launch")),
+            + launch_todo(sections.get("launch"))
+            + patents_todo(sections.get("patents")),
             key=lambda item: item["priority"],
         ),
-        "help": help_sections(tasks, sections.get("podcast"), sections.get("launch")),
+        "help": help_sections(tasks, sections.get("podcast"), sections.get("launch"), sections.get("patents")),
     }
