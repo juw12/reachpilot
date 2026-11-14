@@ -821,6 +821,8 @@ check(split_video == Path("out/watt-reserve_demo.mp4") and split_shots == [Path(
       "demo video: a post's media splits into the video and the screenshots")
 check(channels.DEMO_VIDEO_SIZE == visuals.DEMO_SIZE, "demo video: channels and visuals agree on the frame size")
 check("demo" in trylinks.RESERVED_NAMES, "demo video: no project go-page can take the demo/ folder")
+check(visuals._demo_speed(12) == 1.0 and visuals._demo_speed(2 * visuals.DEMO_MAX_SECONDS) == 2.0,
+      "demo video: a tour that ran long on a busy PC is sped up to fit the limit, a short one is left alone")
 
 github_only = copy.copy(facts)
 github_only.homepage = "https://github.com/juw12/watt-reserve"

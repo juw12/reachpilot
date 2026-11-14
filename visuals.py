@@ -213,6 +213,14 @@ def _ffmpeg() -> str:
         return found
 
 
+def _demo_speed(recorded_seconds: float) -> float:
+    """How much to speed the recording up so it fits DEMO_MAX_SECONDS; 1.0 when it already does.
+
+    On a busy PC every browser step takes longer, so the same tour can run to twice its length in slow motion.
+    """
+    return max(1.0, recorded_seconds / DEMO_MAX_SECONDS)
+
+
 def _demo_tour(page, deadline: float) -> None:
     """Use the page the way a visitor would: look, press a few controls, scroll through it, come back up."""
     width, height = DEMO_SIZE
@@ -290,6 +298,7 @@ def record_demo(url: str, output: Path) -> Path:
                 remaining = DEMO_MIN_SECONDS - (time.monotonic() - tour_start)
                 if remaining > 0:
                     page.wait_for_timeout(remaining * 1000)
+                speed = _demo_speed(time.monotonic() - tour_start + 0.4)
                 raw = Path(page.video.path())
             finally:
                 context.close()  # this is what writes the recording to disk
@@ -297,8 +306,9 @@ def record_demo(url: str, output: Path) -> Path:
         subprocess.run(
             [_ffmpeg(), "-y", "-loglevel", "error", "-ss", f"{lead_in:.2f}", "-i", str(raw),
              "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",  # silent track: some players need one
-             "-vf", "fps=30,format=yuv420p", "-c:v", "libx264", "-preset", "medium", "-crf", "27",
-             "-c:a", "aac", "-b:a", "48k", "-shortest", "-movflags", "+faststart", str(output)],
+             "-vf", f"setpts=PTS/{speed:.3f},fps=30,format=yuv420p", "-c:v", "libx264", "-preset", "medium", "-crf", "27",
+             "-c:a", "aac", "-b:a", "48k", "-shortest", "-t", str(DEMO_MAX_SECONDS),  # never longer than the limit
+             "-movflags", "+faststart", str(output)],
             check=True, capture_output=True, timeout=240, creationflags=CREATE_NO_WINDOW,
         )
     if output.stat().st_size < DEMO_MIN_BYTES:
