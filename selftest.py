@@ -1453,6 +1453,8 @@ try:
     reel_labels = re.search(r"const REEL_FORMATS = \{([^}]*)\}", dashboard_page)
     check(reel_labels is not None and all(f"{name}:" in reel_labels[1] for name in reels.FORMATS) and "video.reel" in dashboard_page,
           "dashboard: the page labels every video format")
+    check(re.search(r"\.todo \.text \{[^}]*overflow-wrap:\s*anywhere", dashboard_page) is not None,
+          "dashboard: a long link or word in a to-do note wraps instead of widening the phone page")
 
     # The format is stored with the post and read back for the rotation and for learning
     with tempfile.TemporaryDirectory() as reel_dir:
