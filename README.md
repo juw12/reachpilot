@@ -182,6 +182,15 @@ which is git-ignored and never committed; the dashboard only shows a module that
 Task Scheduler under `\ReachPilot\`, dashboard actions are whitelisted and need a per-session token from the same origin,
 and the `?` button explains per module when it runs, what it does by itself and what it needs from you.
 
+When the promotion module ships `listings.py`, the **Promotion** tab also tracks where each GitHub project is listed.
+One config file names the projects and the places. Each place is either checked by itself (a public page or index
+that needs no login), queued as one dated by-hand step a day, or held until the project has enough stars. Pull requests
+to curated lists are capped at 5 a day (3 of them automatic), always say who the author is and that an AI
+assistant helped, and the queue pauses once 3 of them are closed without merging. Sites behind a login, CAPTCHA or
+bot check are never automated; they stay by-hand steps. The author's own setup (2026-11-14) tracks 53 places for
+14 projects: 20 launch sites, 15 MCP directories, 10 awesome lists, 3 skills directories, 3 game portals, a code wiki
+and a language index.
+
 When the podcast module ships `promotion.py`, a **Podcast** tab tracks its promotion: which directories list the show
 (with Mark as submitted for the ones that can't be checked), downloads per week and per episode from OP3, series compared,
 where each episode was announced and the follower counts on those channels. The tab only reads files; when the download
