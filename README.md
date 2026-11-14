@@ -44,6 +44,8 @@ Every 30 minutes, Windows Task Scheduler runs one pass:
    a GET is blocked and sign-in, pay, delete and download buttons are never pressed. Projects without a live
    site, and any platform that refuses the video, get a fresh screenshot of the site (and the repo page) plus
    media from the README instead. Switch the video off with `"demo_video": false` in `config.json`.
+   The recording is then cut into a short vertical video that opens with a hook
+   (see [Short videos](#short-videos-that-open-with-a-hook)).
 5. **Never repeats itself**: four angles (launch, one-feature deep dive, behind the build, ask for feedback),
    different README facts each time, a 21-day cooldown per project and a similarity cap against every past post.
    If nothing fresh qualifies, it skips the slot instead of reposting.
@@ -57,6 +59,45 @@ Every 30 minutes, Windows Task Scheduler runs one pass:
 
 It also repairs garbled characters in READMEs (text saved in the wrong encoding), skips install/run steps when picking
 feature bullets, and puts links in the first comment.
+
+### Short videos that open with a hook
+
+A plain screen recording gets scrolled past. So the recording is taken again at phone size, placed in a phone
+frame and cut into a 15 to 18 second vertical video built the way short videos that hold attention are built:
+a hook in the first 3 seconds, big captions (most people watch muted), a progress bar, and an end card that
+says "Star it on GitHub" with the repo address.
+
+| Format | Opens with | Then |
+|---|---|---|
+| **Hook** | a scroll-stopper: "Still doing this the hard way?", "Nobody asked for this. I built it anyway." | what the project is, its strongest features |
+| **POV** | "POV: you just found <project>" | a first look, as if you opened it yourself |
+| **Question** | what a viewer would ask: "what does it even do?", "is it really free?", "where's the code?" | the answer, then the demo |
+| **3 things** | "3 things about <project>" | three features from the README, numbered 1, 2, 3 |
+| **Speedrun** | "<project> in 15 seconds" | fast cuts, short captions |
+
+- **Which format** is chosen per post: never the format of the previous video, never the one this project had
+  last time, a nudge for the format that suits the post's angle (a feedback post leans towards the question,
+  a deep dive towards "3 things"), and Thompson sampling on what each format earned, so the formats that bring
+  visitors and stars are used more and untested ones still get a turn.
+- **Two cuts of every video**: 4:5 (1080 x 1350) for the feeds of LinkedIn, Bluesky, Mastodon, Telegram and
+  Discord, and 9:16 (1080 x 1920) for X and Threads.
+- **The hook also opens the post text**, so the post and the video pull the same way.
+- **Hooks are curiosity, not lies.** Every caption comes from the repo's own description and README. There are
+  no fake users, no made-up quotes or reviews and no numbers the repo doesn't state; "is it really free?" is
+  only asked when the repo has a licence. A hook that carries a number the repo never states stays out of the post.
+- A project with too little to say, a roundup of several projects, or a failed render falls back to the plain
+  recording, and from there to screenshots.
+
+Settings in `config.json`:
+
+| Key | Default | What it does |
+|---|---|---|
+| `demo_video` | `true` | `false` records no video at all |
+| `video_formats` | all five | the formats in rotation; `[]` keeps the plain recording |
+| `video_hook_in_post` | `true` | `false` leaves the post's first line alone |
+| `video_hooks` | `{}` | your own hooks per project, for example `{"my-repo": ["Blackout tonight? Open {name}."]}` |
+
+The dashboard shows each post's video with its format, so you can see which one ran.
 
 ### Other platforms (free, official APIs)
 
@@ -204,6 +245,7 @@ numbers are older than 15 minutes it starts `promotion.py refresh` in the backgr
 | `composer.py` | post writing and the no-invented-facts guards |
 | `github_source.py` | README and commit facts |
 | `visuals.py` | screenshots and the demo video recording (Edge, headless) |
+| `reels.py` | the short videos: formats, captions from the repo's own words, rendering (ffmpeg) |
 | `linkedin_api.py` | OAuth, images, video, posts, comments |
 | `channels.py` | Bluesky, Mastodon, Dev.to, Telegram, Discord: per-platform cutting, publishing, retries |
 | `growth.py` | daily: profiles, pinned intro, follow-back, follower counts |
