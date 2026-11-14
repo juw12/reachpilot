@@ -537,7 +537,7 @@ try:
     check(not any(step["private"] for step in fresh["needs_me"]), "hub launch: no private file, only the public steps")
 
     hub.LAUNCH_PRIVATE.write_text(json.dumps({"demo": {"needsMe": [
-        {"id": "contract", "title": "Read my contract", "status": "yours", "due": "2026-11-16", "detail": "See my notes."}]}}),
+        {"id": "form", "title": "Sign the form", "status": "yours", "due": "2026-11-16", "detail": "See my notes."}]}}),
         encoding="utf-8")
     private_steps = hub._launch_dict(hub._launch_private().get("demo")).get("needsMe")
     merged = hub._launch_view(launch_test, hub._launch_summary(launch_test), private_steps, now=launch_now)
@@ -552,7 +552,7 @@ try:
     launch_items = hub.launch_todo({"tests": [merged]}, today=launch_now.date())
     check([(item["priority"], item["title"]) for item in launch_items] == [
         (2, "Demo app: Message 30 people"), (3, "Demo app: Trademark search"),
-        (3, "Demo app: Unknown state"), (1, "Demo app: Read my contract")],
+        (3, "Demo app: Unknown state"), (1, "Demo app: Sign the form")],
         "hub launch: to-dos skip done steps; urgent within 3 days of the date")
     check(launch_items[0]["detail"] == "One tap left, by 2026-11-28. Texts are ready." and launch_items[0]["action"] is None,
           "hub launch: to-do says the state and the date")
