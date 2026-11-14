@@ -816,10 +816,40 @@ function listingsCard(l) {
   const glama = (r) => r.glama_url ? `${r.glama_live ? link(r.glama_url, "live") : `<span class="badge grey">not yet</span>`}${r.tdqs ? ` <span class="hint">TDQS ${esc(r.tdqs_grade || "")} ${esc(r.tdqs)}/5</span>` : ""}` : `<span class="hint">–</span>`;
   const badges = (r) => [r.badge_m8ven ? "M8ven" : "", r.badge_glama ? "Glama" : ""].filter(Boolean).join(" + ") || "–";
   const prBadge = (s) => ({ merged: "good", open: "warn", closed: "bad" }[s] || "grey");
+  const queueBadge = (s) => ({ merged: "good", listed: "good", open: "warn", closed: "bad", failed: "bad" }[s] || "grey");
+  const condition = (when) => {
+    const stars = /^stars>=(\d+):(.+)$/.exec(when || "");
+    return stars ? `when ${stars[2]} has ${stars[1]} stars` : (when || "");
+  };
+  const platformState = (p) => Object.entries(p.projects || {}).map(([id, s]) => s.listed === true
+    ? `<span class="badge good">${s.url ? link(s.url, id) : esc(id)}</span>`
+    : s.listed === false ? `<span class="badge grey">${esc(id)}: not yet</span>` : `<span class="hint">${esc(id)}</span>`).join(" ");
+  const platformHow = (p) => {
+    const step = p.step;
+    if (step && step.done) return `<span class="badge good">done</span>`;
+    const watched = p.monitored ? `<span class="badge good">watched</span> ` : "";
+    if (!step) return watched || `<span class="hint">–</span>`;
+    return `${watched}<span class="badge ${step.not_before ? "warn" : "grey"}">${step.not_before ? `by hand from ${esc(step.not_before)}` : `on hold · ${esc(condition(step.when))}`}</span>`;
+  };
+  const platforms = l.platforms || [];
+  const queue = l.pr_queue || [];
+  const count = (rows, test) => rows.filter(test).length;
+  const platformsBlock = platforms.length ? `<details style="margin-top:14px"><summary><b>More places (${num(platforms.length)})</b>
+      <span class="hint">· ${num(count(platforms, (p) => p.monitored))} watched by itself · ${num(count(platforms, (p) => p.step && p.step.not_before && !p.step.done))} by hand, one a day
+      · ${num(count(platforms, (p) => p.step && !p.step.not_before && !p.step.done))} on hold until more stars</span></summary>
+      <div class="scroll" tabindex="0" role="region" aria-label="More places"><table><thead><tr><th>Place</th><th>Projects</th><th>How</th><th>Why</th></tr></thead><tbody>
+      ${platforms.map((p) => `<tr><td><b>${p.url ? link(p.url, p.name || p.id) : esc(p.name || p.id)}</b><div class="hint">${esc(p.kind || "")}</div></td>
+        <td>${platformState(p)}</td><td>${platformHow(p)}</td><td class="hint">${esc(p.note || "")}</td></tr>`).join("")}
+      </tbody></table></div></details>` : "";
+  const queueBlock = queue.length ? `<h4 style="margin:14px 0 6px">List pull requests it opens by itself
+      <span class="badge ${l.pr_queue_paused ? "bad" : l.auto_open_prs ? "good" : "grey"}">${l.pr_queue_paused ? "paused: too many closed" : l.auto_open_prs ? `on · up to ${num(l.auto_prs_per_day)} a day` : "off"}</span></h4>
+      <p class="hint">${num(count(queue, (q) => q.url))} sent · ${num(count(queue, (q) => q.status === "waiting"))} waiting for their date. One per list, never re-opened. Switch: auto_open_prs in listings.json.</p>
+      ${queue.map((q) => `<div>${q.url ? link(q.url, q.upstream) : esc(q.upstream)} <span class="badge ${queueBadge(q.status)}">${esc(q.status || "?")}</span>
+        <span class="hint">· ${esc(q.project)}${q.status === "waiting" && q.waiting ? ` · ${esc(q.waiting)}` : ""}${q.reason ? ` · ${esc(q.reason)}` : ""}${q.error ? ` · ${esc(q.error)}` : ""}</span></div>`).join("")}` : "";
   return `
     <div class="card" style="margin-bottom:18px">
       <h3>Directory listings</h3>
-      <p class="hint">Checked by itself every 6 hours (MCP Registry, M8ven, Glama, mcpservers.org, GitHub stars and PRs). Adds the Glama badge to a README when a listing goes live. Last check ${esc(l.checked_at ? niceDate(l.checked_at) : "never")} · stars counted from ${esc(l.baseline_date || "–")}.</p>
+      <p class="hint">Checked by itself every 6 hours (MCP Registry, M8ven, Glama, mcpservers.org, more directories, GitHub stars and PRs). Adds the Glama badge to a README when a listing goes live. Last check ${esc(l.checked_at ? niceDate(l.checked_at) : "never")} · stars counted from ${esc(l.baseline_date || "–")}.</p>
       <div class="scroll" tabindex="0" role="region" aria-label="Directory listings"><table><thead><tr><th>Project</th><th class="num">Stars</th><th>MCP Registry</th><th>M8ven</th><th>Glama</th><th>mcpservers.org</th><th>README badges</th></tr></thead><tbody>
       ${l.projects.map((r) => `<tr><td><b>${link(`https://github.com/${r.repo}`, r.id)}</b></td><td class="num">${starCell(r)}</td>
         <td>${r.mcp_server ? yes(r.registry_active, "active", "missing") : `<span class="hint">n/a</span>`}</td><td>${m8ven(r)}</td><td>${glama(r)}</td>
@@ -827,6 +857,8 @@ function listingsCard(l) {
       </tbody></table></div>
       ${(l.prs || []).length ? `<h4 style="margin:14px 0 6px">Pull requests to lists</h4>
         ${l.prs.map((pr) => `<div>${link(pr.url, pr.key)} <span class="badge ${prBadge(pr.status)}">${esc(pr.status || "?")}</span> <span class="hint">· ${esc(pr.project)}${pr.comments ? ` · ${num(pr.comments)} comment(s)` : ""}</span></div>`).join("")}` : ""}
+      ${queueBlock}
+      ${platformsBlock}
       ${(l.steps || []).length ? `<h4 style="margin:14px 0 6px">Your steps (only the ones a script can't do)</h4>
         ${l.steps.map((s) => `<div class="todo p${s.priority || 2}"><h4>${esc(s.title)}</h4><div class="hint">${esc(s.detail || "")}</div>
           <div class="actions">${(s.links || []).map((x) => link(x.url, x.label)).join(" ")} ${actionButton(`promote:listingdone:${s.id}`, "Done")}</div></div>`).join("")}`
