@@ -34,6 +34,8 @@
   ],
   "video_hook_in_post": true,
   "video_hooks": {},
+  "picture_every": 5,
+  "watch_pages": true,
   "linkedin_api_version": "202609",
   "ollama_model": "",
   "exclude_repos": [

@@ -350,7 +350,7 @@ function kpi(label, value, note = "") {
   return `<div class="card kpi"><div class="label">${esc(label)}</div><div class="value${size}">${value}</div><div class="note">${note}</div></div>`;
 }
 
-const REEL_FORMATS = { hook: "hook", pov: "POV", question: "question", listicle: "3 things", speedrun: "speedrun" };
+const REEL_FORMATS = { hook: "hook", pov: "POV", question: "question", listicle: "3 things", speedrun: "speedrun", roundup: "roundup" };
 
 function postCard(entry, index) {
   const [kindLabel, kindClass] = KIND[entry.kind] || [entry.kind, ""];
@@ -577,6 +577,12 @@ async function act(name, button) {
 document.addEventListener("click", (event) => {
   const button = event.target.closest("[data-action]");
   if (button) act(button.dataset.action, button);
+  const ask = event.target.closest("[data-ask]");
+  if (ask) {
+    const answer = (prompt(ask.dataset.question) || "").trim();
+    if (/^https:\/\/\S+$/.test(answer)) act(ask.dataset.ask + answer, ask);
+    else if (answer) toast("That needs a link that starts with https://");
+  }
   const jump = event.target.closest("[data-goto]");
   if (jump) showTab(jump.dataset.goto);
   const copy = event.target.closest("[data-copy]");
@@ -602,6 +608,10 @@ document.addEventListener("click", (event) => {
 
 function actionButton(name, label, ghost = false) {
   return name ? `<button class="btn ${ghost ? "ghost" : ""}" data-action="${esc(name)}">${esc(label)}</button>` : "";
+}
+
+function coveredButton(creator) {
+  return `<button class="btn ghost" data-ask="${esc(`promote:covered:${creator.id}|`)}" data-question="${esc(`Link to ${creator.name}'s video or post about it (https://...)`)}">They covered it</button>`;
 }
 
 function link(url, label) {
@@ -984,7 +994,12 @@ function renderPromote(d) {
     </div>
     ${p.open_replies.length ? `<div class="card" style="margin-bottom:18px"><h3>Replies to answer</h3>
       ${p.open_replies.map((r) => `<div class="todo p1"><h4>${esc(r.creator.name)} · ${esc(r.product)}</h4><div class="hint">${esc(r.snippet)}</div>
-        <div class="actions">${link(r.gmail, "Open in Gmail")} ${actionButton(`promote:mark:${r.creator.id}|interested`, "Interested")}${actionButton(`promote:mark:${r.creator.id}|declined`, "Not a fit", true)}</div></div>`).join("")}</div>` : ""}
+        <div class="actions">${link(r.gmail, "Open in Gmail")} ${actionButton(`promote:mark:${r.creator.id}|interested`, "Interested")}${coveredButton(r.creator)}${actionButton(`promote:mark:${r.creator.id}|declined`, "Not a fit", true)}</div></div>`).join("")}</div>` : ""}
+    ${(p.coverage || []).length ? `<div class="card" style="margin-bottom:18px"><h3>Creators who covered a project</h3>
+      <p class="hint">Each one is thanked once in the next post about that project and listed on its watch page.</p>
+      <div class="scroll"><table><thead><tr><th>Creator</th><th>Project</th><th>Their video</th><th>Thanked in a post</th></tr></thead><tbody>
+      ${p.coverage.map((c) => `<tr><td>${link(c.creator_url, c.creator)}</td><td>${esc(c.product)}</td><td>${link(c.url, "open")}</td><td>${c.credited ? `<span class="badge good">yes</span>` : `<span class="badge warn">in the next post</span>`}</td></tr>`).join("")}
+      </tbody></table></div></div>` : ""}
     <h3>Today's e-mails</h3>
     ${p.queue.length ? p.queue.map(mailCard).join("") : `<div class="empty" style="margin-bottom:18px">Queue is empty. It fills each morning from the creator pool${p.youtube_ok ? "" : " once a YouTube key is added"}.</div>`}
     <div class="two">
@@ -997,8 +1012,8 @@ function renderPromote(d) {
       <div class="card"><h3>Learning: e-mail wording</h3><p class="hint">Variants that get replies are picked more often.</p>${statRows(p.variants, "Variant")}</div>
       <div class="card"><h3>Learning: creator type</h3>${statRows(p.by_type, "Type")}</div>
     </div>
-    <div class="card" style="margin-bottom:18px"><h3>Recently sent</h3>${p.recent.length ? `<div class="scroll"><table><thead><tr><th>Sent</th><th>Creator</th><th>Project</th><th>Subject</th></tr></thead><tbody>
-      ${p.recent.map((r) => `<tr><td>${esc(niceDate(r.at))}</td><td>${link(r.creator.url, r.creator.name)} <span class="badge grey">${esc(r.creator.stage)}</span></td><td>${esc(r.product)}</td><td class="hint">${esc(r.subject)}</td></tr>`).join("")}
+    <div class="card" style="margin-bottom:18px"><h3>Recently sent</h3>${p.recent.length ? `<div class="scroll"><table><thead><tr><th>Sent</th><th>Creator</th><th>Project</th><th>Subject</th><th></th></tr></thead><tbody>
+      ${p.recent.map((r) => `<tr><td>${esc(niceDate(r.at))}</td><td>${link(r.creator.url, r.creator.name)} <span class="badge grey">${esc(r.creator.stage)}</span></td><td>${esc(r.product)}</td><td class="hint">${esc(r.subject)}</td><td>${coveredButton(r.creator)}</td></tr>`).join("")}
       </tbody></table></div>` : `<div class="empty">Nothing sent yet.</div>`}</div>
     ${listingsCard(p.listings)}
     <div class="card"><h3>Promotion log <span class="hint">(newest first)</span></h3><pre class="log">${esc(p.log.join("\n")) || "No activity yet."}</pre></div>`;

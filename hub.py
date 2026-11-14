@@ -334,7 +334,7 @@ def tail(path: Path, lines: int) -> list[str]:
 
 PROMOTE_SCRIPT = PROMOTE / "promote.py"
 PROMOTE_VERBS = {"approve", "approveall", "send", "skip", "retry", "mark", "mode", "pause", "resume", "plan", "inbox", "discover", "tick",
-                 "listings", "listingdone"}
+                 "listings", "listingdone", "covered", "credited"}
 PROMOTE_BACKGROUND = {"discover", "inbox", "tick", "listings"}  # slow (network): run without blocking the dashboard
 
 
@@ -358,7 +358,8 @@ def promote_section() -> dict:
 
 
 def promote_action(name: str) -> str:
-    """name = 'promote:<verb>[:<argument>]', e.g. promote:send:12 or promote:mark:yt:UC123|interested."""
+    """name = 'promote:<verb>[:<argument>]', e.g. promote:send:12, promote:mark:yt:UC123|interested
+    or promote:covered:yt:UC123|https://youtu.be/... (the argument keeps its own colons)."""
     _, _, rest = name.partition(":")
     verb, _, argument = rest.partition(":")
     if verb == "setkey":

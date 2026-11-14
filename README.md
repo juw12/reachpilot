@@ -41,9 +41,10 @@ Every 30 minutes, Windows Task Scheduler runs one pass:
 4. **Adds real visuals**: a short demo video of the product being used, recorded fresh from the live site
    (8 to 22 seconds: it looks, presses a few controls, scrolls through and comes back up), posted natively on
    LinkedIn and every platform that takes video. The recording only reads the site: every request that is not
-   a GET is blocked and sign-in, pay, delete and download buttons are never pressed. Projects without a live
-   site, and any platform that refuses the video, get a fresh screenshot of the site (and the repo page) plus
-   media from the README instead. Switch the video off with `"demo_video": false` in `config.json`.
+   a GET is blocked and sign-in, pay, delete and download buttons are never pressed. A project without a
+   live site still gets a video (see [A video for every post](#a-video-for-every-post)); a platform that
+   refuses the video gets a fresh screenshot plus media from the README instead. Switch the video off with
+   `"demo_video": false` in `config.json`.
    The recording is then cut into a short vertical video that opens with a hook
    (see [Short videos](#short-videos-that-open-with-a-hook)).
 5. **Never repeats itself**: four angles (launch, one-feature deep dive, behind the build, ask for feedback),
@@ -85,8 +86,8 @@ says "Star it on GitHub" with the repo address.
 - **Hooks are curiosity, not lies.** Every caption comes from the repo's own description and README. There are
   no fake users, no made-up quotes or reviews and no numbers the repo doesn't state; "is it really free?" is
   only asked when the repo has a licence. A hook that carries a number the repo never states stays out of the post.
-- A project with too little to say, a roundup of several projects, or a failed render falls back to the plain
-  recording, and from there to screenshots.
+- A project with too little to say, or a failed render, falls back to the plain recording, and from there to
+  screenshots.
 
 Settings in `config.json`:
 
@@ -96,8 +97,43 @@ Settings in `config.json`:
 | `video_formats` | all five | the formats in rotation; `[]` keeps the plain recording |
 | `video_hook_in_post` | `true` | `false` leaves the post's first line alone |
 | `video_hooks` | `{}` | your own hooks per project, for example `{"my-repo": ["Blackout tonight? Open {name}."]}` |
+| `picture_every` | `5` | one post in this many leads with pictures instead of a video; `0` means never |
+| `watch_pages` | `true` | `false` publishes no watch page |
 
 The dashboard shows each post's video with its format, so you can see which one ran.
+
+### A video for every post
+
+Not every project has a site to record. What the video shows is chosen in this order:
+
+1. **The project's own site**, used the way a visitor would use it.
+2. **Its landing page** at `<you>.github.io/p/<project>/`, when one answers.
+3. **A page ReachPilot builds itself** from the repo: name, description, the README's feature lines and
+   pictures, the licence and the clone command. It is phone sized, exists only inside the recording browser
+   and is never published.
+
+For 2 and 3 the video is a tour of the project's page, not the product running, so the two hooks that say
+you are watching it run ("POV: you try <project> for the first time", "ok but does it actually work?") are
+left out for those projects.
+
+- **Roundups** get one video for the whole post: a built page with a card per project, opening with
+  "<N> projects I built" and ending on "See them all on GitHub".
+- **Posts from your own queue** (`seed_queue.json`) get a video in front of the pictures you prepared, and
+  their text is left exactly as you wrote it.
+- **One post in five leads with pictures** (`picture_every`). Pictures can be read without pressing play, a
+  feed of nothing but video looks the same every day, and the picture posts are the baseline that shows
+  whether the videos really earn more visitors and stars. A picture post with no pictures gets the video anyway.
+
+### Watch pages and creator credits
+
+After a post about one project, its video also gets a page of its own at `<you>.github.io/watch/<project>/`:
+the video on top, what the project does underneath, and a link to the repo. It is one address that plays the
+demo, for anywhere a file can't be attached. Live pages are listed in `generated/watch_pages.json`.
+
+When someone covers a project in a video or an article, record it on the dashboard's **Promotion** tab
+("They covered it", then paste the link). The next post about that project thanks them by name with the link,
+once, and they are listed on the project's watch page. ReachPilot never sends them a message or tags them;
+it only writes the thank-you into your own post.
 
 ### Other platforms (free, official APIs)
 
@@ -257,6 +293,8 @@ file can't be reached, the card shows the last good answer and says so. Steps th
 | `growth.py` | daily: profiles, pinned intro, follow-back, follower counts |
 | `analytics.py` | reach scoring |
 | `trylinks.py` | tracked go-links, demo video hosting on GitHub Pages |
+| `showcase.py` | the pages built for a video when a project has no site, and the watch pages |
+| `creators.py` | the thank-you for creators who covered a project |
 | `dashboard.py` + `dashboard.html` | local dashboard (restarts itself onto new code) |
 | `hub.py` | dashboard modules, to-do list and whitelisted actions |
 | `selfupdate.py` | fast-forward updater used by the dashboard and the Updates task |

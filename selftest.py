@@ -847,7 +847,9 @@ check(no_pointer == "Just a post.\n\nGitHub: https://github.com/juw12", "linkedi
 import contextlib  # noqa: E402
 import copy  # noqa: E402
 
+import creators  # noqa: E402
 import linkedin_api  # noqa: E402
+import showcase  # noqa: E402
 import visuals  # noqa: E402
 
 
@@ -905,18 +907,60 @@ github_only = copy.copy(facts)
 github_only.homepage = "https://github.com/juw12/watt-reserve"
 no_site = copy.copy(facts)
 no_site.homepage = ""
-with mock.patch("visuals.record_demo", side_effect=lambda url, output: output) as recorder:
-    recorded = visuals.demo_for_post("launch", [facts], Path("out"))
-    skipped = [
-        visuals.demo_for_post("roundup", [facts], Path("out")),
-        visuals.demo_for_post("launch", [facts, github_only], Path("out")),
-        visuals.demo_for_post("launch", [github_only], Path("out")),
-        visuals.demo_for_post("launch", [no_site], Path("out")),
-    ]
-check(recorded == Path("out") / "watt-reserve_demo.mp4" and recorder.call_args[0][0] == facts.homepage,
-      "demo video: a single-project post records its live site")
-check(skipped == [None] * 4 and recorder.call_count == 1,
-      "demo video: roundups and projects without a live site get no recording")
+# Every post gets something to record: the project's own site, else its landing page, else a page built from the repo
+def never_asked(url):
+    raise AssertionError(f"{url} was looked up although the project has its own site")
+
+
+landing_page = "https://juw12.github.io/p/watt-reserve/"
+built_page = "https://juw12.github.io/reachpilot-showcase/watt-reserve/"
+roundup_page = "https://juw12.github.io/reachpilot-showcase/roundup/"
+check(showcase.target("juw12", "launch", [facts], is_live=never_asked) == (facts.homepage, {}),
+      "showcase: a project with its own site is recorded there")
+check(showcase.target("juw12", "launch", [github_only], is_live=lambda url: url == landing_page) == (landing_page, {})
+      and showcase.target("juw12", "launch", [no_site], is_live=lambda url: url == landing_page) == (landing_page, {}),
+      "showcase: a project without a site is recorded on its landing page when that answers")
+built_url, built_served = showcase.target("juw12", "launch", [no_site], is_live=lambda url: False)
+check(built_url == built_page and list(built_served) == [built_page] and "Watt Reserve" in built_served[built_page],
+      f"showcase: with no site and no landing page a page is built from the repo ({built_url})")
+several_url, several_served = showcase.target("juw12", "launch", [facts, github_only], is_live=never_asked)
+one_roundup_url, _ = showcase.target("juw12", "roundup", [facts], is_live=never_asked)
+check(several_url == one_roundup_url == roundup_page and "2 projects by juw12" in several_served[roundup_page],
+      "showcase: a roundup or several projects get one built page with a card each")
+check(showcase.target("juw12", "launch", []) == ("", {}), "showcase: nothing to show, nothing to record")
+
+tricky = copy.copy(no_site)
+tricky.title = "Watt <Reserve> & Co"
+tricky.readme_images = ["docs/shot one.png", "https://example.test/second.png"]
+plain_page = showcase.page([tricky], "juw12")
+check("Watt &lt;Reserve&gt; &amp; Co" in plain_page and "<Reserve>" not in plain_page
+      and "https://raw.githubusercontent.com/juw12/watt-reserve/HEAD/docs/shot%20one.png" in plain_page
+      and "git clone https://github.com/juw12/watt-reserve" in plain_page
+      and "<video" not in plain_page and "Covered by" not in plain_page and "og:video" not in plain_page,
+      "showcase: the built page escapes the repo's words, reads README pictures from the repo, and has no video of its own")
+check(all(bullet in plain_page for bullet in facts.bullets) and "MIT licence" in plain_page,
+      "showcase: the built page says what the README says")
+page_buttons = re.findall(r"<summary>([^<]*)</summary>", plain_page + showcase.page([facts, github_only], "juw12"))
+check(len(page_buttons) >= 3 and not any(visuals.DEMO_SKIP_LABEL.search(label) for label in page_buttons)
+      and visuals.DEMO_SKIP_LABEL.search("View the code on GitHub") and visuals.DEMO_SKIP_LABEL.search("See them all on GitHub"),
+      f"showcase: the tour can open every section of a built page and never presses the link that leaves it ({page_buttons})")
+watch_credits = [{"creator": "Dev <Tube>", "url": "https://youtu.be/abc"}]
+watch_page = showcase.page([facts], "juw12", demo_link, watch_credits)
+check(f'<video src="{demo_link}"' in watch_page and f'og:video" content="{demo_link}"' in watch_page
+      and '<a href="https://youtu.be/abc">Dev &lt;Tube&gt;</a>' in watch_page and "Covered by" in watch_page,
+      "showcase: the watch page plays the video and credits the creators who covered the project")
+
+with tempfile.TemporaryDirectory() as record_dir:
+    def fake_raw(url, folder, phone=False, served=None):
+        raise RuntimeError(f"stop after the browser step: {sorted(served or {})}")
+
+    with mock.patch("visuals.record_raw", side_effect=fake_raw) as raw_recorder:
+        try:
+            visuals.record_demo(built_url, Path(record_dir) / "clip.mp4", built_served)
+        except RuntimeError as stopped:
+            handed_over = str(stopped)
+    check(raw_recorder.call_args.kwargs["served"] == built_served and built_page in handed_over,
+          "demo video: a built page is handed to the recording browser instead of being published")
 
 video_variants = channels.build_variants(post_body, post_comment, "launch", facts, video_url=demo_link)
 check(all(video_variants[name]["extra"].get("video_url") == demo_link for name in channels.BUFFER_VIDEO)
@@ -1155,15 +1199,21 @@ with tempfile.TemporaryDirectory() as temp_dir:
 
         # autopilot: the video leads the post's media, a failed recording never costs the post, and the switch works
         choice = {"angle": "launch", "facts": [facts]}
-        with mock.patch("autopilot.visuals.images_for_post", return_value=[shot]):
-            with mock.patch("autopilot.visuals.demo_for_post", return_value=clip):
+        with mock.patch("autopilot.visuals.images_for_post", return_value=[shot]), \
+             mock.patch("autopilot.showcase.target", return_value=(facts.homepage, {})):
+            with mock.patch("autopilot.visuals.record_demo", return_value=clip) as demo_recorder:
                 media = autopilot.build_images({"github_user": "juw12"}, choice, "2026-12-01 08:00")
-            with mock.patch("autopilot.visuals.demo_for_post", side_effect=RuntimeError("no browser")):
+            led_by_video = choice["media_kind"]
+            with mock.patch("autopilot.visuals.record_demo", side_effect=RuntimeError("no browser")):
                 media_without = autopilot.build_images({"github_user": "juw12"}, choice, "2026-12-01 08:00")
-            with mock.patch("autopilot.visuals.demo_for_post", return_value=clip) as switched_off:
+            led_by_pictures = choice["media_kind"]
+            with mock.patch("autopilot.visuals.record_demo", return_value=clip) as switched_off:
                 media_off = autopilot.build_images({"github_user": "juw12", "demo_video": False}, choice, "2026-12-01 08:00")
-        check(media == [str(clip), str(shot)], "autopilot: the demo video comes first in a post's media")
-        check(media_without == [str(shot)], "autopilot: a failed recording still posts the screenshots")
+        check(media == [str(clip), str(shot)] and demo_recorder.call_args[0][0] == facts.homepage
+              and demo_recorder.call_args[0][1].name == "watt-reserve_demo.mp4" and led_by_video == "video",
+              "autopilot: the demo video comes first in a post's media")
+        check(media_without == [str(shot)] and led_by_pictures == "pictures",
+              "autopilot: a failed recording still posts the screenshots")
         check(media_off == [str(shot)] and not switched_off.called, 'autopilot: "demo_video": false records nothing')
 
         with mock.patch.object(autopilot, "DRAFTS", Path(temp_dir) / "drafts"):
@@ -1392,12 +1442,13 @@ try:
     styled_pair = [Path("watt-reserve_demo_hook_feed.mp4"), Path("watt-reserve_demo_hook_tall.mp4")]
     styled_config = {"github_user": "juw12", "video_formats": ["hook"], "video_hooks": {"watt-reserve": ["Blackout tonight? Open {name}."]}}
 
-    def media_for(video_config, angle="launch", subjects=None, record_result=None):
-        video_choice = {"angle": angle, "facts": subjects or [reel_facts], "body": "The post itself."}
+    def media_for(video_config, angle="launch", subjects=None, record_result=None, extra=None, db=None, earlier=0):
+        video_choice = {"angle": angle, "facts": subjects or [reel_facts], "body": "The post itself.", **(extra or {})}
         with mock.patch("autopilot.visuals.images_for_post", return_value=[picture]), \
+             mock.patch("autopilot.trylinks._is_live", return_value=False), \
              mock.patch("autopilot.reels.record", **(record_result or {"return_value": styled_pair})) as styled_recorder, \
-             mock.patch("autopilot.visuals.demo_for_post", return_value=plain_video) as plain_recorder:
-            made = autopilot.build_images(video_config, video_choice, "2026-12-01 08:00")
+             mock.patch("autopilot.visuals.record_demo", return_value=plain_video) as plain_recorder:
+            made = autopilot.build_images(video_config, video_choice, "2026-12-01 08:00", db, earlier=earlier)
         return made, video_choice, styled_recorder, plain_recorder
 
     made, video_choice, styled_recorder, plain_recorder = media_for(styled_config)
@@ -1414,8 +1465,90 @@ try:
     made, _, styled_recorder, plain_recorder = media_for({**styled_config, "demo_video": False})
     check(made == [str(picture)] and not styled_recorder.called and not plain_recorder.called,
           'autopilot: "demo_video": false makes no video of either kind')
-    _, video_choice, styled_recorder, _ = media_for(styled_config, angle="roundup", subjects=[reel_facts, star_facts])
-    check(not styled_recorder.called and "video" not in video_choice, "autopilot: a roundup of several projects gets no styled video")
+    made, video_choice, styled_recorder, plain_recorder = media_for(styled_config, angle="roundup", subjects=[reel_facts, star_facts])
+    roundup_plan = styled_recorder.call_args[0][0]
+    roundup_address = "https://juw12.github.io/reachpilot-showcase/roundup/"
+    check(made[:2] == [str(path) for path in styled_pair] and not plain_recorder.called and roundup_plan.format == "roundup"
+          and roundup_plan.url == roundup_address and "EarlyStar" in roundup_plan.pages[roundup_address]
+          and video_choice["video"] == {"format": "roundup", "hook": ""} and video_choice["media_kind"] == "video",
+          f"autopilot: a roundup gets a video of a page built for it, and no hook line is put on the post ({video_choice.get('video')})")
+    _, _, _, plain_recorder = media_for({"github_user": "juw12"}, angle="roundup", subjects=[reel_facts, star_facts])
+    check(plain_recorder.call_args[0][0] == roundup_address and plain_recorder.call_args[0][1].name == "roundup_demo.mp4"
+          and roundup_address in plain_recorder.call_args[0][2],
+          "autopilot: without styled formats a roundup still gets the plain recording of its built page")
+
+    # A site-less project: the video tours a page about it, so no line may promise a look at the product working
+    described = copy.deepcopy(reel_facts)
+    described.homepage = ""
+    made, video_choice, styled_recorder, _ = media_for(
+        {"github_user": "juw12", "video_formats": ["pov"]}, subjects=[described])
+    described_plan = styled_recorder.call_args[0][0]
+    described_address = "https://juw12.github.io/reachpilot-showcase/watt-reserve/"
+    check(described_plan.url == described_address and described_address in described_plan.pages
+          and described_plan.hook not in [line.format(name="Watt Reserve") for line in reels.USE_HOOKS],
+          f"autopilot: a project without a site is filmed on a page built from its repo ({described_plan.url})")
+    use_lines = {line.format(name="Watt Reserve") for line in reels.USE_HOOKS}
+    honest = all(
+        reels.plan(reel_facts, video_format, random.Random(seed), url=described_address, shows_product=False).hook not in use_lines
+        for video_format in ("pov", "question") for seed in range(80)
+    )
+    shown = {reels.plan(reel_facts, video_format, random.Random(seed)).hook
+             for video_format in ("pov", "question") for seed in range(80)}
+    check(honest and use_lines <= shown,
+          "reels: 'you try it' and 'does it work' hooks are kept for videos that show the product running")
+
+    three = [reel_facts, star_facts, described]
+    roundup_video = reels.plan_roundup(three + [reel_facts], "juw12", roundup_address, {roundup_address: "<html>"})
+    check(roundup_video.hook == "4 projects I built" and len(roundup_video.beats) == reels.ROUNDUP_PROJECTS
+          and roundup_video.beats[0].startswith("Watt Reserve: ") and roundup_video.beats[1].startswith("EarlyStar: ")
+          and all(len(beat) <= reels.CAPTION_CHARS for beat in roundup_video.beats)
+          and roundup_video.end == "See them all on GitHub" and roundup_video.github == "github.com/juw12"
+          and roundup_video.post_line == "" and roundup_video.timeline()[-1][0] == "end",
+          f"reels: a roundup video counts the projects and gives the first three a caption each ({roundup_video.beats})")
+    try:
+        reels.plan_roundup([reel_facts], "juw12", roundup_address)
+        check(False, "reels: one project is not a roundup")
+    except ValueError:
+        check(True, "reels: one project is not a roundup")
+    check(reels.ROUNDUP not in reels.FORMATS and reels.end_image("feed", "github.com/juw12", "See them all on GitHub").size == (1080, 1350),
+          "reels: the roundup is never drawn for a single project, and its end card says where the rest is")
+
+    # A prepared seed post: its own pictures and words are kept, and the repo behind it still gets a video in front
+    seed_extra = {"source": "queue:1", "facts": [], "video_subjects": [reel_facts], "images": ["seed_card.png"]}
+    with mock.patch("autopilot.visuals.images_for_post", side_effect=AssertionError("a seed post has its pictures")):
+        seed_choice = {"angle": "launch", "body": "My own first line.", **seed_extra}
+        with mock.patch("autopilot.reels.record", return_value=styled_pair) as seed_recorder:
+            seed_media = autopilot.build_images(styled_config, seed_choice, "2026-12-01 08:00")
+    autopilot.lead_with_hook({}, seed_choice)
+    check(seed_media == [str(path) for path in styled_pair] + ["seed_card.png"] and seed_recorder.called
+          and seed_choice["video"]["format"] == "hook" and seed_choice["body"] == "My own first line.",
+          "autopilot: a prepared seed post gets a video in front of its pictures and keeps its own first line")
+    textless = {"angle": "launch", "body": "Words only.", "source": "queue:2", "facts": []}
+    with mock.patch("autopilot.visuals.images_for_post", return_value=[]), \
+         mock.patch("autopilot.visuals.record_demo") as nothing_recorded:
+        check(autopilot.build_images(styled_config, textless, "2026-12-01 08:00") == [] and textless["media_kind"] == "text"
+              and not nothing_recorded.called, "autopilot: a post about no project stays a text post")
+
+    # Hosting names: one file per project and format, a fresh one for every roundup
+    with tempfile.TemporaryDirectory() as host_dir:
+        hosted_styled = Path(host_dir) / "watt-reserve_demo_hook_tall.mp4"
+        hosted_plain = Path(host_dir) / "watt-reserve_demo.mp4"
+        hosted_roundup = Path(host_dir) / "roundup_demo_roundup_tall.mp4"
+        for hosted_file in (hosted_styled, hosted_plain, hosted_roundup):
+            hosted_file.write_bytes(b"video")
+        with mock.patch("autopilot.trylinks.host_demo_video", return_value="https://x.test/v.mp4") as host:
+            host_results = [
+                autopilot.host_video({"github_user": "juw12"}, "2026-12-01 08:00", "watt-reserve", [str(hosted_styled), "card.png"]),
+                autopilot.host_video({"github_user": "juw12"}, "2026-12-01 08:00", "watt-reserve", [str(hosted_plain)]),
+                autopilot.host_video({"github_user": "juw12"}, "2026-12-01 08:00", None, [str(hosted_roundup)]),
+                autopilot.host_video({"github_user": "juw12"}, "2026-12-01 08:00", "watt-reserve", ["card.png"]),
+            ]
+        hosted_names = [call[0][1] for call in host.call_args_list]
+        with mock.patch("autopilot.trylinks.host_demo_video", side_effect=RuntimeError("no network")):
+            failed_host = autopilot.host_video({"github_user": "juw12"}, "2026-12-01 08:00", "watt-reserve", [str(hosted_plain)])
+    check(hosted_names == ["watt-reserve-hook", "watt-reserve", "roundup-2026-12-01"]
+          and host_results == ["https://x.test/v.mp4"] * 3 + [""] and failed_host == "",
+          f"autopilot: videos are hosted per project and format, a roundup under its date ({hosted_names})")
 
     hooked = {"body": "The post itself.", "video": {"format": "hook", "hook": "Stop scrolling for a second."}}
     autopilot.lead_with_hook({}, hooked)
@@ -1481,6 +1614,31 @@ try:
             reel_db.commit()
             stored_history = [tuple(row) for row in reels.history(reel_db)]
             stored_records = reels.format_records(reel_db)
+
+            # One post in every "picture_every" leads with its pictures: the baseline the videos are measured against
+            every_fifth = {"github_user": "juw12", "picture_every": 5}
+            check(not autopilot.picture_turn(every_fifth, reel_db), "autopilot: posts made before media was recorded do not count")
+            reel_db.execute("UPDATE posts SET media_kind = 'video'")
+            reel_db.commit()
+            turns = [autopilot.picture_turn(every_fifth, reel_db, earlier) for earlier in range(6)]
+            check(turns == [True, False, False, False, False, True],
+                  f"autopilot: with four posts made the fifth leads with pictures, then every fifth after it ({turns})")
+            check(not autopilot.picture_turn({"picture_every": 1}, reel_db) and not autopilot.picture_turn({}, reel_db)
+                  and not autopilot.picture_turn(every_fifth, None),
+                  'autopilot: no picture posts without "picture_every" of 2 or more, or without a history to count')
+            made, video_choice, styled_recorder, plain_recorder = media_for({**styled_config, "picture_every": 5}, db=reel_db)
+            check(made == [str(picture)] and video_choice["media_kind"] == "pictures" and "video" not in video_choice
+                  and not styled_recorder.called and not plain_recorder.called,
+                  "autopilot: the picture post records no video and gets no hook line")
+            made, video_choice, _, _ = media_for({**styled_config, "picture_every": 5}, db=reel_db, earlier=1)
+            check(made[-1] == str(picture) and len(made) == 3 and video_choice["media_kind"] == "video",
+                  "autopilot: the post after it leads with a video again")
+            with mock.patch("autopilot.visuals.images_for_post", return_value=[]), \
+                 mock.patch("autopilot.reels.record", return_value=styled_pair):
+                bare_choice = {"angle": "launch", "facts": [reel_facts], "body": "The post itself."}
+                bare_media = autopilot.build_images({**styled_config, "picture_every": 5}, bare_choice, "2026-12-01 08:00", reel_db)
+            check(bare_media == [str(path) for path in styled_pair] and bare_choice["media_kind"] == "video",
+                  "autopilot: a picture turn with no pictures to show still gets its video")
             reel_db.close()
         finally:
             autopilot.DB_PATH, autopilot.SECRETS_PATH, autopilot.TOKEN_PATH = real_paths
@@ -1492,6 +1650,123 @@ try:
           f"reels: results are credited to the format of the post that earned them ({stored_records})")
 finally:
     logging.disable(logging.NOTSET)
+
+# Creators who covered a project are thanked in the next post about it and listed on its watch page (creators.py)
+cover_a = {"id": 3, "creator": "Dev  Tube", "url": "https://youtu.be/abc", "repo": "watt-reserve", "credited": False}
+cover_b = {"id": 4, "creator": "Kode Pagi", "url": "https://youtu.be/def", "repo": "watt-reserve", "credited": True}
+cover_c = {"id": 5, "creator": "Offline Pod", "url": "https://pod.example/9", "repo": "kilat", "credited": False}
+unusable = [{"id": 6, "creator": "", "url": "https://youtu.be/x", "repo": "watt-reserve"},
+            {"id": 7, "creator": "No Link", "url": "javascript:alert(1)", "repo": "watt-reserve"}]
+with mock.patch("creators._promote", return_value=json.dumps([cover_a, cover_b, cover_c] + unusable)) as promote_call:
+    all_covers = creators.coverage()
+    repo_covers = creators.coverage("watt-reserve")
+    waiting = creators.pending("watt-reserve")
+check([entry["id"] for entry in all_covers] == [3, 4, 5] and [entry["id"] for entry in repo_covers] == [3, 4]
+      and [entry["id"] for entry in waiting] == [3] and waiting[0]["creator"] == "Dev Tube"
+      and promote_call.call_args[0] == ("credits",),
+      "creators: covers are read from the outreach module; entries without a name or a real link are dropped")
+with mock.patch("creators._promote", return_value="not json"):
+    broken_covers = creators.coverage()
+with mock.patch.object(creators, "PROMOTE_SCRIPT", Path("no-such-folder") / "promote.py"), \
+     mock.patch("creators.subprocess.run", side_effect=AssertionError("nothing to run")):
+    absent_covers = creators.pending("watt-reserve")
+check(broken_covers == [] and absent_covers == [], "creators: without the outreach module, or when it fails, nobody is credited")
+
+tagged_post = "Watt Reserve plans your backup.\n\nLinks in the first comment.\n\n#OpenSource #PWA"
+one_body, one_comment = creators.credit(tagged_post, "GitHub: https://github.com/juw12/watt-reserve", waiting, "Watt Reserve")
+check(one_body == "Watt Reserve plans your backup.\n\nLinks in the first comment.\n\n"
+                  "Thanks to Dev Tube for covering Watt Reserve.\n\n#OpenSource #PWA"
+      and one_comment == "GitHub: https://github.com/juw12/watt-reserve\nDev Tube: https://youtu.be/abc",
+      "creators: one creator is thanked before the hashtags and their video is linked where the post keeps its links")
+many_body, many_comment = creators.credit("No tags here.", "", all_covers, "Watt Reserve")
+check(many_body == "No tags here.\n\nThanks to Dev Tube, Kode Pagi and Offline Pod for covering Watt Reserve.\n"
+                   "Dev Tube: https://youtu.be/abc\nKode Pagi: https://youtu.be/def\nOffline Pod: https://pod.example/9"
+      and many_comment == "",
+      "creators: several creators are named together; without a links comment their links go under the thanks")
+check(creators.credit(tagged_post, "Links", [], "Watt Reserve") == (tagged_post, "Links"),
+      "creators: no cover, no change to the post")
+with mock.patch("creators._promote", return_value="") as promote_call:
+    creators.mark(waiting)
+check(promote_call.call_args[0] == ("action", "credited", "3"), "creators: a thanked cover is marked so it is not thanked twice")
+
+thanked_choice = {"repo": "watt-reserve", "facts": [facts], "body": tagged_post, "comment": None}
+with mock.patch("autopilot.creators.pending", return_value=waiting), mock.patch("autopilot.creators.mark") as marker:
+    draft_thanks = autopilot.thank_creators(dict(thanked_choice))
+    not_marked_for_draft = not marker.called
+    autopilot.thank_creators(thanked_choice, mark=True)
+check(draft_thanks == waiting and not_marked_for_draft and marker.call_args[0][0] == waiting
+      and "Thanks to Dev Tube for covering Watt Reserve.\nDev Tube: https://youtu.be/abc" in thanked_choice["body"]
+      and thanked_choice["body"].endswith("#OpenSource #PWA"),
+      "autopilot: the thank-you goes into the post; only a real post marks the cover as thanked, a preview does not")
+roundup_choice = {"repo": None, "facts": [facts], "body": tagged_post, "comment": ""}
+with mock.patch("autopilot.creators.pending", side_effect=AssertionError("a roundup has no single project")):
+    check(autopilot.thank_creators(roundup_choice) == [] and roundup_choice["body"] == tagged_post,
+          "autopilot: a roundup thanks nobody")
+logging.disable(logging.CRITICAL)
+try:
+    with mock.patch("autopilot.creators.pending", side_effect=RuntimeError("module broke")):
+        survived = autopilot.thank_creators(dict(thanked_choice, body=tagged_post)) == []
+finally:
+    logging.disable(logging.NOTSET)
+check(survived, "autopilot: a failing outreach module never blocks a post")
+
+# Watch page: the project's video on a page of its own, published on the Pages site and noted for the outreach e-mails
+check({"watch", "reachpilot-showcase"} <= trylinks.RESERVED_NAMES, "watch page: no project go-page can take watch/ or the built pages' folder")
+with tempfile.TemporaryDirectory() as watch_dir:
+    watch_checkout = Path(watch_dir) / ".pages"
+    watch_checkout.mkdir()
+    watch_address = "https://juw12.github.io/watch/watt-reserve/"
+    git_calls = []
+
+    def fake_git(arguments, cwd):
+        git_calls.append(arguments[0])
+        return mock.Mock(returncode=0, stderr="")
+
+    watch_log = logging.getLogger("selftest.watch")
+    watch_log.disabled = True
+    with mock.patch("showcase.trylinks._pages_checkout", return_value=True), \
+         mock.patch("showcase.trylinks._git", side_effect=fake_git), \
+         mock.patch("showcase.trylinks._is_live", return_value=True), mock.patch("time.sleep"):
+        published = showcase.publish_watch("juw12", facts, demo_link, watch_checkout, watch_log, watch_credits)
+        first_calls = list(git_calls)
+        published_again = showcase.publish_watch("juw12", facts, demo_link, watch_checkout, watch_log, watch_credits)
+    watch_file = watch_checkout / "watch" / "watt-reserve" / "index.html"
+    check(published == published_again == watch_address == showcase.watch_url("juw12", "watt-reserve")
+          and watch_file.read_text(encoding="utf-8") == watch_page
+          and first_calls == ["add", "commit", "push"] and git_calls[3:] == ["push"],
+          f"watch page: written once with the video and the credits, pushed, and not committed again unchanged ({git_calls})")
+    with mock.patch("showcase.trylinks._pages_checkout", return_value=True), \
+         mock.patch("showcase.trylinks._git", side_effect=fake_git), \
+         mock.patch("showcase.trylinks._is_live", return_value=False), mock.patch("time.sleep"):
+        never_live = showcase.publish_watch("juw12", facts, demo_link, watch_checkout, watch_log)
+    with mock.patch("showcase.trylinks._pages_checkout", return_value=False), \
+         mock.patch("showcase.trylinks._git", side_effect=AssertionError("no checkout, no git")):
+        no_checkout = showcase.publish_watch("juw12", facts, demo_link, watch_checkout, watch_log)
+    check(never_live == "" and no_checkout == "", "watch page: no address is handed out until the page answers")
+
+    watch_index = Path(watch_dir) / "generated" / showcase.WATCH_INDEX
+    showcase.remember(watch_index, "watt-reserve", watch_address)
+    showcase.remember(watch_index, "kilat", "https://juw12.github.io/watch/kilat/")
+    showcase.remember(watch_index, "watt-reserve", watch_address)
+    check(json.loads(watch_index.read_text(encoding="utf-8")) == {
+        "kilat": "https://juw12.github.io/watch/kilat/", "watt-reserve": watch_address},
+        "watch page: live pages are noted by repo, where the outreach e-mails look for a video link")
+
+    watch_row = ("composer", "watt-reserve", "launch", "body", "", json.dumps(["card.png"]))
+    with mock.patch.object(autopilot, "GENERATED", Path(watch_dir) / "generated"), \
+         mock.patch("autopilot.creators.coverage", return_value=watch_credits) as covers_asked, \
+         mock.patch("autopilot.showcase.publish_watch", return_value=watch_address) as watch_publisher, \
+         mock.patch("autopilot.host_video", return_value="") as host_asked:
+        with_link = autopilot.publish_watch_page({"github_user": "juw12"}, "2026-12-01 08:00", watch_row, facts, demo_link)
+        without_video = autopilot.publish_watch_page({"github_user": "juw12"}, "2026-12-01 08:00", watch_row, facts)
+        switched_off_page = autopilot.publish_watch_page(
+            {"github_user": "juw12", "watch_pages": False}, "2026-12-01 08:00", watch_row, facts, demo_link)
+        roundup_row = ("composer", None, "roundup", "body", "", "[]")
+        for_roundup = autopilot.publish_watch_page({"github_user": "juw12"}, "2026-12-01 08:00", roundup_row, facts, demo_link)
+    check(with_link == watch_address and watch_publisher.call_count == 1 and watch_publisher.call_args[0][2] == demo_link
+          and watch_publisher.call_args[0][5] == watch_credits and covers_asked.call_args[0] == ("watt-reserve",)
+          and host_asked.call_count == 1 and (without_video, switched_off_page, for_roundup) == ("", "", ""),
+          'autopilot: a posted video gets its watch page; none without a hosted video, for a roundup, or with "watch_pages": false')
 
 print("\nALL PASSED" if not failures else f"\n{len(failures)} FAILED")
 sys.exit(1 if failures else 0)

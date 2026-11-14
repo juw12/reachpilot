@@ -1,4 +1,4 @@
-"""Real visuals only: fresh screenshots and a short demo video of live project pages, and media from the repos."""
+"""Real visuals only: fresh screenshots and a short demo video of a project's page, and media from the repos."""
 from __future__ import annotations
 
 import hashlib
@@ -311,12 +311,14 @@ def _demo_tour(page, deadline: float, size: tuple[int, int] = DEMO_SIZE) -> None
     page.wait_for_timeout(1300)
 
 
-def record_raw(url: str, folder: Path, phone: bool = False) -> tuple[Path, float, float]:
-    """Record the live page being used into folder. Returns (raw video, seconds of loading to cut, seconds of use).
+def record_raw(url: str, folder: Path, phone: bool = False, served: dict[str, str] | None = None) -> tuple[Path, float, float]:
+    """Record the page being used into folder. Returns (raw video, seconds of loading to cut, seconds of use).
 
     The browser is a throwaway profile that only reads: every request that is not a GET is blocked, so the
     recording can press buttons without ever submitting, signing up or saving anything.
     phone=True records the site at phone width (PHONE_SIZE, drawn PHONE_SCALE times larger) for the vertical videos.
+    served is {address: html}: pages answered by this browser itself, for a project that has no page online
+    (showcase.py builds them).
     """
     from playwright.sync_api import sync_playwright
 
@@ -333,6 +335,8 @@ def record_raw(url: str, folder: Path, phone: bool = False) -> tuple[Path, float
         context.on("page", lambda popup: popup.close() if len(context.pages) > 1 else None)
         page = context.new_page()
         page.on("dialog", lambda dialog: dialog.dismiss())
+        for address, body in (served or {}).items():
+            page.route(address, lambda route, body=body: route.fulfill(content_type="text/html; charset=utf-8", body=body))
         started = time.monotonic()
         try:
             view = page
@@ -367,11 +371,11 @@ def record_raw(url: str, folder: Path, phone: bool = False) -> tuple[Path, float
     return raw, lead_in, tour_seconds
 
 
-def record_demo(url: str, output: Path) -> Path:
-    """Record a short silent MP4 of the live page being used. Raises when the page or the encoding fails."""
+def record_demo(url: str, output: Path, served: dict[str, str] | None = None) -> Path:
+    """Record a short silent MP4 of the page being used. Raises when the page or the encoding fails."""
     output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="reachpilot_demo_") as folder:
-        raw, lead_in, tour_seconds = record_raw(url, Path(folder))
+        raw, lead_in, tour_seconds = record_raw(url, Path(folder), served=served)
         speed = _demo_speed(tour_seconds)
         subprocess.run(
             [_ffmpeg(), "-y", "-loglevel", "error", "-ss", f"{lead_in:.2f}", "-i", str(raw),
@@ -386,20 +390,3 @@ def record_demo(url: str, output: Path) -> Path:
         raise RuntimeError(f"the recording of {url} came out empty")
     return output
 
-
-def demo_site(angle: str, subjects: list[RepoFacts]) -> RepoFacts | None:
-    """The one project whose live site a post can show in a video; None for roundups and repos without a site."""
-    if angle == "roundup" or len(subjects) != 1:
-        return None
-    facts = subjects[0]
-    if not facts.homepage or "//github.com/" in facts.homepage:
-        return None
-    return facts
-
-
-def demo_for_post(angle: str, subjects: list[RepoFacts], out_dir: Path) -> Path | None:
-    """The plain demo video for a post about one project with a live site; None when demo_site says there is none."""
-    facts = demo_site(angle, subjects)
-    if facts is None:
-        return None
-    return record_demo(facts.homepage, out_dir / f"{facts.name}_demo.mp4")

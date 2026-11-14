@@ -1,11 +1,15 @@
 """Short vertical videos built on the demo recording: a hook in the first seconds, captions, a 'star it' end card.
 
-Five formats, all showing the real site being used inside a phone frame (visuals.record_raw, phone view):
+Five formats for one project, all a real page being used inside a phone frame (visuals.record_raw, phone view):
   hook      a line that stops the scroll, then what the project is
   pov       "POV: you just found ...", the first-person style of user-made clips
   question  a viewer's question ("ok but does it actually work?") answered by the recording
   listicle  "3 things about <project>", one caption per feature
   speedrun  "<project> in 15 seconds", the whole tour at speed
+and one for several projects (plan_roundup): "<n> projects I built", a caption per project.
+
+The page is the project's own site when it has one; otherwise a page about the project (showcase.py), and then
+the hooks that say you are watching the product run (USE_HOOKS) are left out.
 
 Every video is rendered in two cuts: "feed" (4:5, for LinkedIn, Bluesky, Mastodon, Telegram, Discord) and
 "tall" (9:16, for X and Threads). choose_format rotates the formats and learns which one earns visitors and stars.
@@ -21,7 +25,7 @@ import random
 import re
 import subprocess
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
@@ -69,6 +73,11 @@ QUESTIONS = [
     ("where's the code?", "Where is the code for {name}?", "All on GitHub: {github}"),
     ("ok but does it actually work?", "Does {name} actually work?", "Watch."),
 ]
+# Lines that promise the product itself on screen; never used over a page that only describes the project.
+USE_HOOKS = ("POV: you try {name} for the first time", "ok but does it actually work?")
+ROUNDUP = "roundup"  # the video about several projects; not one of FORMATS, so it is never chosen for a single project
+ROUNDUP_PROJECTS = 3
+STAR_IT = "Star it on GitHub"
 
 YELLOW = "#FFE14D"
 INK = "#111111"
@@ -223,6 +232,8 @@ class Plan:
     post_line: str  # goes on top of the post text; "" when there is nothing safe to add
     beats: list[str]
     seconds: int
+    pages: dict = field(default_factory=dict)  # {address: html} the recording browser answers itself (showcase.py)
+    end: str = STAR_IT  # the title of the end card
 
     def timeline(self) -> list[tuple[str, str, float, float]]:
         """(kind, text, start, end): the hook, the captions sharing the middle, then the end card."""
@@ -235,8 +246,13 @@ class Plan:
         return rows
 
 
-def plan(facts: RepoFacts, video_format: str, rng: random.Random, own_hooks: list[str] | None = None) -> Plan:
-    """Write one video: the hook, the captions and the line for the post. own_hooks replaces the 'hook' lines for this repo."""
+def plan(facts: RepoFacts, video_format: str, rng: random.Random, own_hooks: list[str] | None = None,
+         url: str | None = None, shows_product: bool = True) -> Plan:
+    """Write one video: the hook, the captions and the line for the post. own_hooks replaces the 'hook' lines for this repo.
+
+    url is the page to record (the project's own site when left out). shows_product=False says that page describes
+    the project instead of running it, so no line may promise a look at it working.
+    """
     name = facts.display_name
     github = facts.html_url.split("//", 1)[-1].rstrip("/")
     limit = SPEEDRUN_CAPTION_CHARS if video_format == "speedrun" else CAPTION_CHARS
@@ -256,11 +272,14 @@ def plan(facts: RepoFacts, video_format: str, rng: random.Random, own_hooks: lis
             hook, post_line = (line.format(name=name) for line in rng.choice(HOOKS))
         lead = [f"This is {name}."]
     elif video_format == "pov":
-        hook = rng.choice(POV_HOOKS).format(name=name)
+        hook = rng.choice([line for line in POV_HOOKS if shows_product or line not in USE_HOOKS]).format(name=name)
         post_line = hook + "."
     elif video_format == "question":
         licensed = facts.license not in ("", "NOASSERTION", "Other")
-        hook, post_line, answer = rng.choice([entry for entry in QUESTIONS if licensed or "{license}" not in entry[2]])
+        hook, post_line, answer = rng.choice([
+            entry for entry in QUESTIONS
+            if (licensed or "{license}" not in entry[2]) and (shows_product or entry[0] not in USE_HOOKS)
+        ])
         post_line = post_line.format(name=name)
         lead = [answer.format(license=facts.license, github=github)] if answer else []
     elif video_format == "listicle":
@@ -277,7 +296,22 @@ def plan(facts: RepoFacts, video_format: str, rng: random.Random, own_hooks: lis
         raise ValueError(f"{facts.name} has nothing to caption")
     if composer.invented_numbers(post_line, facts.source_text()):
         post_line = ""
-    return Plan(video_format, facts.name, facts.homepage, github, hook, post_line, beats, seconds)
+    return Plan(video_format, facts.name, url or facts.homepage, github, hook, post_line, beats, seconds)
+
+
+def plan_roundup(subjects: list[RepoFacts], user: str, url: str, pages: dict | None = None) -> Plan:
+    """The video for a post about several projects: how many there are, then one caption for each of the first few."""
+    beats = []
+    for facts in subjects:
+        line = what_it_is(facts, CAPTION_CHARS - len(facts.display_name) - 2)
+        if line:
+            beats.append(f"{facts.display_name}: {line}")
+    if len(subjects) < 2 or not beats:
+        raise ValueError("a roundup video needs several projects with something to caption")
+    return Plan(
+        ROUNDUP, ROUNDUP, url, f"github.com/{user}", f"{len(subjects)} projects I built", "",
+        beats[:ROUNDUP_PROJECTS], SECONDS, pages or {}, "See them all on GitHub",
+    )
 
 
 # ------------------------------------------------------------------ which format next (rotation that learns)
@@ -398,7 +432,7 @@ def frame_image(cut: str, repo: str, github: str) -> Image.Image:
     return canvas
 
 
-def end_image(cut: str, github: str) -> Image.Image:
+def end_image(cut: str, github: str, title: str = STAR_IT) -> Image.Image:
     """The last seconds: the recording dims and the one thing to do next is spelled out."""
     width, height = CUTS[cut]
     image = Image.new("RGBA", (width, height), (8, 10, 18, 205))
@@ -410,8 +444,10 @@ def end_image(cut: str, github: str) -> Image.Image:
         angle = math.pi * index / 5 - math.pi / 2
         points.append((centre_x + radius * math.cos(angle), centre_y - 230 + radius * math.sin(angle)))
     draw.polygon(points, fill=YELLOW)
-    title = "Star it on GitHub"
-    title_font = _font("seguibl.ttf", 84)
+    for title_size in range(84, 50, -4):  # a longer title ("See them all on GitHub") gets a smaller size
+        title_font = _font("seguibl.ttf", title_size)
+        if title_font.getlength(title) <= width - 120:
+            break
     draw.text(((width - title_font.getlength(title)) / 2, centre_y - 70), title, font=title_font, fill="#ffffff")
     for size in range(46, SMALLEST_FONT - 1, -2):
         link_font = _font("segoeuib.ttf", size)
@@ -466,7 +502,7 @@ def render(plan_: Plan, cut: str, raw: Path, lead_in: float, speed: float, work:
     for index, (kind, text, start, end) in enumerate(plan_.timeline()):
         picture = work / f"{cut}_{index}.png"
         if kind == "end":
-            image, (x, y) = end_image(cut, text), (0, 0)
+            image, (x, y) = end_image(cut, text, plan_.end), (0, 0)
         else:
             style = (plan_.format if plan_.format in ("pov", "question") else "hook") if kind == "hook" else "beat"
             image, (x, y) = caption_image(text, cut, style)
@@ -484,12 +520,12 @@ def render(plan_: Plan, cut: str, raw: Path, lead_in: float, speed: float, work:
 
 
 def record(plan_: Plan, out_dir: Path) -> list[Path]:
-    """Record the site once and render every cut: [<repo>_demo_<format>_feed.mp4, ..._tall.mp4]. All or nothing."""
+    """Record the page once and render every cut: [<repo>_demo_<format>_feed.mp4, ..._tall.mp4]. All or nothing."""
     out_dir.mkdir(parents=True, exist_ok=True)
     outputs = [out_dir / f"{plan_.repo}_demo_{plan_.format}_{cut}.mp4" for cut in CUTS]
     try:
         with tempfile.TemporaryDirectory(prefix="reachpilot_reel_") as folder:
-            raw, lead_in, tour_seconds = visuals.record_raw(plan_.url, Path(folder), phone=True)
+            raw, lead_in, tour_seconds = visuals.record_raw(plan_.url, Path(folder), phone=True, served=plan_.pages)
             speed = max(MIN_SPEED, tour_seconds / plan_.seconds)
             for cut, output in zip(CUTS, outputs):
                 render(plan_, cut, raw, lead_in, speed, Path(folder), output)

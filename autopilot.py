@@ -11,11 +11,15 @@ Runs every 30 minutes from Windows Task Scheduler (`autopilot.py install`). Each
 Each post also goes to the other platforms you connected (channels.py): Bluesky, Mastodon, Dev.to, Telegram,
 Discord, and X, Threads and Substack (free through Buffer). Each platform publishes and retries on its own.
 
-A post about one project with a live site also gets a demo video of the site being used: a short vertical video
-with a hook, captions and a "star it" end card in one of the formats in "video_formats" (reels.py), or the plain
-screen recording (visuals.record_demo) when that fails or no format is switched on. The video leads the post
-wherever the platform takes one and the screenshots are the fallback.
-Switch it off with "demo_video": false in config.json.
+Every post leads with a video: a short vertical one with a hook, captions and an end card (reels.py, the formats
+in "video_formats"), or the plain screen recording (visuals.record_demo) when that fails or no format is switched
+on. It records the project's own site being used; a project without one is shown through its landing page, or
+through a page built here from its README (showcase.py). A roundup gets one video for all its projects, and the
+prepared seed posts get one in front of their pictures. The pictures stay as the fallback, and one post in every
+"picture_every" leads with them instead. Switch the videos off with "demo_video": false in config.json.
+
+After a post about one project its video also gets a page of its own (showcase.publish_watch, "watch_pages"),
+and a creator who covered the project is thanked in the post (creators.py).
 
 Commands:  init | auth | channels | tick | preview [N] | status | install | uninstall
 Kill switch: create a file named PAUSE in this folder.
@@ -41,9 +45,11 @@ sys.path.insert(0, str(ROOT))
 import analytics  # noqa: E402
 import channels  # noqa: E402
 import composer  # noqa: E402
+import creators  # noqa: E402
 import github_source as gh  # noqa: E402
 import growth  # noqa: E402
 import reels  # noqa: E402
+import showcase  # noqa: E402
 import trylinks  # noqa: E402
 import visuals  # noqa: E402
 
@@ -103,6 +109,8 @@ def connect_db() -> sqlite3.Connection:
     )
     if "video_format" not in [column[1] for column in db.execute("PRAGMA table_info(posts)")]:
         db.execute("ALTER TABLE posts ADD COLUMN video_format TEXT")  # which reels.py format the post's video used
+    if "media_kind" not in [column[1] for column in db.execute("PRAGMA table_info(posts)")]:
+        db.execute("ALTER TABLE posts ADD COLUMN media_kind TEXT")  # what led the post: video, pictures or text
     channels.ensure_schema(db)
     return db
 
@@ -297,8 +305,14 @@ class Picker:
         if not row:
             return None
         queue_id, repo, angle, body, comment, images = row
+        try:  # a prepared post keeps its words and pictures; the repo's facts only give it a video in front
+            facts = self.facts(repo) if repo else None
+        except Exception as error:
+            log.warning("No facts for the seed post about %s (%s); it goes out with its pictures", repo, error)
+            facts = None
         return {"source": f"queue:{queue_id}", "repo": repo, "angle": angle, "body": body, "comment": comment,
-                "images": [str(ASSETS / name) for name in json.loads(images)], "facts": [], "used_bullets": []}
+                "images": [str(ASSETS / name) for name in json.loads(images)], "facts": [],
+                "video_subjects": [facts] if facts else [], "used_bullets": []}
 
     def from_events(self):
         for event_id, repo, kind, detail in self.db.execute(
@@ -407,58 +421,111 @@ class Picker:
         return None
 
 
-def styled_videos(config, choice, out_dir: Path, db=None, used=()) -> list[Path]:
-    """The post's demo as a short vertical video in every cut (reels.py); [] when the plain recording should be tried.
+def video_subjects(choice) -> list:
+    """The projects a post's video shows: the ones the post is about, or the repo behind a prepared seed post."""
+    return choice.get("facts") or choice.get("video_subjects") or []
 
+
+def styled_videos(config, choice, out_dir: Path, db=None, used=(), url: str = "", served: dict | None = None) -> list[Path]:
+    """The post's video as a short vertical one in every cut (reels.py); [] when the plain recording should be tried.
+
+    url is the page to record and served the pages the recording browser answers itself (showcase.target).
     used is [(repo, format)] of videos made earlier in this run, newest first (the preview makes several at once).
     Sets choice["video"] to the format and the hook line that goes on top of the post.
     """
-    facts = visuals.demo_site(choice["angle"], choice["facts"])
+    subjects = video_subjects(choice)
     enabled = config.get("video_formats") or []
-    if facts is None or not enabled:
+    if not url or not subjects or not enabled:
         return []
     try:
         rng = random.Random()
-        past = list(used) + (reels.history(db) if db else [])
-        video_format = reels.choose_format(enabled, facts, choice["angle"], past, reels.format_records(db) if db else [], rng)
-        if video_format is None:
-            return []
-        plan = reels.plan(facts, video_format, rng, (config.get("video_hooks") or {}).get(facts.name))
+        if showcase.subject_name(choice["angle"], subjects) == "roundup":
+            plan = reels.plan_roundup(subjects, config["github_user"], url, served)
+        else:
+            facts = subjects[0]
+            past = list(used) + (reels.history(db) if db else [])
+            video_format = reels.choose_format(enabled, facts, choice["angle"], past, reels.format_records(db) if db else [], rng)
+            if video_format is None:
+                return []
+            own_hooks = (config.get("video_hooks") or {}).get(facts.name)
+            plan = reels.plan(facts, video_format, rng, own_hooks, url=url, shows_product=url == facts.homepage)
+            plan.pages = served or {}
         videos = reels.record(plan, out_dir)
     except Exception as error:
-        log.warning("Styled demo video failed (%s); trying the plain recording", error)
+        log.warning("Styled video failed (%s); trying the plain recording", error)
         return []
-    choice["video"] = {"format": video_format, "hook": plan.post_line}
+    choice["video"] = {"format": plan.format, "hook": plan.post_line}
     return videos
 
 
-def build_images(config, choice, slot: str, db=None, used=()) -> list[str]:
-    """The post's media: the demo video first (when the project has a live site), then the screenshots."""
-    if choice.get("images"):
-        return choice["images"]
+def picture_turn(config, db, earlier: int = 0) -> bool:
+    """True when this post is the one in every "picture_every" that leads with its pictures instead of a video.
+
+    Pictures read without pressing play, and they are the baseline that shows whether the videos earn more.
+    earlier counts the posts made before this one in the same run (the preview makes several at once).
+    """
+    every = int(config.get("picture_every") or 0)
+    if db is None or every < 2:
+        return False
+    made = db.execute("SELECT COUNT(*) FROM posts WHERE media_kind IS NOT NULL").fetchone()[0]
+    return (made + earlier + 1) % every == 0
+
+
+def build_images(config, choice, slot: str, db=None, used=(), earlier: int = 0) -> list[str]:
+    """The post's media: the video first, then the pictures. Sets choice["media_kind"] to what leads the post.
+
+    The video shows the page showcase.target picks: the project's own site, its landing page, or a page built here.
+    The pictures are the prepared ones of a seed post, else fresh screenshots.
+    """
     out_dir = GENERATED / slot.replace(":", "").replace(" ", "_")
-    try:
-        paths = visuals.images_for_post(config["github_user"], choice["angle"], choice["facts"], out_dir)
-    except Exception as error:
-        log.warning("Image capture failed (%s); posting text-only", error)
-        paths = []
+    subjects = video_subjects(choice)
+    pictures = [str(path) for path in choice.get("images") or []]
+    if not pictures:
+        try:
+            pictures = [str(path) for path in visuals.images_for_post(config["github_user"], choice["angle"], choice["facts"], out_dir)]
+        except Exception as error:
+            log.warning("Image capture failed (%s); posting without pictures", error)
     videos: list[Path] = []
-    if config.get("demo_video", True):
-        videos = styled_videos(config, choice, out_dir, db, used)
-        if not videos:
-            try:
-                video = visuals.demo_for_post(choice["angle"], choice["facts"], out_dir)
-                videos = [video] if video else []
-            except Exception as error:
-                log.warning("Demo video failed (%s); posting the screenshots only", error)
-    return [str(path) for path in videos + list(paths)]
+    if config.get("demo_video", True) and subjects and not (pictures and picture_turn(config, db, earlier)):
+        try:
+            url, served = showcase.target(config["github_user"], choice["angle"], subjects)
+            videos = styled_videos(config, choice, out_dir, db, used, url, served)
+            if not videos:
+                name = showcase.subject_name(choice["angle"], subjects)
+                videos = [visuals.record_demo(url, out_dir / f"{name}_demo.mp4", served)]
+        except Exception as error:
+            log.warning("Video failed (%s); posting the pictures only", error)
+    choice["media_kind"] = "video" if videos else "pictures" if pictures else "text"
+    return [str(path) for path in videos] + pictures
 
 
 def lead_with_hook(config, choice) -> None:
-    """Open the post with the same line the video opens with, so the text and the video pull the same way."""
+    """Open the post with the same line the video opens with, so the text and the video pull the same way.
+
+    A prepared seed post keeps its own first line.
+    """
     hook = (choice.get("video") or {}).get("hook")
-    if hook and config.get("video_hook_in_post", True) and not choice["body"].startswith(hook):
+    prepared = choice.get("source", "").startswith("queue:")
+    if hook and not prepared and config.get("video_hook_in_post", True) and not choice["body"].startswith(hook):
         choice["body"] = f"{hook}\n\n{choice['body']}"
+
+
+def thank_creators(choice, mark: bool = False) -> list[dict]:
+    """Thank the creators who covered this post's project (creators.py). Returns the covers that were thanked."""
+    if not choice.get("repo"):
+        return []
+    try:
+        entries = creators.pending(choice["repo"])
+        if entries:
+            subjects = video_subjects(choice)
+            project = subjects[0].display_name if subjects else choice["repo"]
+            choice["body"], choice["comment"] = creators.credit(choice["body"], choice["comment"] or "", entries, project)
+            if mark:
+                creators.mark(entries)
+        return entries
+    except Exception as error:  # a thank-you must never block the post
+        log.warning("Could not credit creators for %s: %s", choice["repo"], error)
+        return []
 
 
 # ------------------------------------------------------------------ posting
@@ -625,23 +692,49 @@ def facts_for(config, db, repo: str | None, repos: dict) -> object | None:
         return None
 
 
-def queue_channels(config, db, slot: str, row, facts) -> None:
-    """Once per slot: the Bluesky / Mastodon / Dev.to / Telegram / Discord versions."""
+def host_video(config, slot: str, repo: str | None, media: list) -> str:
+    """A public address for the post's video (the full-height cut); "" when there is none or hosting fails."""
+    video, _ = channels.split_media(media, cut="tall")
+    if not (video and video.exists()):
+        return ""
+    styled = channels.STYLED_VIDEO.match(video.stem)
+    if repo:
+        hosted_name = f"{repo}-{styled['format']}" if styled else repo  # each format is hosted as its own file
+    else:
+        hosted_name = f"roundup-{slot[:10]}"  # a roundup shows other projects every time, so its clip is never reused
+    try:
+        return trylinks.host_demo_video(config["github_user"], hosted_name, video, PAGES_CHECKOUT, log)
+    except Exception as error:
+        log.warning("Hosting the video failed (%s)", error)
+        return ""
+
+
+def queue_channels(config, db, slot: str, row, facts) -> str:
+    """Once per slot: the Bluesky / Mastodon / Dev.to / Telegram / Discord versions. Returns the video's public address or ""."""
     source, repo, angle, body, comment, images_json = row[:6]
     media = json.loads(images_json or "[]")
     secrets = load_secrets()
-    video, _ = channels.split_media(media, cut="tall")  # X and Threads show a full-height video
     video_url = ""
-    if video and repo and video.exists() and channels.needs_video_url(db, config, secrets, slot):
-        styled = channels.STYLED_VIDEO.match(video.stem)
-        hosted_name = f"{repo}-{styled['format']}" if styled else repo  # each format is hosted as its own file
-        try:  # X and Threads go through Buffer, which fetches media by public URL
-            video_url = trylinks.host_demo_video(config["github_user"], hosted_name, video, PAGES_CHECKOUT, log)
-        except Exception as error:
-            log.warning("Hosting the demo video failed (%s); X and Threads get the image", error)
+    if channels.needs_video_url(db, config, secrets, slot):  # X and Threads go through Buffer, which fetches media by public URL
+        video_url = host_video(config, slot, repo, media)
     queued = channels.prepare(db, config, secrets, slot, repo, angle, body, comment or "", media, facts, video_url)
     if queued:
         log.info("Queued %s for %s", ", ".join(channels.LABELS[name] for name in queued), slot)
+    return video_url
+
+
+def publish_watch_page(config, slot: str, row, facts, video_url: str = "") -> str:
+    """Give the project's video a page of its own and note its address for the outreach module. Returns it or ""."""
+    repo, media = row[1], json.loads(row[5] or "[]")
+    if not (config.get("watch_pages", True) and repo and facts):
+        return ""
+    video_url = video_url or host_video(config, slot, repo, media)
+    if not video_url:
+        return ""
+    url = showcase.publish_watch(config["github_user"], facts, video_url, PAGES_CHECKOUT, log, creators.coverage(repo))
+    if url:
+        showcase.remember(GENERATED / showcase.WATCH_INDEX, repo, url)
+    return url
 
 
 def publish_channels(config, db) -> None:
@@ -706,16 +799,19 @@ def tick(config, db) -> None:
             return
         images = build_images(config, choice, slot, db)
         lead_with_hook(config, choice)
+        thank_creators(choice, mark=True)
         db.execute(
-            """INSERT INTO posts(slot, source, repo, angle, body, comment, images, status, used_bullets, video_format)
-               VALUES(?,?,?,?,?,?,?,?,?,?)""",
+            """INSERT INTO posts(slot, source, repo, angle, body, comment, images, status, used_bullets, video_format, media_kind)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
             (slot, choice["source"], choice["repo"], choice["angle"], choice["body"], choice["comment"],
-             json.dumps(images), "ready", json.dumps(choice["used_bullets"]), (choice.get("video") or {}).get("format")),
+             json.dumps(images), "ready", json.dumps(choice["used_bullets"]), (choice.get("video") or {}).get("format"),
+             choice.get("media_kind")),
         )
         db.commit()
         write_draft(slot, choice["body"], choice["comment"], images)
         row = db.execute("SELECT source, repo, angle, body, comment, images, status FROM posts WHERE slot=?", (slot,)).fetchone()
-        fresh_facts = choice["facts"][0] if choice["facts"] and choice["repo"] else None
+        subjects = video_subjects(choice)
+        fresh_facts = subjects[0] if subjects and choice["repo"] else None
 
     if config["mode"] == "review":
         approved = DRAFTS / (slot.replace(":", "").replace(" ", "_") + ".approved")
@@ -726,8 +822,10 @@ def tick(config, db) -> None:
                 notify("ReachPilot", f"Draft ready for {slot}. Approve: python autopilot.py approve")
             return
 
+    facts = fresh_facts or facts_for(config, db, row[1], repos)
+    video_url = ""
     try:
-        queue_channels(config, db, slot, row, fresh_facts or facts_for(config, db, row[1], repos))
+        video_url = queue_channels(config, db, slot, row, facts)
     except Exception as error:  # other platforms must never block LinkedIn
         log.exception("Preparing other platforms failed for %s: %s", slot, error)
 
@@ -740,6 +838,10 @@ def tick(config, db) -> None:
             log.error("Posting failed for %s: %s", slot, error)
             notify("ReachPilot", f"Posting failed, will retry: {str(error)[:120]}")
     publish_channels(config, db)
+    try:  # last, so a slow Pages build never delays a post
+        publish_watch_page(config, slot, row, facts, video_url)
+    except Exception as error:
+        log.exception("Publishing the watch page failed for %s: %s", slot, error)
 
 
 def write_draft(slot: str, body: str, comment: str, images: list[str], variants: dict | None = None) -> Path:
@@ -811,8 +913,9 @@ def cmd_preview(config, db, count: int) -> None:
         if choice["repo"]:
             picker.simulated_recent.add(choice["repo"])
         slot = f"preview-{index + 1:02d}"
-        images = build_images(config, choice, slot, db, videos_made)
+        images = build_images(config, choice, slot, db, videos_made, earlier=index)
         lead_with_hook(config, choice)
+        thank_creators(choice)  # shown in the draft; only a real post marks the cover as thanked
         if choice.get("video"):
             videos_made.insert(0, (choice["repo"], choice["video"]["format"]))
         facts = choice["facts"][0] if choice["facts"] and choice["repo"] else None
