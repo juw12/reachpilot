@@ -1775,5 +1775,249 @@ with tempfile.TemporaryDirectory() as watch_dir:
           and host_asked.call_count == 1 and (without_video, switched_off_page, for_roundup) == ("", "", ""),
           'autopilot: a posted video gets its watch page; none without a hosted video, for a roundup, or with "watch_pages": false')
 
+# patent screen (patents.py): scorer, filing window, route, changes, notes, the hub card and its to-dos.
+# Everything here is offline and uses made-up projects.
+import patents  # noqa: E402
+from datetime import date as patent_date  # noqa: E402
+
+patent_today = patent_date(2026, 11, 14)
+rig_text = ("A printed wave spring preloads a split bearing. The solver fits the spring compliance to the "
+            "measured torque curve.")
+strong_text = (rig_text + " An interpolation table and a heuristic set the preload. The algorithm was checked "
+               "against a benchmark: accuracy is within about 4 percent, compared with 18 percent for the stock part.")
+marked_text = rig_text + " Unfiled patentable material: do not publish this repository before a filing decision."
+game_text = ("Match the tiles. An algorithm with a solver, eigenvalues, a p-norm, multigrid, a voxel grid, cosine "
+             "distance, a checksum, a parser and a heuristic. Measured against a benchmark: accuracy and recall "
+             "are up and it is faster. Novel and written from scratch.")
+
+rig = patents.score_text("Friction hinge with a printed torque limiter.", rig_text)
+strong = patents.score_text("Friction hinge with a printed torque limiter.", strong_text)
+marked = patents.score_text("Friction hinge with a printed torque limiter.", marked_text)
+game = patents.score_text("A cozy puzzle game for the browser.", game_text)
+check(rig["subject"] == "physical" and rig["score"] == 40 and rig["band"] == "maybe",
+      f"patents: a hardware README scores by subject, mechanism and result ({rig['score']})")
+check(strong["score"] >= patents.BAND_LOOK and strong["band"] == "look",
+      f"patents: more mechanism and a measured result reach 'worth an attorney look' ({strong['score']})")
+check(all(signal["evidence"] and signal["words"] for signal in strong["signals"]),
+      "patents: every signal carries the words found and a quoted sentence")
+check(game["subject"] == "content" and game["score"] == patents.BAND_MAYBE - 1 and game["band"] == "unlikely",
+      f"patents: a game is capped below 'maybe' however many technical words it uses ({game['score']})")
+check(marked["score"] == rig["score"] + patents.MARKED_POINTS and marked["band"] == "look" and marked["confidential"]
+      and not rig["confidential"],
+      "patents: your own 'patent material' note adds 40 and marks the repo as meant to stay private")
+spellings = patents.score_text("A note.", "It pins each entry, and pinning stops silent changes.")
+check([signal["points"] for signal in spellings["signals"] if signal["key"] == "mechanism"] == [patents.MECHANISM_POINTS],
+      "patents: two spellings of one idea count once")
+check(patents.score_text("", "") == {"score": 3, "band": "unlikely", "subject": "content", "confidential": False,
+                                    "signals": [{"key": "subject", "label": "App, content, game or list", "points": 3,
+                                                 "words": [], "evidence": ""}]},
+      "patents: an empty repo scores as content, no crash")
+
+
+def patent_repo(name, description, created, private=False, fork=False, licence="mit", pushed="2026-11-01T08:00:00Z"):
+    return {
+        "name": name, "full_name": f"someone/{name}", "html_url": f"https://example.test/{name}",
+        "private": private, "fork": fork, "archived": False, "description": description,
+        "created_at": created, "pushed_at": pushed, "license": {"key": licence} if licence else None,
+    }
+
+
+hinge = "Friction hinge with a printed torque limiter."
+borrowed = patents.build_entry(patent_repo("borrowed", hinge, "2026-06-01T00:00:00Z", fork=True), marked_text)
+check(borrowed["score"] == 0 and borrowed["band"] == "unlikely" and borrowed["signals"] == [] and not borrowed["confidential"],
+      "patents: a fork is never scored")
+
+still_open = patents.window(True, "2020-01-01T00:00:00Z", patent_today)
+in_grace = patents.window(False, "2026-01-21T09:30:00Z", patent_today)
+too_late = patents.window(False, "2024-01-01T00:00:00Z", patent_today)
+check(still_open["state"] == "open" and still_open["deadline"] is None, "patents: a private repo has disclosed nothing")
+check(in_grace["state"] == "grace" and in_grace["deadline"] == "2027-01-21" and in_grace["days_left"] == 68,
+      f"patents: a public repo has 12 months from its creation date ({in_grace['days_left']} days left)")
+check(too_late["state"] == "closed" and too_late["days_left"] < 0, "patents: after 12 months the window is closed")
+check(patents.window(False, "not a date", patent_today)["state"] == "unknown"
+      and patents.window(False, None, patent_today)["state"] == "unknown",
+      "patents: a missing creation date is reported as unknown, not guessed")
+check(patents.add_months(patent_date(2024, 2, 29), 12) == patent_date(2025, 2, 28)
+      and patents.add_months(patent_date(2026, 1, 31), 1) == patent_date(2026, 2, 28)
+      and patents.add_months(patent_date(2026, 11, 14), 12) == patent_date(2027, 11, 14),
+      "patents: 12 months later, also from 29 February and month ends")
+
+check([patents.route(*case)["key"] for case in (
+    ("look", False, True, False, "grace", "permissive"),
+    ("unlikely", True, False, False, "open", "none"),
+    ("unlikely", False, False, False, "closed", "permissive"),
+    ("look", False, False, True, "grace", "none"),
+    ("look", True, False, False, "open", "none"),
+    ("maybe", False, False, False, "grace", "permissive"),
+    ("look", False, False, False, "closed", "permissive"),
+)] == ["none", "private", "licence", "none", "attorney", "attorney", "defensive"],
+    "patents: route for a fork, private, public, archived, in grace and too late")
+check([patents.licence_kind(key)[0] for key in ("", None, "mit", "Apache-2.0", "agpl-3.0")]
+      == ["none", "none", "permissive", "permissive", "custom"], "patents: licence kinds")
+
+rubric = patents.RUBRIC
+earlier = [
+    {"name": "a", "private": True, "band": "look", "rubric": rubric},
+    {"name": "b", "private": False, "band": "unlikely", "rubric": rubric},
+    {"name": "c", "private": False, "band": "unlikely", "rubric": "older"},
+    "damaged",
+]
+later = [
+    {"name": "a", "private": False, "band": "look", "rubric": rubric},
+    {"name": "b", "private": False, "band": "maybe", "rubric": rubric},
+    {"name": "c", "private": False, "band": "maybe", "rubric": rubric},
+    {"name": "d", "private": False, "band": "look", "rubric": rubric},
+    {"name": "e", "private": False, "band": "unlikely", "rubric": rubric},
+]
+check([(change["repo"], change["kind"]) for change in patents.changes_since(earlier, later)]
+      == [("a", "public"), ("b", "band"), ("d", "new")],
+      "patents: changes are a repo turned public, a band that moved and a new candidate; a new rubric is not a change")
+check(patents.changes_since([], later) == [], "patents: the first scan reports no changes")
+
+patent_scan = {
+    "version": 1, "rubric": rubric, "scanned_at": "2026-11-09 09:00", "includes_private": True,
+    "repos": [
+        patents.build_entry(patent_repo("hinge-lab", hinge, "2026-05-01T00:00:00Z", private=True, licence=""), strong_text),
+        patents.build_entry(patent_repo("pocket-rig", hinge, "2025-12-09T00:00:00Z"), strong_text),
+        patents.build_entry(patent_repo("gear-rig", hinge, "2026-01-21T00:00:00Z"), rig_text),
+        patents.build_entry(patent_repo("old-rig", hinge, "2024-01-01T00:00:00Z"), rig_text),
+        patents.build_entry(patent_repo("work-rig", hinge, "2026-10-01T00:00:00Z"), rig_text),
+        patents.build_entry(patent_repo("leaky", hinge, "2026-10-01T00:00:00Z"), marked_text),
+        patents.build_entry(patent_repo("tile-game", "A cozy puzzle game for the browser.", "2026-03-01T00:00:00Z",
+                                        licence="", pushed="2026-11-10T08:00:00Z"), game_text),
+        patents.build_entry(patent_repo("borrowed", hinge, "2026-06-01T00:00:00Z", fork=True), marked_text),
+        None,
+        {"name": ""},
+    ],
+    "changes": [
+        {"repo": "gear-rig", "kind": "band", "text": "Was unlikely, now maybe."},
+        {"repo": "gone", "kind": "new", "text": "No longer in the scan."},
+        "damaged",
+    ],
+}
+patent_notes = {
+    "old-rig": {"decision": "publish", "rating": "maybe", "reviewed": "2026-11-12", "verdict": "Prior art already."},
+    "work-rig": {"owner": "employer?"},
+    "tile-game": {"rating": "candidate", "reviewed": "2026-11-05"},
+    "gear-rig": "damaged",
+}
+check(patents.view(None) == [] and patents.view({}) == [] and patents.view({"repos": "broken"}) == [],
+      "patents: no scan or a damaged scan gives an empty list")
+bare = patents.view({"repos": [None, {"name": ""}, {"name": "x", "band": "nonsense", "signals": "broken"}]}, "nonsense")
+check(len(bare) == 1 and bare[0]["band"] == "unlikely" and bare[0]["score"] == 0 and bare[0]["window"]["state"] == "unknown"
+      and bare[0]["signals"] == [], "patents: a half-written entry and damaged notes are tolerated")
+
+patent_rows = patents.view(patent_scan, patent_notes, patent_today)
+by_name = {row["name"]: row for row in patent_rows}
+check([row["name"] for row in patent_rows]
+      == ["leaky", "hinge-lab", "pocket-rig", "tile-game", "gear-rig", "old-rig", "work-rig", "borrowed"],
+      f"patents: candidates first, then by score, forks last ({[row['name'] for row in patent_rows]})")
+check(by_name["tile-game"]["band"] == "look" and by_name["tile-game"]["screen_band"] == "unlikely"
+      and by_name["tile-game"]["rating"] == "candidate", "patents: a reviewed rating outranks the keyword band")
+check(by_name["tile-game"]["changed_since_review"] and not by_name["old-rig"]["changed_since_review"]
+      and not by_name["hinge-lab"]["changed_since_review"],
+      "patents: a push after the review date is flagged")
+check(by_name["work-rig"]["route"]["key"] == "employer" and by_name["work-rig"]["employer"]
+      and by_name["borrowed"]["route"]["key"] == "none", "patents: a project made at work is routed to the employment agreement")
+check(by_name["leaky"]["exposed"] and not by_name["hinge-lab"]["exposed"] and not by_name["borrowed"]["exposed"],
+      "patents: a public repo that says it must stay private is reported as exposed")
+check(by_name["old-rig"]["decision"] == "publish" and by_name["old-rig"]["decision_label"] == "publish defensively"
+      and by_name["old-rig"]["route"]["key"] == "defensive" and by_name["gear-rig"]["decision"] == "",
+      "patents: the recorded decision is shown; none is invented")
+check(by_name["hinge-lab"]["licence_kind"] == "none" and by_name["pocket-rig"]["licence_kind"] == "permissive",
+      "patents: licence shown per project")
+
+patent_card = hub.patents_summary(patent_scan, patent_notes, patent_today)
+check(patent_card["installed"] and patent_card["has_scan"] and patent_card["total"] == 7 and patent_card["includes_private"]
+      and patent_card["counts"] == {"look": 4, "maybe": 3, "unlikely": 0, "forks": 1, "undecided": 6, "exposed": 1},
+      f"hub patents: counts on the card ({patent_card['counts']})")
+check(patent_card["next_deadline"] == {"name": "pocket-rig", "date": "2026-12-09", "days_left": 25},
+      f"hub patents: the nearest filing date among undecided candidates ({patent_card['next_deadline']})")
+check(patent_card["changes"] == [{"repo": "gear-rig", "kind": "band", "text": "Was unlikely, now maybe."}],
+      "hub patents: changes kept only for projects still in the scan")
+check("not legal advice" in patent_card["disclaimer"] and "not legal advice" in hub.PATENTS_DISCLAIMER
+      and "prior art" in hub.PATENTS_DISCLAIMER, "hub patents: the card says it is a screen and not legal advice")
+quiet_card = hub.patents_summary({**patent_scan, "repos": [entry for entry in patent_scan["repos"]
+                                                           if isinstance(entry, dict) and entry.get("name") == "tile-game"]},
+                                 {}, patent_today)
+check(quiet_card["candidates"] == [] and [row["name"] for row in quiet_card["others"]] == ["tile-game"]
+      and isinstance(quiet_card["others"][0]["route"], str), "hub patents: projects with no patent route are listed apart")
+for damaged in (None, [], {"repos": "broken"}, "text"):
+    empty_card = hub.patents_summary(damaged, None, patent_today)
+    check(empty_card["installed"] and not empty_card["has_scan"] and empty_card["candidates"] == []
+          and hub.patents_todo(empty_card) == [], f"hub patents: a missing or damaged scan gives an empty card ({damaged!r})")
+
+patent_items = hub.patents_todo(patent_card)
+check([(item["priority"], item["title"]) for item in patent_items] == [
+    (1, "leaky says it must stay private, but the repo is public"),
+    (1, "pocket-rig: 25 days left to file where a grace period applies"),
+    (2, "gear-rig: 68 days left to file where a grace period applies"),
+    (3, "3 projects worth an attorney look, no decision yet"),
+], f"hub patents: to-dos by urgency ({[(item['priority'], item['title']) for item in patent_items]})")
+check(all(item["module"] == "Patents" and item["action"] is None for item in patent_items)
+      and patent_items[1]["links"] == [{"label": "Open the repository", "url": "https://example.test/pocket-rig", "note": ""}]
+      and "2026-12-09" in patent_items[1]["detail"] and "old-rig" not in json.dumps(patent_items),
+      "hub patents: to-dos name the date, link the repo and skip decided projects")
+check(hub.patents_todo(None) == [] and hub.patents_todo({"installed": False}) == [], "hub patents: not installed, no to-dos")
+check([entry["module"] for entry in hub.help_sections({}, None, None, patent_card)][-1] == "Patents"
+      and "Patents" not in [entry["module"] for entry in hub.help_sections({}, None, None, {"installed": False})]
+      and "Patents" not in [entry["module"] for entry in hub.help_sections({}, None, None)],
+      "hub patents: help entry only where the screen is installed")
+
+patent_home = Path(tempfile.mkdtemp(prefix="rp-patents-"))
+patent_real = (patents.DATA_DIR, patents.SCAN_FILE, patents.OVERRIDES_FILE, patents.LOG_FILE)
+try:
+    patents.DATA_DIR = patent_home / "patents"
+    patents.SCAN_FILE = patents.DATA_DIR / "scan.json"
+    patents.OVERRIDES_FILE = patents.DATA_DIR / "overrides.json"
+    patents.LOG_FILE = patent_home / "patents.log"
+    check(hub.patents_section(patent_today) == {"installed": False}, "hub patents: no card where the screen is not installed")
+
+    patents.DATA_DIR.mkdir(parents=True)
+    waiting = hub.patents_section(patent_today)
+    check(waiting["installed"] and not waiting["has_scan"], "hub patents: installed but not scanned yet shows an empty card")
+    patents.SCAN_FILE.write_text("{ not json", encoding="utf-8")
+    patents.OVERRIDES_FILE.write_text("[1, 2]", encoding="utf-8")
+    broken = hub.patents_section(patent_today)
+    check(broken["installed"] and not broken["has_scan"] and patents.load_overrides() == {},
+          "hub patents: damaged files on disk do not break the dashboard")
+
+    patents.SCAN_FILE.write_text(json.dumps(patent_scan), encoding="utf-8")
+    patents.OVERRIDES_FILE.write_text(json.dumps(patent_notes), encoding="utf-8")
+    check(hub.patents_section(patent_today)["counts"] == patent_card["counts"], "hub patents: the card reads the scan and the notes from disk")
+    check(patents.decide("hinge-lab", "patent it").startswith("Unknown decision")
+          and patents.decide("nowhere", "file") == "No project called 'nowhere' in the last scan."
+          and json.loads(patents.OVERRIDES_FILE.read_text(encoding="utf-8")) == patent_notes,
+          "patents: an unknown decision or project changes nothing")
+    check(patents.decide("tile-game", "licence") == "tile-game: licence only."
+          and patents.load_overrides()["tile-game"]["decision"] == "licence"
+          and patents.load_overrides()["tile-game"]["rating"] == "candidate"
+          and patents.load_overrides()["old-rig"] == patent_notes["old-rig"],
+          "patents: a decision is saved next to the existing notes")
+    check(hub.run_action("patents:decide:hinge-lab:file") == "hinge-lab: file."
+          and patents.view(patent_scan, patents.load_overrides(), patent_today)[1]["decision"] == "file",
+          "hub patents: the card's buttons record the decision")
+    check(hub.run_action("patents:decide:hinge-lab:clear") == "hinge-lab: decision cleared."
+          and "decision" not in patents.load_overrides()["hinge-lab"], "hub patents: a decision can be cleared")
+    for refused in ("patents:decide:bad name:file", "patents:decide:../x:file", "patents:nonsense", "patents:decide:hinge-lab"):
+        try:
+            hub.run_action(refused)
+            check(False, f"hub patents: malformed action refused ({refused})")
+        except ValueError:
+            check(True, f"hub patents: malformed action refused ({refused})")
+finally:
+    patents.DATA_DIR, patents.SCAN_FILE, patents.OVERRIDES_FILE, patents.LOG_FILE = patent_real
+
+patent_page = (Path(__file__).parent / "dashboard.html").read_text(encoding="utf-8")
+check(all(piece in patent_page for piece in ("function patentCard", "patents_run_now", "why-row", "patents:decide:")),
+      "dashboard: the Patent screen card, its Scan now button and its decision buttons are present")
+patent_source = (Path(__file__).parent / "patents.py").read_bytes()
+check(not patent_source.startswith(b"\xef\xbb\xbf") and "\u00c3" not in patent_source.decode("utf-8")
+      and "\u00e2\u20ac" not in patent_source.decode("utf-8"), "patents.py: clean UTF-8, no byte-order mark")
+check("data/patents/" in (Path(__file__).parent / ".gitignore").read_text(encoding="utf-8").split(),
+      "patents: scan results are git-ignored")
+check(("patents" in hub.TASKS) == (hub.ROOT / "data" / "patents").exists(),
+      "hub patents: the weekly task is listed only where the screen is installed")
+
 print("\nALL PASSED" if not failures else f"\n{len(failures)} FAILED")
 sys.exit(1 if failures else 0)

@@ -50,7 +50,7 @@
     td a, .todo li a, .launch-links a, details summary { display: inline-flex; align-items: center; min-height: 44px; min-width: 44px; }
   }
   main { max-width: 1180px; margin: 0 auto; padding: 20px; }
-  @media (min-width: 761px) { .navrow { display: contents; } .more { display: none; } }
+  @media (min-width: 761px) { .navrow { display: contents; } .more { display: none; } nav { flex-wrap: wrap; } }
   section[hidden] { display: none; }
   nav button[hidden] { display: none !important; }
   h2 { font-size: 18px; margin: 0 0 12px; }
@@ -62,7 +62,7 @@
   .kpi .value.long { font-size: 19px; line-height: 1.3; margin-top: 6px; }
   .kpi .note { color: var(--muted); font-size: 12px; }
   .wide { grid-column: 1 / -1; }
-  .two { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); margin-bottom: 18px; }
+  .two { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr)); margin-bottom: 18px; }
   .next { border-left: 5px solid var(--blue); }
   .next .when { font-weight: 600; color: var(--blue); }
   .next .title { font-size: 20px; font-weight: 700; margin: 2px 0; }
@@ -150,6 +150,41 @@
   .module .big { font-size: 24px; font-weight: 700; }
   .launch-links { display: flex; flex-wrap: wrap; gap: 0 16px; margin-top: 4px; }
   .launch-links + .hint, td .badge + .hint { white-space: nowrap; }
+  /* Patent screen card: long text cells wrap, and each project becomes a stacked block on a phone.
+     The stacked block uses the same 760px breakpoint as the phone rules above; change both together. */
+  .patents .scroll td:first-child, .patents td .badge + .hint { white-space: normal; }
+  .patents .scroll td:first-child { min-width: 220px; }
+  .patents table.candidates th:nth-child(1) { width: 32%; }
+  .patents table.candidates th:nth-child(2) { width: 17%; }
+  .patents table.candidates th:nth-child(3) { width: 23%; }
+  .patents table.candidates th:nth-child(4) { width: 28%; }
+  .patents tr.project td { border-bottom: 0; padding-bottom: 2px; }
+  .patents tr.why-row td { padding-top: 0; }
+  .patents details > summary { margin-top: 0; padding: 6px 0; }
+  .patents td .badge { white-space: normal; }
+  .patents td.screen b { display: block; font: 400 22px/1.2 var(--serif); }
+  .patents td .hint { margin-top: 4px; max-width: 46ch; }
+  .patents ul.plain { margin: 6px 0; padding-left: 18px; }
+  .patents .why ul { margin: 8px 0; padding-left: 18px; }
+  .patents .why li { margin-bottom: 8px; max-width: 80ch; }
+  .patents .why li b { white-space: normal; }
+  .patents .why q { display: block; color: var(--muted); font-size: 13px; quotes: "\201C" "\201D"; }
+  .patents .why .hint { max-width: 80ch; }
+  .patents .why .actions { margin-top: 10px; }
+  @media (max-width: 760px) {
+    .patents .scroll table { min-width: 0; }
+    .patents .scroll thead { display: none; }
+    .patents .scroll table, .patents .scroll tbody, .patents .scroll tr, .patents .scroll td { display: block; width: 100%; }
+    .patents .scroll tr { padding: 12px 0; border-top: 1px solid var(--line); }
+    .patents .scroll tr:first-child { border-top: 0; }
+    .patents .scroll tr.project { padding-bottom: 0; }
+    .patents .scroll tr.why-row { border-top: 0; padding: 0 0 8px; }
+    .patents .scroll td { padding: 4px 0; border: 0; text-align: left; }
+    .patents .scroll td:first-child { min-width: 0; }
+    .patents .scroll td[data-label]::before { content: attr(data-label); display: block; color: var(--muted);
+      font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .03em; }
+    .patents td.screen b { display: inline; margin-right: 8px; }
+  }
   .module h3 { display: flex; justify-content: space-between; align-items: center; }
   .module h3 .btn { min-height: 38px; padding: 8px 18px; }
   td.zero b { color: var(--muted); font-weight: 600; }
@@ -720,6 +755,97 @@ function launchCards(launch) {
   }).join("");
 }
 
+function patentCard(p) {
+  if (!p || !p.installed) return "";
+  const scanNow = actionButton("patents_run_now", "Scan now", true);
+  if (!p.has_scan) {
+    return `<div class="card module patents" style="margin-bottom:18px">
+      <h3><span>Patent screen</span>${scanNow}</h3>
+      <div class="big">No scan yet</div>
+      <p class="hint">The weekly task reads every repository you own and lists the ones worth showing to a patent attorney.</p>
+      <p class="hint">${esc(p.disclaimer)}</p>
+    </div>`;
+  }
+  const c = p.counts;
+  const plural = (n, word) => `${num(n)} ${word}${n === 1 ? "" : "s"}`;
+  const headline = c.look || c.maybe
+    ? [c.look ? `${num(c.look)} worth an attorney look` : "", c.maybe ? `${num(c.maybe)} maybe` : ""].filter(Boolean).join(" · ")
+    : "Nothing that looks like patent material";
+  const facts = [
+    `${plural(p.total, "project")} read`,
+    p.scanned_at ? `scanned ${esc(p.scanned_at)}` : "",
+    p.includes_private ? "private ones included" : "public ones only (sign in to gh to include private ones)",
+    c.undecided ? `${num(c.undecided)} without a decision` : "",
+  ].filter(Boolean).join(" · ");
+  const next = p.next_deadline;
+  const windowBadge = (w) => {
+    if (w.state === "open") return `<span class="badge good">still open</span>`;
+    if (w.state === "closed") return `<span class="badge grey">closed</span>`;
+    if (w.state !== "grace") return `<span class="badge grey">date unknown</span>`;
+    const tone = w.days_left <= 30 ? "bad" : w.days_left <= 90 ? "warn" : "";
+    return `<span class="badge ${tone}">${plural(w.days_left, "day")} left</span>`;
+  };
+  const tags = (r) => [
+    r.private ? `<span class="badge grey">private</span>` : "",
+    r.archived ? `<span class="badge grey">archived</span>` : "",
+    r.employer ? `<span class="badge warn">employer?</span>` : "",
+    r.exposed ? `<span class="badge bad">says private, is public</span>` : "",
+    r.changed_since_review ? `<span class="badge warn">changed since review</span>` : "",
+  ].filter(Boolean).join(" ");
+  const decide = (r) => {
+    const choice = (key, label) => actionButton(`patents:decide:${r.name}:${key}`, label, r.decision !== key);
+    return `<div class="actions">
+      ${choice("file", "File")}${choice("publish", "Publish defensively")}${choice("licence", "Licence only")}${choice("skip", "Skip")}
+      ${r.decision ? actionButton(`patents:decide:${r.name}:clear`, "Clear", true) : ""}
+    </div>`;
+  };
+  const why = (r) => `<details class="why"><summary>Why, and decide</summary>
+      ${r.signals.length ? `<ul>${r.signals.map((s) => `<li><b>${esc(s.label)}</b> · ${plural(s.points, "point")}${s.words.length ? ` · ${esc(s.words.join(", "))}` : ""}
+        ${s.evidence ? `<q>${esc(s.evidence)}</q>` : ""}</li>`).join("")}</ul>` : `<p class="hint">The keywords found nothing; the rating comes from the close read.</p>`}
+      <p class="hint">${esc(r.licence_text)}</p>
+      ${decide(r)}
+    </details>`;
+  const rows = p.candidates.map((r) => `<tr class="project">
+      <td><b>${link(r.url, r.name)}</b> ${tags(r)}
+        ${r.description ? `<div class="hint">${esc(r.description)}</div>` : ""}</td>
+      <td class="screen" data-label="Keyword score"><b>${num(r.score)}</b>
+        <span class="badge ${r.band === "look" ? "" : "grey"}">${r.rating ? `reviewed: ${esc(r.rating)}` : esc(r.band_label)}</span></td>
+      <td data-label="Filing window">${windowBadge(r.window)}
+        <div class="hint">${esc(r.window.text)}</div></td>
+      <td data-label="Next step">${r.decision
+          ? `<span class="badge good">decided: ${esc(r.decision_label)}</span>`
+          : `<span class="badge warn">no decision yet</span>`}
+        <div class="hint">${esc(r.route.text)}</div>
+        ${r.verdict ? `<div class="hint">Close read${r.reviewed ? `, ${esc(r.reviewed)}` : ""}: ${esc(r.verdict)}</div>` : ""}</td>
+    </tr>
+    <tr class="why-row"><td colspan="4">${why(r)}</td></tr>`).join("");
+  const others = p.others.map((r) => `<tr>
+      <td><b>${link(r.url, r.name)}</b>${r.private ? ` <span class="badge grey">private</span>` : ""}${r.exposed ? ` <span class="badge bad">says private, is public</span>` : ""}</td>
+      <td class="num" data-label="Keyword score">${num(r.score)}${r.rating ? ` <span class="badge grey">reviewed: ${esc(r.rating)}</span>` : ""}</td>
+      <td data-label="Licence">${esc(r.licence ? r.licence.toUpperCase() : "none")}</td>
+      <td data-label="What protects it">${esc(r.route)}
+        ${r.verdict ? `<div class="hint">Close read: ${esc(r.verdict)}</div>` : ""}</td>
+    </tr>`).join("");
+  return `<div class="card module patents" style="margin-bottom:18px">
+    <h3><span>Patent screen</span>${scanNow}</h3>
+    <div class="big">${headline}</div>
+    <div class="hint">${facts}</div>
+    ${next ? `<div class="hint">Next date: <b>${esc(next.name)}</b>, ${esc(next.date)} (${plural(next.days_left, "day")}), where a 12-month grace period applies.</div>` : ""}
+    ${p.changes.length ? `<div class="hint" style="margin-top:8px">Since the last scan</div>
+      <ul class="plain">${p.changes.map((ch) => `<li><b>${esc(ch.repo)}</b>: ${esc(ch.text)}</li>`).join("")}</ul>` : ""}
+    ${rows ? `<div class="scroll" tabindex="0" role="region" aria-label="Projects that may hold patent material" style="margin-top:8px"><table class="candidates">
+      <thead><tr><th>Project</th><th>Keyword score</th><th>Filing window</th><th>Next step</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>` : ""}
+    ${others ? `<details><summary>All other projects (${num(p.others.length)})</summary>
+      <div class="scroll" tabindex="0" role="region" aria-label="Projects with no patent route seen"><table>
+        <thead><tr><th>Project</th><th class="num">Keyword score</th><th>Licence</th><th>What protects it</th></tr></thead>
+        <tbody>${others}</tbody>
+      </table></div></details>` : ""}
+    <p class="hint">${esc(p.disclaimer)}</p>
+  </div>`;
+}
+
 function renderOverview(d) {
   const o = d.overview, h = d.hub, jobs = h.jobs, email = h.email;
   const next = o.next_post;
@@ -732,6 +858,7 @@ function renderOverview(d) {
       ${todo.length > 5 ? `<button class="btn ghost" data-goto="todo">See all ${todo.length} in To do ›</button>` : ""}
     </div>` : `<div class="card" style="margin-bottom:18px"><h3>Nothing needs you right now</h3><p class="hint">Everything is running on its own.</p></div>`}
     ${launchCards(h.launch)}
+    ${patentCard(h.patents)}
     ${runStrip(h.tasks)}
     <div class="card" style="margin-bottom:18px">
       <h3>Per day, every automation <span class="hint">· today, average of the last 7 days, best day and the daily limit</span></h3>
