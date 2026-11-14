@@ -962,6 +962,13 @@ with tempfile.TemporaryDirectory() as record_dir:
     check(raw_recorder.call_args.kwargs["served"] == built_served and built_page in handed_over,
           "demo video: a built page is handed to the recording browser instead of being published")
 
+page_handler = visuals._serve_page(built_served[built_page])
+asked_route = mock.Mock()
+page_handler(asked_route)
+# Playwright hands a two-parameter handler (route, request); a body kept as a default argument is then lost.
+check(page_handler.__code__.co_argcount == 1 and asked_route.fulfill.call_args.kwargs["body"] == built_served[built_page],
+      "demo video: the recording browser answers with the built page itself")
+
 video_variants = channels.build_variants(post_body, post_comment, "launch", facts, video_url=demo_link)
 check(all(video_variants[name]["extra"].get("video_url") == demo_link for name in channels.BUFFER_VIDEO)
       and not any("video_url" in variant["extra"] for name, variant in video_variants.items()

@@ -311,6 +311,15 @@ def _demo_tour(page, deadline: float, size: tuple[int, int] = DEMO_SIZE) -> None
     page.wait_for_timeout(1300)
 
 
+def _serve_page(body: str):
+    """A route handler that answers with this page (see record_raw's served).
+
+    It takes the route alone: Playwright hands a handler with two parameters (route, request), so a
+    `lambda route, body=body` would have its page replaced by the request.
+    """
+    return lambda route: route.fulfill(content_type="text/html; charset=utf-8", body=body)
+
+
 def record_raw(url: str, folder: Path, phone: bool = False, served: dict[str, str] | None = None) -> tuple[Path, float, float]:
     """Record the page being used into folder. Returns (raw video, seconds of loading to cut, seconds of use).
 
@@ -336,7 +345,7 @@ def record_raw(url: str, folder: Path, phone: bool = False, served: dict[str, st
         page = context.new_page()
         page.on("dialog", lambda dialog: dialog.dismiss())
         for address, body in (served or {}).items():
-            page.route(address, lambda route, body=body: route.fulfill(content_type="text/html; charset=utf-8", body=body))
+            page.route(address, _serve_page(body))
         started = time.monotonic()
         try:
             view = page
