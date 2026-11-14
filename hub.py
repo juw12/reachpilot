@@ -5,7 +5,7 @@ Modules live in modules/ (git-ignored, personal data) and keep running on their 
   email_apply  JobStreet / LinkedIn ads with a recruiter e-mail -> CV + cover letter via the Gmail relay
   job_digest   daily digest + Gmail relay credentials used by email_apply
   promote      creator / UGC outreach e-mails for the GitHub projects (modules/promote/promote.py)
-  podcast      "Bits & Tickers" episodes in three series, published to an RSS feed (modules/podcast/podcast.py)
+  podcast      "Bits & Tickers" episodes (a daily and a weekly series), published to an RSS feed (modules/podcast/podcast.py)
 
 Other platforms (Bluesky, Mastodon, Dev.to, Telegram, Discord) are part of the public code
 (channels.py); channels_section() reads their state from state.db.
@@ -43,12 +43,20 @@ TASKS = {
     "promote": "Promotion",
     "updates": "Updates",
 }
+
+def podcast_tasks(folder: Path) -> dict[str, str]:
+    """One scheduled task per podcast series that has run days, named as podcast.py's task_name() names it.
+    A series with no days is paused and has no task. Unreadable config: the three original series."""
+    try:
+        series = json.loads((folder / "podcast_config.json").read_text(encoding="utf-8")).get("series") or {}
+    except (ValueError, OSError, AttributeError):
+        series = {}
+    active = [key for key, spec in series.items() if isinstance(spec, dict) and spec.get("days")]
+    return {f"podcast_{key}": f"Podcast {key.capitalize()}" for key in active or ("brief", "breakdown", "drive")}
+
+
 if (PODCAST / "podcast.py").exists():  # only where the private podcast module is present
-    TASKS.update({
-        "podcast_brief": "Podcast Brief",
-        "podcast_breakdown": "Podcast Breakdown",
-        "podcast_drive": "Podcast Drive",
-    })
+    TASKS.update(podcast_tasks(PODCAST))
 PYTHONW = Path(sys.executable).with_name("pythonw.exe")
 PYTHON = Path(sys.executable).with_name("python.exe")
 NO_WINDOW = 0x08000000

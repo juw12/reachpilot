@@ -547,7 +547,8 @@ class Bluesky:
             try:
                 record["embed"] = {
                     "$type": "app.bsky.embed.video", "video": self.upload_video(session, video),
-                    "aspectRatio": dict(zip(("width", "height"), video_size(video))), "alt": video_alt(video),
+                    "aspectRatio": dict(zip(("width", "height"), video_size(video))),
+                    "alt": extra.get("video_alt") or video_alt(video),
                 }
                 images = []
             except Exception as error:
@@ -606,12 +607,12 @@ class Mastodon:
                                       timeout=TIMEOUT), "Mastodon sign-in").json()
         return f"@{account['acct']} on {urllib.parse.urlparse(self.instance).netloc}"
 
-    def upload_video(self, path: Path) -> str:
+    def upload_video(self, path: Path, alt: str = "") -> str:
         """Upload the clip and wait until the instance has processed it; a status cannot attach it before that."""
         with open(path, "rb") as handle:
             response = _check(requests.post(
                 f"{self.instance}/api/v2/media", headers=self.headers,
-                files={"file": (path.name, handle, "video/mp4")}, data={"description": video_alt(path)}, timeout=300,
+                files={"file": (path.name, handle, "video/mp4")}, data={"description": alt or video_alt(path)}, timeout=300,
             ), "Mastodon video upload")
         media_id = response.json()["id"]
         for _ in range(VIDEO_POLL_TRIES):
@@ -626,7 +627,7 @@ class Mastodon:
         media_ids = []
         if video:
             try:
-                media_ids.append(self.upload_video(video))
+                media_ids.append(self.upload_video(video, extra.get("video_alt", "")))
                 images = []
             except Exception as error:
                 log.warning("Mastodon did not take the demo video, posting the screenshots instead: %s", error)
