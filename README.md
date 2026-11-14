@@ -237,6 +237,12 @@ When the podcast module ships `promotion.py`, a **Podcast** tab tracks its promo
 where each episode was announced and the follower counts on those channels. The tab only reads files; when the download
 numbers are older than 15 minutes it starts `promotion.py refresh` in the background.
 
+The **Overview** also shows a card for each launch test listed in `LAUNCH_TESTS` in `hub.py`: the test's own
+one-line answer, the numbers against what is needed, the dates, and the steps that still need a person. The card
+only reads a public `summary.json` that the tested project publishes; it never writes to that project. When the
+file can't be reached, the card shows the last good answer and says so. Steps that should not be public go in
+`launch_private.json` next to the code; that file is git-ignored and is shown only on this dashboard.
+
 ## Files
 
 | File | Role |

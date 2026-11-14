@@ -24,3 +24,7 @@ dashboard.ico
 # Private ReachPilot modules (job search, e-mail applications, digest): personal data, never commit
 modules/
 data/github_public_cache/
+
+# Launch tests: private steps and the last good answer (hub.py launch_section)
+launch_private.json
+data/launch_cache/

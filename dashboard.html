@@ -47,7 +47,7 @@
     .help-btn { width: 44px; height: 44px; }
     .btn { min-height: 44px; padding: 10px 16px; }
     main { padding: 14px; }
-    td a, .todo li a, details summary { display: inline-flex; align-items: center; min-height: 44px; min-width: 44px; }
+    td a, .todo li a, .launch-links a, details summary { display: inline-flex; align-items: center; min-height: 44px; min-width: 44px; }
   }
   main { max-width: 1180px; margin: 0 auto; padding: 20px; }
   @media (min-width: 761px) { .navrow { display: contents; } .more { display: none; } }
@@ -147,6 +147,8 @@
   .runs b { font-weight: 600; }
   @media (max-width: 760px) { .runs li { flex: 1 1 100%; } }
   .module .big { font-size: 24px; font-weight: 700; }
+  .launch-links { display: flex; flex-wrap: wrap; gap: 0 16px; margin-top: 4px; }
+  .launch-links + .hint, td .badge + .hint { white-space: nowrap; }
   .module h3 { display: flex; justify-content: space-between; align-items: center; }
   .module h3 .btn { min-height: 38px; padding: 8px 18px; }
   td.zero b { color: var(--muted); font-weight: 600; }
@@ -659,6 +661,54 @@ function runStrip(tasks) {
   return `<ul class="runs" aria-label="Scheduled automations">${rows}</ul>`;
 }
 
+function launchCards(launch) {
+  const tests = (launch && launch.tests) || [];
+  const stateBadge = { done: "good", "last-tap": "warn", blocked: "bad", yours: "grey" };
+  const cell = (value) => (value === null || value === undefined ? "–" : num(value));
+  return tests.map((t) => {
+    const whenBadge = t.when ? ` <span class="badge ${t.phase === "final" ? "grey" : ""}">${esc(t.when)}</span>` : "";
+    if (!t.available) {
+      return `<div class="card" style="margin-bottom:18px">
+        <h3>Launch test: ${esc(t.name)}</h3>
+        <p class="hint">No answer yet from the project's status file. The next try is in a few minutes.</p>
+      </div>`;
+    }
+    const dates = [
+      t.start_text && t.end_text ? `${esc(t.start_text)} to ${esc(t.end_text)}` : "",
+      t.decision_day ? `decision ${esc(t.decision_day)}` : "",
+      t.updated_text ? `counted ${esc(t.updated_text)}` : "",
+    ].filter(Boolean).join(" · ");
+    const counts = t.counts.map((c) => `<tr>
+        <td>${esc(c.label)}</td>
+        <td class="num"><b>${cell(c.have)}</b></td>
+        <td class="num">${cell(c.need)}</td>
+        <td class="num">${cell(c.stop)}</td>
+      </tr>`).join("");
+    const linkRow = (links) => `<div class="launch-links">${links.map((l) => link(l.url, l.label)).join("")}</div>`;
+    const steps = t.needs_me.map((s) => `<tr>
+        <td>${esc(s.title)}${s.private ? ` <span class="badge grey">private</span>` : ""}
+          ${s.links.length ? linkRow(s.links) : ""}</td>
+        <td><span class="badge ${stateBadge[s.status] || "grey"}">${esc(s.status_label)}</span>
+          ${s.due ? `<div class="hint">by ${esc(s.due)}</div>` : ""}</td>
+      </tr>`).join("");
+    return `<div class="card module" style="margin-bottom:18px">
+      <h3><span>Launch test: ${esc(t.name)}</span>${whenBadge}</h3>
+      <div class="big">${esc(t.headline || "No verdict yet.")}</div>
+      ${t.next_step ? `<div class="hint">${esc(t.next_step)}</div>` : ""}
+      <div class="hint">${dates}${t.stale ? ` <span class="badge warn">offline: last good answer${t.read_at ? ` from ${esc(t.read_at)}` : ""}</span>` : ""}</div>
+      <table style="margin-top:8px">
+        <thead><tr><th>Measure</th><th class="num">Now</th><th class="num">Needed</th><th class="num">Stop below</th></tr></thead>
+        <tbody>${counts}</tbody>
+      </table>
+      ${steps ? `<table style="margin-top:12px">
+        <thead><tr><th>Needs you · ${num(t.open)} open</th><th>State</th></tr></thead>
+        <tbody>${steps}</tbody>
+      </table>` : ""}
+      ${t.links.length ? linkRow(t.links) : ""}
+    </div>`;
+  }).join("");
+}
+
 function renderOverview(d) {
   const o = d.overview, h = d.hub, jobs = h.jobs, email = h.email;
   const next = o.next_post;
@@ -670,6 +720,7 @@ function renderOverview(d) {
       ${todo.slice(0, 5).map((item) => todoCard(item, true)).join("")}
       ${todo.length > 5 ? `<button class="btn ghost" data-goto="todo">See all ${todo.length} in To do ›</button>` : ""}
     </div>` : `<div class="card" style="margin-bottom:18px"><h3>Nothing needs you right now</h3><p class="hint">Everything is running on its own.</p></div>`}
+    ${launchCards(h.launch)}
     ${runStrip(h.tasks)}
     <div class="card" style="margin-bottom:18px">
       <h3>Per day, every automation <span class="hint">· today, average of the last 7 days, best day and the daily limit</span></h3>

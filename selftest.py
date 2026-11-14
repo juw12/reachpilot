@@ -491,6 +491,83 @@ todo = hub.channels_todo({
 })
 check([item["action"] for item in todo] == ["channels_setup", "channels_setup"], "hub: platform to-dos (connect, failures)")
 
+# hub: launch tests - a project's public summary.json plus private steps kept on this PC
+launch_home = Path(tempfile.mkdtemp(prefix="rp-launch-"))
+launch_real = (hub._launch_fetch, hub.LAUNCH_CACHE, hub.LAUNCH_PRIVATE)
+launch_test = {"id": "demo", "name": "Demo", "summary_url": "https://example.test/summary.json"}
+launch_answer = {
+    "schema": 1, "name": "Demo app", "phase": "before", "outcome": "waiting",
+    "headline": "The launch test has not started yet.",
+    "start": "2026-11-28T00:00:00+07:00", "end": "2026-12-13T00:00:00+07:00",
+    "totals": {"testers": 0, "regulars": 0, "letters": 0},
+    "need": {"testers": 30, "regulars": 10, "letters": 5},
+    "stop": {"testers": 10, "letters": 1},
+    "labels": {"testers": "People who ran a test"},
+    "links": {"app": "https://example.test/app", "repo": "javascript:alert(1)"},
+    "needsMe": [
+        {"id": "invite", "title": "Message 30 people", "status": "last-tap", "due": "2026-11-28", "detail": "Texts are ready.",
+         "links": [{"label": "Texts", "url": "https://example.test/texts"}, {"label": "Bad", "url": "javascript:alert(2)"}]},
+        {"id": "name", "title": "Trademark search", "status": "blocked", "detail": "The site blocks robots."},
+        {"id": "seen", "title": "Counting off on this PC", "status": "done"},
+        {"id": "odd", "title": "Unknown state", "status": "whatever"},
+        "not a step",
+    ],
+}
+launch_now = datetime.fromisoformat("2026-11-14T12:00:00+07:00")
+try:
+    hub.LAUNCH_CACHE = launch_home / "cache"
+    hub.LAUNCH_PRIVATE = launch_home / "launch_private.json"
+    hub._launch_fetch = lambda url: None
+    nothing = hub._launch_view(launch_test, hub._launch_summary(launch_test), now=launch_now)
+    check(nothing["available"] is False and nothing["stale"] is True and nothing["needs_me"] == [] and nothing["name"] == "Demo",
+          "hub launch: offline with no saved answer shows as not available")
+
+    hub._launch_fetch = lambda url: launch_answer
+    fresh = hub._launch_view(launch_test, hub._launch_summary(launch_test), now=launch_now)
+    check(fresh["available"] and not fresh["stale"] and fresh["name"] == "Demo app" and fresh["when"] == "starts in 14 days",
+          f"hub launch: fresh answer read ({fresh['when']})")
+    check([(c["label"], c["have"], c["need"], c["stop"]) for c in fresh["counts"]]
+          == [("People who ran a test", 0, 30, 10), ("Regulars", 0, 10, None), ("Letters", 0, 5, 1)],
+          "hub launch: each count with what is needed and the stop line")
+    check([step["status"] for step in fresh["needs_me"]] == ["last-tap", "blocked", "done", "yours"] and fresh["open"] == 3,
+          "hub launch: steps parsed, unknown state shown as 'only you', done ones not counted as open")
+    check(fresh["links"] == [{"label": "App", "url": "https://example.test/app"}]
+          and [entry["label"] for entry in fresh["needs_me"][0]["links"]] == ["Texts"],
+          "hub launch: only web links are kept")
+    check(not any(step["private"] for step in fresh["needs_me"]), "hub launch: no private file, only the public steps")
+
+    hub.LAUNCH_PRIVATE.write_text(json.dumps({"demo": {"needsMe": [
+        {"id": "contract", "title": "Read my contract", "status": "yours", "due": "2026-11-16", "detail": "See my notes."}]}}),
+        encoding="utf-8")
+    private_steps = hub._launch_dict(hub._launch_private().get("demo")).get("needsMe")
+    merged = hub._launch_view(launch_test, hub._launch_summary(launch_test), private_steps, now=launch_now)
+    check([step["private"] for step in merged["needs_me"]] == [False, False, False, False, True] and merged["open"] == 4,
+          "hub launch: private steps added and marked private")
+
+    hub._launch_fetch = lambda url: None
+    offline = hub._launch_view(launch_test, hub._launch_summary(launch_test), now=launch_now)
+    check(offline["available"] and offline["stale"] and offline["read_at"] and offline["counts"][0]["need"] == 30,
+          "hub launch: offline shows the last good answer and says so")
+
+    launch_items = hub.launch_todo({"tests": [merged]}, today=launch_now.date())
+    check([(item["priority"], item["title"]) for item in launch_items] == [
+        (2, "Demo app: Message 30 people"), (3, "Demo app: Trademark search"),
+        (3, "Demo app: Unknown state"), (1, "Demo app: Read my contract")],
+        "hub launch: to-dos skip done steps; urgent within 3 days of the date")
+    check(launch_items[0]["detail"] == "One tap left, by 2026-11-28. Texts are ready." and launch_items[0]["action"] is None,
+          "hub launch: to-do says the state and the date")
+    check(hub.launch_todo(None) == [] and hub.launch_todo({"error": "x"}) == [], "hub launch: no section, no to-dos")
+    over = hub.launch_todo({"tests": [{**merged, "phase": "final", "headline": "Go on.", "needs_me": []}]}, today=launch_now.date())
+    check(len(over) == 1 and over[0]["priority"] == 1 and over[0]["title"] == "Demo app launch test is over: Go on.",
+          "hub launch: the verdict becomes an urgent to-do")
+    check([entry["module"] for entry in hub.help_sections({}, None, {"tests": [merged]})][-1] == "Launch"
+          and "Launch" not in [entry["module"] for entry in hub.help_sections({}, None, None)],
+          "hub launch: help entry only when a launch test exists")
+finally:
+    hub._launch_fetch, hub.LAUNCH_CACHE, hub.LAUNCH_PRIVATE = launch_real
+    for cache_key in [key for key in hub._cache if str(key).startswith("launch:")]:
+        hub._cache.pop(cache_key, None)
+
 # hub: the podcast tile - the reader mirrors podcast.py's own rules (published + audio on the site; pending = held for review)
 podcast_home = Path(tempfile.mkdtemp(prefix="rp-podcast-"))
 try:

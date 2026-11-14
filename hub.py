@@ -9,6 +9,8 @@ Modules live in modules/ (git-ignored, personal data) and keep running on their 
 
 Other platforms (Bluesky, Mastodon, Dev.to, Telegram, Discord) are part of the public code
 (channels.py); channels_section() reads their state from state.db.
+Launch tests (launch_section) are read from a project's public summary.json, plus private steps from
+launch_private.json (git-ignored) when that file exists.
 
 This file only reads their files, builds the "what I need from you" list, and runs a short whitelist of actions.
 Every reader is defensive: a missing or half-written file shows as "not set up" instead of breaking the dashboard.
@@ -796,6 +798,219 @@ def channels_todo(section: dict) -> list[dict]:
     return items
 
 
+# ------------------------------------------------------------------ launch tests (a project's public summary.json)
+
+LAUNCH_TESTS = [
+    # One row per project that publishes a launch-test summary (juw12/lelet: scripts/launch-verdict.mjs writes it).
+    {"id": "lelet", "name": "Lelet",
+     "summary_url": "https://raw.githubusercontent.com/juw12/lelet/launch-status/summary.json"},
+]
+LAUNCH_PRIVATE = ROOT / "launch_private.json"  # git-ignored: steps that must not sit in a public repo
+LAUNCH_CACHE = ROOT / "data" / "launch_cache"  # git-ignored: the last good answer, shown when offline
+LAUNCH_REFRESH_SECONDS = 600
+LAUNCH_RETRY_SECONDS = 120  # after a failed read, try again sooner
+LAUNCH_COUNTS = ("testers", "regulars", "letters")
+LAUNCH_STATES = {"done": "done", "last-tap": "one tap left", "blocked": "blocked", "yours": "only you"}
+LAUNCH_LINKS = (("app", "App"), ("repo", "Repo"), ("status", "Status page"),
+                ("launchIssue", "Launch issue"), ("verdictIssue", "Verdict"))
+
+
+def _launch_fetch(url: str) -> dict | None:
+    """The summary as a dict, or None when offline or the answer is not a JSON object."""
+    import urllib.error
+    import urllib.request
+
+    request = urllib.request.Request(url, headers={"User-Agent": "reachpilot"})
+    try:
+        with urllib.request.urlopen(request, timeout=6) as response:
+            data = json.loads(response.read().decode("utf-8"))
+    except (urllib.error.URLError, OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _launch_summary(test: dict) -> dict:
+    """A fresh summary when the network answers; otherwise the last good one from disk, marked stale."""
+    cache_file = LAUNCH_CACHE / f"{test['id']}.json"
+    summary = _launch_fetch(test["summary_url"])
+    if summary is not None:
+        try:
+            LAUNCH_CACHE.mkdir(parents=True, exist_ok=True)
+            cache_file.write_text(json.dumps(summary), encoding="utf-8")
+        except OSError:
+            pass
+        return {"summary": summary, "stale": False, "read_at": datetime.now().strftime("%Y-%m-%d %H:%M")}
+    try:
+        summary = json.loads(cache_file.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        summary = None
+    if not isinstance(summary, dict):
+        return {"summary": None, "stale": True, "read_at": None}
+    return {"summary": summary, "stale": True, "read_at": stamp(cache_file)}
+
+
+def _launch_cached(test: dict) -> dict:
+    key = "launch:" + test["id"]
+    hit = _cache.get(key)
+    if hit and time.time() - hit[0] < (LAUNCH_RETRY_SECONDS if hit[1]["stale"] else LAUNCH_REFRESH_SECONDS):
+        return hit[1]
+    value = _launch_summary(test)
+    _cache[key] = (time.time(), value)
+    return value
+
+
+def _launch_private() -> dict:
+    """Private steps per test id from launch_private.json; {} when the file is missing or unreadable."""
+    try:
+        data = json.loads(LAUNCH_PRIVATE.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _launch_dict(value) -> dict:
+    return value if isinstance(value, dict) else {}
+
+
+def _launch_int(value) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _launch_url(value) -> str | None:
+    """Only web links: the summary comes from the network and ends up in an href."""
+    return value if isinstance(value, str) and value.startswith(("https://", "http://")) else None
+
+
+def _launch_days(moment, now: datetime | None) -> int | None:
+    """Days from now until an ISO time, rounded up (0 or less once it has passed)."""
+    try:
+        target = datetime.fromisoformat(str(moment))
+    except ValueError:
+        return None
+    current = now or datetime.now(target.tzinfo)
+    try:
+        seconds = (target - current).total_seconds()
+    except TypeError:  # one side has a time zone and the other does not
+        return None
+    return int(-(-seconds // 86400))
+
+
+def _launch_steps(items, private: bool) -> list[dict]:
+    steps = []
+    for item in items if isinstance(items, list) else []:
+        if not isinstance(item, dict) or not item.get("title"):
+            continue
+        status = item.get("status") if item.get("status") in LAUNCH_STATES else "yours"
+        links = [
+            {"label": str(entry.get("label") or entry["url"])[:80], "url": entry["url"], "note": ""}
+            for entry in (item.get("links") if isinstance(item.get("links"), list) else [])
+            if isinstance(entry, dict) and _launch_url(entry.get("url"))
+        ]
+        steps.append({
+            "id": str(item.get("id") or item["title"])[:60],
+            "title": str(item["title"])[:160],
+            "status": status,
+            "status_label": LAUNCH_STATES[status],
+            "due": str(item["due"])[:10] if item.get("due") else None,
+            "detail": str(item.get("detail") or "")[:600],
+            "links": links,
+            "private": private,
+        })
+    return steps
+
+
+def _launch_view(test: dict, fetched: dict, private_steps=None, now: datetime | None = None) -> dict:
+    """One launch test for the dashboard. Every field is checked: a half-written summary must not break the page."""
+    summary = _launch_dict(fetched.get("summary"))
+    totals, need, stop = (_launch_dict(summary.get(key)) for key in ("totals", "need", "stop"))
+    labels = _launch_dict(summary.get("labels"))
+    links = _launch_dict(summary.get("links"))
+    days_to_start = _launch_days(summary.get("start"), now)
+    days_left = _launch_days(summary.get("end"), now)
+    if days_to_start is not None and days_to_start > 0:
+        when = f"starts in {days_to_start} day{'' if days_to_start == 1 else 's'}"
+    elif days_left is not None and days_left > 0:
+        when = f"{days_left} day{'' if days_left == 1 else 's'} left"
+    else:
+        when = "ended" if days_left is not None else ""
+    steps = _launch_steps(summary.get("needsMe"), False) + _launch_steps(private_steps, True)
+
+    def text(key: str) -> str:
+        return str(summary.get(key) or "")[:300]
+
+    return {
+        "id": test["id"],
+        "name": str(summary.get("name") or test["name"])[:60],
+        "available": bool(summary),
+        "stale": bool(fetched.get("stale")),
+        "read_at": fetched.get("read_at"),
+        "phase": text("phase"),
+        "outcome": text("outcome"),
+        "headline": text("headline"),
+        "next_step": text("nextStep"),
+        "updated_text": text("updatedText"),
+        "start_text": text("startText"),
+        "end_text": text("endText"),
+        "decision_day": text("decisionDay"),
+        "when": when,
+        "days_to_start": days_to_start,
+        "days_left": days_left,
+        "counts": [{
+            "key": key,
+            "label": str(labels.get(key) or key.capitalize())[:80],
+            "have": _launch_int(totals.get(key)),
+            "need": _launch_int(need.get(key)),
+            "stop": _launch_int(stop.get(key)),
+        } for key in LAUNCH_COUNTS],
+        "links": [{"label": label, "url": links[key]} for key, label in LAUNCH_LINKS if _launch_url(links.get(key))],
+        "needs_me": steps,
+        "open": sum(1 for step in steps if step["status"] != "done"),
+    }
+
+
+def launch_section() -> dict:
+    private = _launch_private()
+    tests = [
+        _launch_view(test, _launch_cached(test), _launch_dict(private.get(test["id"])).get("needsMe"))
+        for test in LAUNCH_TESTS
+    ]
+    return {"installed": bool(tests), "tests": tests}
+
+
+def launch_todo(section: dict | None, today: date | None = None) -> list[dict]:
+    """Open launch steps as to-do items: urgent from 3 days before their date, quiet before that."""
+    today = today or date.today()
+    items = []
+    for test in (section or {}).get("tests") or []:
+        if test.get("phase") == "final" and test.get("headline"):
+            items.append({
+                "priority": 1, "module": "Launch",
+                "title": f"{test['name']} launch test is over: {test['headline']}",
+                "detail": test.get("next_step") or "",
+                "action": None, "action_label": None,
+                "links": [{**entry, "note": ""} for entry in test.get("links") or []],
+            })
+        for step in test.get("needs_me") or []:
+            if step["status"] == "done":
+                continue
+            try:
+                days = (date.fromisoformat(step["due"]) - today).days if step.get("due") else None
+            except ValueError:
+                days = None
+            if days is not None and days <= 3:
+                priority = 1
+            else:
+                priority = 2 if step["status"] == "last-tap" else 3
+            lead = step["status_label"].capitalize() + (f", by {step['due']}" if step.get("due") else "") + "."
+            items.append({
+                "priority": priority, "module": "Launch",
+                "title": f"{test['name']}: {step['title']}",
+                "detail": f"{lead} {step['detail']}".strip(),
+                "action": None, "action_label": None, "links": step["links"],
+            })
+    return items
+
+
 # ------------------------------------------------------------------ what I need from you
 
 def todo_items(linkedin: dict | None, jobs: dict, email: dict, tasks: dict, podcast: dict | None = None) -> list[dict]:
@@ -881,7 +1096,7 @@ def todo_items(linkedin: dict | None, jobs: dict, email: dict, tasks: dict, podc
 
 # ------------------------------------------------------------------ help text
 
-def help_sections(tasks: dict, podcast: dict | None = None) -> list[dict]:
+def help_sections(tasks: dict, podcast: dict | None = None, launch: dict | None = None) -> list[dict]:
     def when(key, fallback):
         task = tasks.get(key, {})
         return f"Next run: {task['next_run']}" if task.get("next_run") and task.get("installed") else fallback
@@ -923,6 +1138,16 @@ def help_sections(tasks: dict, podcast: dict | None = None) -> list[dict]:
                        "The Podcast tab tracks promotion: which directories list the show (submit the feed once on each), downloads per episode and per week from OP3, "
                        "series compared, and where each episode was announced. The Bits & Tickers Studio shows only the production side.",
             })
+    if launch and launch.get("tests"):
+        entries.append({
+            "module": "Launch",
+            "runs": "Read every 10 minutes from each project's public launch summary ("
+                    + ", ".join(test["name"] for test in launch["tests"]) + "). The project's own workflow updates that file.",
+            "auto": "Shows the launch test on Overview: days to the start or the end, each count against what is needed and the stop line, "
+                    "the verdict, and the steps that still need you. Offline it shows the last good answer and says so. "
+                    "Steps that must stay private are read from launch_private.json on this PC (git-ignored).",
+            "you": "Do the steps marked 'one tap left', 'blocked' or 'only you'. They also sit in the To do list, urgent from 3 days before their date.",
+        })
     return entries
 
 
@@ -1000,7 +1225,7 @@ def build(linkedin_overview: dict | None) -> dict:
     sections = {}
     for key, reader in (("jobs", jobs_section), ("email", email_section), ("promote", promote_section),
                         ("channels", channels_section), ("podcast", podcast_section),
-                        ("podcast_promotion", podcast_promotion_section)):
+                        ("podcast_promotion", podcast_promotion_section), ("launch", launch_section)):
         try:
             sections[key] = reader()
         except Exception as error:  # one broken module must not take the dashboard down
@@ -1018,8 +1243,9 @@ def build(linkedin_overview: dict | None) -> dict:
             todo_items(linkedin_overview, sections["jobs"], sections["email"], tasks, sections.get("podcast"))
             + sections["promote"].get("todo", [])
             + channels_todo(sections["channels"])
-            + podcast_promotion_todo(sections.get("podcast_promotion")),
+            + podcast_promotion_todo(sections.get("podcast_promotion"))
+            + launch_todo(sections.get("launch")),
             key=lambda item: item["priority"],
         ),
-        "help": help_sections(tasks, sections.get("podcast")),
+        "help": help_sections(tasks, sections.get("podcast"), sections.get("launch")),
     }
