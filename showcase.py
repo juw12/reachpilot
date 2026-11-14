@@ -26,6 +26,7 @@ from github_source import RepoFacts
 BUILT_PAGES = "reachpilot-showcase"  # address prefix of pages that exist only inside the recording browser
 WATCH_INDEX = "watch_pages.json"  # generated/watch_pages.json: {repo: watch page URL}, only pages that answered
 FEATURES_SHOWN = 4
+PREVIEW_FRAME = "#t=0.5"  # seconds into the clip shown as the still preview
 FEATURES_MORE = 6
 KNOWN_LICENSE_EXCLUDES = ("", "NOASSERTION", "Other")
 
@@ -82,7 +83,8 @@ def _project_body(facts: RepoFacts, user: str, video_url: str, credits) -> str:
     pictures = [_image_url(user, facts, path) for path in list(facts.readme_images or [])[:2]]
     parts = []
     if video_url:
-        parts.append(f'<video src="{html.escape(video_url, quote=True)}" controls playsinline muted loop preload="metadata"></video>')
+        # The time fragment makes the player show a real frame before anyone presses play, not a black box.
+        parts.append(f'<video src="{html.escape(video_url, quote=True)}{PREVIEW_FRAME}" controls playsinline muted loop preload="metadata"></video>')
     if pictures:
         parts.append(f'<img src="{html.escape(pictures[0], quote=True)}" alt="{html.escape(facts.display_name)}">')
     if features:

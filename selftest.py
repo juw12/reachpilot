@@ -946,9 +946,9 @@ check(len(page_buttons) >= 3 and not any(visuals.DEMO_SKIP_LABEL.search(label) f
       f"showcase: the tour can open every section of a built page and never presses the link that leaves it ({page_buttons})")
 watch_credits = [{"creator": "Dev <Tube>", "url": "https://youtu.be/abc"}]
 watch_page = showcase.page([facts], "juw12", demo_link, watch_credits)
-check(f'<video src="{demo_link}"' in watch_page and f'og:video" content="{demo_link}"' in watch_page
+check(f'<video src="{demo_link}{showcase.PREVIEW_FRAME}"' in watch_page and f'og:video" content="{demo_link}"' in watch_page
       and '<a href="https://youtu.be/abc">Dev &lt;Tube&gt;</a>' in watch_page and "Covered by" in watch_page,
-      "showcase: the watch page plays the video and credits the creators who covered the project")
+      "showcase: the watch page plays the video (showing a frame before play) and credits the creators who covered the project")
 
 with tempfile.TemporaryDirectory() as record_dir:
     def fake_raw(url, folder, phone=False, served=None):
