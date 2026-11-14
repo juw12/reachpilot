@@ -13,14 +13,18 @@ from __future__ import annotations
 import html
 import json
 import re
+import shutil
 import subprocess
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
 import requests
 
 CREATE_NO_WINDOW = 0x08000000
-RESERVED_NAMES = {"go", "p", "assets", "static"}
+RESERVED_NAMES = {"go", "p", "assets", "static", "demo"}
+DEMO_REUSE_DAYS = 60  # a hosted clip is replaced only this often, so the Pages repo does not grow with every post
+DEMO_LIVE_WAIT_SECONDS = 150  # GitHub Pages usually serves a pushed file within a minute or two
 
 GO_PAGE = """<!doctype html>
 <html lang="en">
@@ -115,8 +119,8 @@ def _git(args: list[str], cwd: Path) -> subprocess.CompletedProcess:
     )
 
 
-def sync_go_pages(user: str, targets: dict[str, str], code: str, checkout: Path, log) -> set[str]:
-    """Write/update go/<name>/index.html in the <user>.github.io repo; one commit, only if changed."""
+def _pages_checkout(user: str, checkout: Path, log) -> bool:
+    """Make sure the local copy of the <user>.github.io repo exists and is up to date."""
     if not checkout.exists():
         result = subprocess.run(
             ["gh", "repo", "clone", f"{user}/{user}.github.io", str(checkout), "--", "--depth", "1"],
@@ -127,8 +131,56 @@ def sync_go_pages(user: str, targets: dict[str, str], code: str, checkout: Path,
         )
         if result.returncode != 0:
             log.warning("Could not clone %s.github.io: %s", user, result.stderr[-300:])
-            return set()
+            return False
     _git(["pull", "--ff-only", "--quiet"], checkout)
+    return True
+
+
+def demo_url(user: str, name: str) -> str:
+    return f"https://{user}.github.io/demo/{name}.mp4"
+
+
+def _is_live(url: str) -> bool:
+    try:
+        return requests.head(url, timeout=30, allow_redirects=True).status_code == 200
+    except requests.RequestException:
+        return False
+
+
+def host_demo_video(user: str, name: str, video: Path, checkout: Path, log) -> str:
+    """Give the demo clip a public URL (demo/<name>.mp4 on the Pages site) for platforms that fetch media by URL.
+
+    Returns the URL once it answers, or "" so the caller posts the image instead.
+    """
+    if not _pages_checkout(user, checkout, log):
+        return ""
+    url = demo_url(user, name)
+    hosted = checkout / "demo" / f"{name}.mp4"
+    recent = hosted.exists() and time.time() - hosted.stat().st_mtime < DEMO_REUSE_DAYS * 86400
+    if recent and _is_live(url):
+        return url
+    if not recent:
+        hosted.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(video, hosted)
+        _git(["add", "demo"], checkout)
+        _git(["commit", "-m", f"Demo video: {name}"], checkout)
+    push = _git(["push", "--quiet"], checkout)
+    if push.returncode != 0:
+        log.warning("Pushing the demo video for %s failed: %s", name, push.stderr[-300:])
+        return ""
+    for _ in range(DEMO_LIVE_WAIT_SECONDS // 10):
+        if _is_live(url):
+            log.info("Demo video for %s is live at %s", name, url)
+            return url
+        time.sleep(10)
+    log.warning("Demo video for %s was pushed but %s is not live yet", name, url)
+    return ""
+
+
+def sync_go_pages(user: str, targets: dict[str, str], code: str, checkout: Path, log) -> set[str]:
+    """Write/update go/<name>/index.html in the <user>.github.io repo; one commit, only if changed."""
+    if not _pages_checkout(user, checkout, log):
+        return set()
 
     changed = []
     for name, target in targets.items():

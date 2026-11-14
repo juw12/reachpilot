@@ -81,7 +81,7 @@
   .post h4 { margin: 6px 0 0; font-size: 16px; }
   .post .hook { color: #38434f; margin: 2px 0 8px; }
   .thumbs { display: flex; gap: 8px; overflow-x: auto; }
-  .thumbs img { flex: none; width: 170px; height: 96px; object-fit: cover; border-radius: 6px; border: 1px solid var(--line); background: #eef0f2; }
+  .thumbs img, .thumbs video { flex: none; width: 170px; height: 96px; object-fit: cover; border-radius: 6px; border: 1px solid var(--line); background: #eef0f2; }
   details summary { cursor: pointer; color: var(--blue); font-weight: 600; margin-top: 8px; }
   pre.text { white-space: pre-wrap; font: inherit; background: #f8f9fa; padding: 12px; border-radius: 6px; margin: 8px 0 0; }
   table { width: 100%; border-collapse: collapse; }
@@ -348,7 +348,7 @@ function kpi(label, value, note = "") {
 
 function postCard(entry, index) {
   const [kindLabel, kindClass] = KIND[entry.kind] || [entry.kind, ""];
-  const thumbs = entry.images.length ? `<div class="thumbs">${entry.images.map((src) => `<img src="${esc(src)}" alt="" loading="lazy">`).join("")}</div>` : "";
+  const thumbs = entry.images.length ? `<div class="thumbs">${entry.images.map((src) => /\.mp4$/i.test(src) ? `<video src="${esc(src)}" muted controls preload="metadata" title="Demo video"></video>` : `<img src="${esc(src)}" alt="" loading="lazy">`).join("")}</div>` : "";
   const full = entry.body
     ? `<details><summary>Full post text</summary><pre class="text">${esc(entry.body)}</pre>${entry.comment ? `<div class="hint" style="margin-top:8px"><b>First comment</b></div><pre class="text">${esc(entry.comment)}</pre>` : ""}</details>`
     : "";

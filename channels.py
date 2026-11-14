@@ -1,17 +1,20 @@
 """Other platforms for every ReachPilot post: Bluesky, Mastodon, Dev.to, Telegram, Discord, X, Threads, Substack.
 
 Official APIs only (no scraping, no browser bots), all free:
-  bluesky    AT Protocol; setup turns your password into an    short post (300 chars), screenshots, clickable link
+  bluesky    AT Protocol; setup turns your password into an    short post (300 chars), demo video or screenshots, link
              app password once and stores only that
-  mastodon   your instance's REST API with an access token      short post (500 chars), screenshots
+  mastodon   your instance's REST API with an access token      short post (500 chars), demo video or screenshots
   devto      Forem API key                                      an article per launch / release, canonical URL back to you
-  telegram   Bot API, posts into your own channel               full post with the first screenshot
-  discord    a webhook into your own server                     full post with the first screenshot
-  x          free through Buffer's API: Buffer (an official X     short post (280 weighted chars), project image, link
+  telegram   Bot API, posts into your own channel               full post with the demo video or the first screenshot
+  discord    a webhook into your own server                     full post with the demo video or the first screenshot
+  x          free through Buffer's API: Buffer (an official X     short post (280 weighted chars), demo video or image, link
              partner) publishes to your X account, no X fees.
              Optional fallback: the paid X API v2 (OAuth 2.0 PKCE), capped by x_monthly_budget_usd
-  threads    free through the same Buffer key                    short post (500 chars), one tag, project image, link
+  threads    free through the same Buffer key                    short post (500 chars), one tag, demo video or image, link
   substack   free through the same Buffer key (Substack Notes)   the post with links, project image
+
+The demo video is the short screen recording of the live site that visuals.record_demo makes for a single-project post.
+A platform that refuses the video gets the screenshots instead, so a video problem never costs a post.
 
 Every variant is cut from the LinkedIn post that already passed the no-invented-facts guard, so a platform can
 shorten a post but never add a claim; anything with a number not in the source is dropped.
@@ -24,6 +27,7 @@ import getpass
 import hashlib
 import io
 import json
+import logging
 import re
 import secrets as token_tools
 import time
@@ -67,7 +71,16 @@ BUFFER_CHANNELS = "https://publish.buffer.com/channels"
 BUFFER_X_SERVICES = ("twitter", "x")
 BUFFER_SERVICES = {"x": BUFFER_X_SERVICES, "threads": ("threads",), "substack": ("substack",)}
 BUFFER_ONLY = ("threads", "substack")  # channels that only exist through Buffer
+BUFFER_VIDEO = ("x", "threads")  # Buffer channels that get the demo video (by public URL); Substack Notes keeps the image
 PUBLIC_IMAGE = re.compile(r"^https://\S+\.(png|jpe?g|webp)(\?\S*)?$", re.I)
+VIDEO_SUFFIXES = (".mp4",)
+DEMO_VIDEO_SIZE = (1280, 720)  # what visuals.record_demo makes; selftest keeps the two in step
+VIDEO_POLL_SECONDS = 3
+VIDEO_POLL_TRIES = 40  # two minutes for a platform to process a short clip
+DISCORD_MAX_VIDEO_BYTES = 9_500_000  # webhook uploads stop at 10 MB
+BLUESKY_VIDEO = "https://video.bsky.app"
+
+log = logging.getLogger("autopilot")
 
 URL_PATTERN = re.compile(r"https?://[^\s)\]>]+")
 HASHTAG_PATTERN = re.compile(r"(?<![\w#])#([A-Za-z][A-Za-z0-9_]*)")
@@ -241,7 +254,8 @@ def public_image(facts) -> str:
     return ""
 
 
-def build_variants(body: str, comment: str, angle: str | None, facts=None, channels: list[str] | None = None) -> dict[str, dict]:
+def build_variants(body: str, comment: str, angle: str | None, facts=None, channels: list[str] | None = None,
+                   video_url: str = "") -> dict[str, dict]:
     """channel -> {"title", "body", "extra"} for every channel this post suits. Pure function (used by preview and tests)."""
     channels = channels or ALL
     source = " ".join([body or "", comment or "", facts.source_text() if facts else ""])
@@ -265,6 +279,8 @@ def build_variants(body: str, comment: str, angle: str | None, facts=None, chann
                 extra = {"link": link}
                 if channel in BUFFER_SERVICES:
                     extra["image_url"] = public_image(facts)  # Buffer takes hosted images only
+                if channel in BUFFER_VIDEO and video_url:
+                    extra["video_url"] = video_url  # ... and hosted videos; the image stays as the fallback
                 variants[channel] = {"title": "", "body": text, "extra": extra}
     if "devto" in channels and angle in ("launch", "update"):
         article = devto_article(body, comment, facts)
@@ -276,7 +292,7 @@ def build_variants(body: str, comment: str, angle: str | None, facts=None, chann
 # ------------------------------------------------------------------ queueing (once per slot) and publishing (with retries)
 
 def prepare(db, config: dict, secrets: dict, slot: str, repo: str | None, angle: str | None, body: str, comment: str,
-            images: list[str], facts=None) -> list[str]:
+            images: list[str], facts=None, video_url: str = "") -> list[str]:
     """Create the channel rows for this slot once. Returns the channels newly queued."""
     ensure_schema(db)
     existing = {row[0] for row in db.execute("SELECT channel FROM channel_posts WHERE slot=?", (slot,))}
@@ -294,7 +310,7 @@ def prepare(db, config: dict, secrets: dict, slot: str, repo: str | None, angle:
         wanted.remove("x")
     if not wanted:  # build_variants treats an empty list as 'every platform'
         return []
-    variants = build_variants(body, comment, angle, facts, wanted)
+    variants = build_variants(body, comment, angle, facts, wanted, video_url)
     stamp = datetime.now().strftime("%Y-%m-%d %H:%M")
     for channel, variant in variants.items():
         db.execute(
@@ -305,6 +321,17 @@ def prepare(db, config: dict, secrets: dict, slot: str, repo: str | None, angle:
         )
     db.commit()
     return list(variants)
+
+
+def needs_video_url(db, config: dict, secrets: dict, slot: str) -> bool:
+    """True when X or Threads (through Buffer) is still to be queued for this slot, so the video needs a public URL."""
+    ensure_schema(db)
+    existing = {row[0] for row in db.execute("SELECT channel FROM channel_posts WHERE slot=?", (slot,))}
+    creds = credentials(secrets)
+    return any(
+        channel not in existing and not (channel == "x" and x_is_paid(creds.get("x", {})))
+        for channel in connected(config, secrets) if channel in BUFFER_VIDEO
+    )
 
 
 def x_is_paid(creds: dict) -> bool:
@@ -349,9 +376,10 @@ def publish_pending(db, secrets: dict, rewrite, log) -> list[tuple[str, str, str
             client = CLIENTS[channel](creds[channel])
             text = rewrite(body)
             link = rewrite(extra.get("link", "")) if extra.get("link") else ""
+            video, images = split_media(path for path in json.loads(images_json or "[]") if Path(path).exists())
             url = client.publish(
-                text=text, title=title, images=[Path(path) for path in json.loads(images_json or "[]") if Path(path).exists()],
-                link=link, extra=extra, idempotency_key=f"reachpilot-{slot}-{channel}",
+                text=text, title=title, images=images, link=link, extra=extra,
+                idempotency_key=f"reachpilot-{slot}-{channel}", video=video,
             )
             db.execute(
                 "UPDATE channel_posts SET status='posted', url=?, posted_at=?, error=NULL WHERE slot=? AND channel=?",
@@ -371,7 +399,24 @@ def publish_pending(db, secrets: dict, rewrite, log) -> list[tuple[str, str, str
     return results
 
 
-# ------------------------------------------------------------------ images
+# ------------------------------------------------------------------ images and the demo video
+
+def split_media(paths) -> tuple[Path | None, list[Path]]:
+    """A post's stored media list -> (the demo video or None, the screenshots)."""
+    video = None
+    images = []
+    for item in paths:
+        path = Path(item)
+        if path.suffix.lower() in VIDEO_SUFFIXES:
+            video = video or path
+        else:
+            images.append(path)
+    return video, images
+
+
+def video_alt(path: Path) -> str:
+    return "Screen recording: " + path.stem.replace("_", " ").strip()
+
 
 def jpeg(path: Path, max_bytes: int, max_side: int = 2000) -> tuple[bytes, int, int]:
     """Re-encode a screenshot as a JPEG under the platform's size limit."""
@@ -433,7 +478,40 @@ class Bluesky:
     def verify(self) -> str:
         return "@" + self.session()["handle"]
 
-    def publish(self, text, title, images, link, extra, idempotency_key) -> str:
+    def upload_video(self, session: dict, path: Path) -> dict:
+        """Bluesky's video service transcodes the clip; the blob it hands back is what the post embeds."""
+        headers = {"Authorization": f"Bearer {session['accessJwt']}"}
+        services = (session.get("didDoc") or {}).get("service") or []
+        pds = next((item["serviceEndpoint"] for item in services if item.get("serviceEndpoint")), self.service)
+        token = _check(requests.get(
+            f"{self.service}/xrpc/com.atproto.server.getServiceAuth", headers=headers,
+            params={"aud": "did:web:" + urllib.parse.urlparse(pds).netloc, "lxm": "com.atproto.repo.uploadBlob",
+                    "exp": int(time.time()) + 1800}, timeout=TIMEOUT,
+        ), "Bluesky video permission").json()["token"]
+        response = requests.post(
+            f"{BLUESKY_VIDEO}/xrpc/app.bsky.video.uploadVideo", params={"did": session["did"], "name": path.name},
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "video/mp4"}, data=path.read_bytes(), timeout=300,
+        )
+        try:
+            payload = response.json()
+        except ValueError:
+            payload = {}
+        status = payload.get("jobStatus") or payload  # an already-uploaded clip answers 409 with its job or blob
+        job_id = status.get("jobId")
+        if not (status.get("blob") or job_id):
+            raise RuntimeError(f"Bluesky video upload failed: HTTP {response.status_code} {response.text[:300]}")
+        for _ in range(VIDEO_POLL_TRIES):
+            if status.get("blob"):
+                return status["blob"]
+            if status.get("state") == "JOB_STATE_FAILED":
+                raise RuntimeError(f"Bluesky could not process the video: {status.get('error') or status.get('message')}")
+            time.sleep(VIDEO_POLL_SECONDS)
+            status = _check(requests.get(
+                f"{BLUESKY_VIDEO}/xrpc/app.bsky.video.getJobStatus", params={"jobId": job_id}, timeout=TIMEOUT,
+            ), "Bluesky video status").json()["jobStatus"]
+        raise RuntimeError("Bluesky was still processing the video when the wait ran out")
+
+    def publish(self, text, title, images, link, extra, idempotency_key, video=None) -> str:
         session = self.session()
         headers = {"Authorization": f"Bearer {session['accessJwt']}"}
         record = {
@@ -443,6 +521,15 @@ class Bluesky:
             "langs": ["en"],
             "facets": bluesky_facets(text),
         }
+        if video:
+            try:
+                record["embed"] = {
+                    "$type": "app.bsky.embed.video", "video": self.upload_video(session, video),
+                    "aspectRatio": {"width": DEMO_VIDEO_SIZE[0], "height": DEMO_VIDEO_SIZE[1]}, "alt": video_alt(video),
+                }
+                images = []
+            except Exception as error:
+                log.warning("Bluesky did not take the demo video, posting the screenshots instead: %s", error)
         embedded = []
         for path in images[:4]:
             data, width, height = jpeg(path, 950_000)
@@ -453,7 +540,7 @@ class Bluesky:
             embedded.append({"alt": alt_text(path), "image": blob, "aspectRatio": {"width": width, "height": height}})
         if embedded:
             record["embed"] = {"$type": "app.bsky.embed.images", "images": embedded}
-        elif link:
+        elif link and "embed" not in record:
             record["embed"] = {"$type": "app.bsky.embed.external",
                                "external": {"uri": link, "title": title or link, "description": ""}}
         created = _check(requests.post(
@@ -497,8 +584,30 @@ class Mastodon:
                                       timeout=TIMEOUT), "Mastodon sign-in").json()
         return f"@{account['acct']} on {urllib.parse.urlparse(self.instance).netloc}"
 
-    def publish(self, text, title, images, link, extra, idempotency_key) -> str:
+    def upload_video(self, path: Path) -> str:
+        """Upload the clip and wait until the instance has processed it; a status cannot attach it before that."""
+        with open(path, "rb") as handle:
+            response = _check(requests.post(
+                f"{self.instance}/api/v2/media", headers=self.headers,
+                files={"file": (path.name, handle, "video/mp4")}, data={"description": video_alt(path)}, timeout=300,
+            ), "Mastodon video upload")
+        media_id = response.json()["id"]
+        for _ in range(VIDEO_POLL_TRIES):
+            if response.status_code == 200:
+                return media_id
+            time.sleep(VIDEO_POLL_SECONDS)  # 202 on upload and 206 on the check both mean "still processing"
+            response = _check(requests.get(f"{self.instance}/api/v1/media/{media_id}", headers=self.headers,
+                                           timeout=TIMEOUT), "Mastodon video processing")
+        raise RuntimeError("Mastodon was still processing the video when the wait ran out")
+
+    def publish(self, text, title, images, link, extra, idempotency_key, video=None) -> str:
         media_ids = []
+        if video:
+            try:
+                media_ids.append(self.upload_video(video))
+                images = []
+            except Exception as error:
+                log.warning("Mastodon did not take the demo video, posting the screenshots instead: %s", error)
         for path in images[:4]:
             data, _, _ = jpeg(path, 8_000_000)
             media = _check(requests.post(
@@ -524,7 +633,7 @@ class DevTo:
         user = _check(requests.get(f"{self.API}/users/me", headers=self.headers, timeout=TIMEOUT), "Dev.to sign-in").json()
         return "@" + user["username"]
 
-    def publish(self, text, title, images, link, extra, idempotency_key) -> str:
+    def publish(self, text, title, images, link, extra, idempotency_key, video=None) -> str:
         article = {"title": title, "body_markdown": text, "published": bool(self.published),
                    "tags": extra.get("tags", []), "canonical_url": extra.get("canonical_url") or None}
         if extra.get("main_image"):
@@ -551,12 +660,24 @@ class Telegram:
         chat = self._call("getChat", data={"chat_id": self.chat})
         return f"@{bot['username']} -> {chat.get('title') or self.chat}"
 
-    def publish(self, text, title, images, link, extra, idempotency_key) -> str:
-        if images:
+    def publish(self, text, title, images, link, extra, idempotency_key, video=None) -> str:
+        message = None
+        if video:
+            try:
+                with open(video, "rb") as handle:
+                    message = self._call(
+                        "sendVideo",
+                        data={"chat_id": self.chat, "caption": text[:1024], "supports_streaming": "true",
+                              "width": DEMO_VIDEO_SIZE[0], "height": DEMO_VIDEO_SIZE[1]},
+                        files={"video": (video.name, handle, "video/mp4")},
+                    )
+            except RuntimeError as error:
+                log.warning("Telegram did not take the demo video, sending the screenshot instead: %s", error)
+        if message is None and images:
             data, _, _ = jpeg(images[0], 9_000_000)
             message = self._call("sendPhoto", data={"chat_id": self.chat, "caption": text[:1024]},
                                  files={"photo": (images[0].stem + ".jpg", data, "image/jpeg")})
-        else:
+        elif message is None:
             message = self._call("sendMessage", data={"chat_id": self.chat, "text": text[:4096]})
         if self.chat.startswith("@"):
             return f"https://t.me/{self.chat[1:]}/{message['message_id']}"
@@ -571,13 +692,22 @@ class Discord:
         hook = _check(requests.get(self.webhook, timeout=TIMEOUT), "Discord webhook").json()
         return f"webhook '{hook.get('name', '?')}'"
 
-    def publish(self, text, title, images, link, extra, idempotency_key) -> str:
+    def publish(self, text, title, images, link, extra, idempotency_key, video=None) -> str:
         payload = {"content": text[:2000], "allowed_mentions": {"parse": []}}
+        attachments = []  # tried in order until the webhook accepts one: the demo video, then the first screenshot
+        if video and video.stat().st_size <= DISCORD_MAX_VIDEO_BYTES:
+            attachments.append((video.name, video.read_bytes(), "video/mp4"))
         if images:
             data, _, _ = jpeg(images[0], 8_000_000)
+            attachments.append((images[0].stem + ".jpg", data, "image/jpeg"))
+        response = None
+        for attachment in attachments:
             response = requests.post(self.webhook + "?wait=true", data={"payload_json": json.dumps(payload)},
-                                     files={"files[0]": (images[0].stem + ".jpg", data, "image/jpeg")}, timeout=120)
-        else:
+                                     files={"files[0]": attachment}, timeout=120)
+            if response.status_code < 300:
+                break
+            log.warning("Discord did not take %s: HTTP %s", attachment[0], response.status_code)
+        if response is None:
             response = requests.post(self.webhook + "?wait=true", json=payload, timeout=TIMEOUT)
         message = _check(response, "Discord post").json()
         return f"https://discord.com/channels/{message.get('guild_id', '@me')}/{message['channel_id']}/{message['id']}" \
@@ -607,7 +737,7 @@ class X:
                                  timeout=TIMEOUT), "X sign-in").json()
         return "@" + me["data"]["username"]
 
-    def publish(self, text, title, images, link, extra, idempotency_key) -> str:
+    def publish(self, text, title, images, link, extra, idempotency_key, video=None) -> str:
         headers = {"Authorization": f"Bearer {self.token()}"}
         media_ids = []
         for path in images[:4]:
@@ -663,6 +793,14 @@ def buffer_channels(api_key: str, services) -> list[dict]:
     return found
 
 
+def video_url_live(url: str) -> bool:
+    """Buffer downloads the video itself, so only hand it a URL that already answers."""
+    try:
+        return requests.head(url, timeout=30, allow_redirects=True).status_code == 200
+    except requests.RequestException:
+        return False
+
+
 BUFFER_CREATE_POST = """mutation CreatePost($input: CreatePostInput!) {
   createPost(input: $input) {
     ... on PostActionSuccess { post { id externalLink } }
@@ -689,13 +827,13 @@ class BufferChannel:
             raise RuntimeError(f"Buffer: reconnect {channel['service']} at {BUFFER_CHANNELS}")
         return f"@{channel['name']} (via Buffer, free)"
 
-    def publish(self, text, title, images, link, extra, idempotency_key) -> str:
+    def _create(self, text: str, assets: list[dict]) -> str:
         post_input = {
             "text": text,
             "channelId": self.channel_id,
             "schedulingType": "automatic",
             "mode": "shareNow",
-            "assets": [{"image": {"url": extra["image_url"]}}] if extra.get("image_url") else [],
+            "assets": assets,
         }
         result = buffer_graphql(self.api_key, BUFFER_CREATE_POST, {"input": post_input}, "Post via Buffer")
         created = result.get("createPost") or {}
@@ -703,20 +841,30 @@ class BufferChannel:
             raise RuntimeError(f"Post via Buffer failed: {created.get('message') or created}")
         return created["post"].get("externalLink") or ""
 
+    def publish(self, text, title, images, link, extra, idempotency_key, video=None) -> str:
+        """Buffer fetches media by public URL: the hosted demo video when it is live, otherwise the project image."""
+        video_url = extra.get("video_url", "")
+        if video_url and video_url_live(video_url):
+            try:
+                return self._create(text, [{"video": {"url": video_url}}])
+            except RuntimeError as error:
+                log.warning("Buffer did not take the demo video, posting the image instead: %s", error)
+        return self._create(text, [{"image": {"url": extra["image_url"]}}] if extra.get("image_url") else [])
+
 
 class XViaBuffer(BufferChannel):
     """X for free: Buffer is an official X partner, so no X API fees."""
 
-    def publish(self, text, title, images, link, extra, idempotency_key) -> str:
-        url = super().publish(text, title, images, link, extra, idempotency_key)
+    def publish(self, text, title, images, link, extra, idempotency_key, video=None) -> str:
+        url = super().publish(text, title, images, link, extra, idempotency_key, video)
         return url or (f"https://x.com/{self.username}" if self.username else "")
 
 
 class ThreadsViaBuffer(BufferChannel):
     """Threads for free through Buffer; links to the profile when Buffer has no post link yet."""
 
-    def publish(self, text, title, images, link, extra, idempotency_key) -> str:
-        url = super().publish(text, title, images, link, extra, idempotency_key)
+    def publish(self, text, title, images, link, extra, idempotency_key, video=None) -> str:
+        url = super().publish(text, title, images, link, extra, idempotency_key, video)
         return url or (f"https://www.threads.com/@{self.username}" if self.username else "")
 
 

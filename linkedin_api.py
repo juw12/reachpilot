@@ -1,4 +1,4 @@
-"""Official LinkedIn API client: OAuth (Sign In with LinkedIn + Share on LinkedIn), images, posts, comments.
+"""Official LinkedIn API client: OAuth (Sign In with LinkedIn + Share on LinkedIn), images, video, posts, comments.
 
 Uses only the self-serve products, so it stays within LinkedIn's terms.
 Tokens last 60 days and self-serve apps get no refresh token: re-run `autopilot.py auth` when warned.
@@ -19,6 +19,8 @@ TOKEN_URL = "https://www.linkedin.com/oauth/v2/accessToken"
 API = "https://api.linkedin.com"
 REDIRECT_URI = "http://localhost:8765/callback"
 SCOPES = "openid profile w_member_social"
+VIDEO_POLL_SECONDS = 3
+VIDEO_POLL_TRIES = 40  # two minutes for LinkedIn to process a short clip
 
 LITTLE_TEXT_RESERVED = re.compile(r"([\\|{}@\[\]()<>#*_~])")
 
@@ -133,7 +135,46 @@ class LinkedInClient:
             time.sleep(2)
         return image_urn
 
-    def create_post(self, text: str, images: list[tuple[str, str]]) -> str:
+    def upload_video(self, path) -> str:
+        """Upload an MP4 in the byte ranges LinkedIn asks for and wait until it is ready to post."""
+        with open(path, "rb") as handle:
+            data = handle.read()
+        init = self._check(requests.post(
+            f"{API}/rest/videos?action=initializeUpload",
+            headers=self.headers,
+            json={"initializeUploadRequest": {"owner": self.author, "fileSizeBytes": len(data),
+                                              "uploadCaptions": False, "uploadThumbnail": False}},
+            timeout=30,
+        ), "video init").json()["value"]
+        part_ids = []
+        for part in init["uploadInstructions"]:
+            uploaded = self._check(requests.put(
+                part["uploadUrl"],
+                headers={"Content-Type": "application/octet-stream"},
+                data=data[part["firstByte"]:part["lastByte"] + 1],
+                timeout=300,
+            ), "video upload")
+            part_ids.append(uploaded.headers.get("ETag", "").strip('"'))
+        video_urn = init["video"]
+        self._check(requests.post(
+            f"{API}/rest/videos?action=finalizeUpload",
+            headers=self.headers,
+            json={"finalizeUploadRequest": {"video": video_urn, "uploadToken": init.get("uploadToken", ""),
+                                            "uploadedPartIds": part_ids}},
+            timeout=60,
+        ), "video finalize")
+        for _ in range(VIDEO_POLL_TRIES):
+            status = requests.get(f"{API}/rest/videos/{urllib.parse.quote(video_urn)}", headers=self.headers, timeout=30)
+            state = status.json().get("status") if status.ok else ""
+            if state == "AVAILABLE":
+                return video_urn
+            if state == "PROCESSING_FAILED":
+                raise RuntimeError("video processing failed on LinkedIn")
+            time.sleep(VIDEO_POLL_SECONDS)
+        raise RuntimeError("video was still processing on LinkedIn when the wait ran out")
+
+    def create_post(self, text: str, images: list[tuple[str, str]], video: tuple[str, str] | None = None) -> str:
+        """A post carries one kind of media: the video (urn, title) when given, otherwise the images."""
         body = {
             "author": self.author,
             "commentary": to_little_text(text),
@@ -146,7 +187,9 @@ class LinkedInClient:
             "lifecycleState": "PUBLISHED",
             "isReshareDisabledByAuthor": False,
         }
-        if len(images) == 1:
+        if video:
+            body["content"] = {"media": {"id": video[0], "title": video[1]}}
+        elif len(images) == 1:
             body["content"] = {"media": {"id": images[0][0], "altText": images[0][1]}}
         elif len(images) > 1:
             body["content"] = {"multiImage": {"images": [{"id": urn, "altText": alt} for urn, alt in images[:20]]}}

@@ -1,13 +1,18 @@
-"""Real visuals only: fresh screenshots of live project pages and media from the repos."""
+"""Real visuals only: fresh screenshots and a short demo video of live project pages, and media from the repos."""
 from __future__ import annotations
 
 import hashlib
 import io
+import re
+import shutil
+import subprocess
+import tempfile
+import time
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
-from github_source import RepoFacts, gh_api
+from github_source import CREATE_NO_WINDOW, RepoFacts, gh_api
 
 FONT_DIR = Path("C:/Windows/Fonts")
 PALETTES = [
@@ -129,3 +134,184 @@ def images_for_post(user: str, angle: str, subjects: list[RepoFacts], out_dir: P
     else:
         ordered = framed + media
     return ordered[:6]
+
+
+# ------------------------------------------------------------------ demo video (a short screen recording of the live site)
+
+DEMO_SIZE = (1280, 720)
+DEMO_MIN_SECONDS = 8
+DEMO_MAX_SECONDS = 22
+DEMO_MAX_CLICKS = 3
+DEMO_MAX_SCREENS = 5
+DEMO_MIN_BYTES = 100_000  # LinkedIn refuses videos under 75 KB; a file this small is a blank page anyway
+# Buttons the demo never presses: anything that signs in, pays, leaves the page or throws work away.
+DEMO_SKIP_LABEL = re.compile(
+    r"delete|remove|reset|clear|sign.?in|log.?in|sign.?up|log.?out|subscribe|buy|pay|donate|checkout|download|install|"
+    r"export|import|upload|share|print|github|star|send|submit|cookie", re.I)
+
+# Headless recordings have no mouse pointer, so the page draws one that follows the real mouse events.
+DEMO_CURSOR_JS = """
+(() => {
+  const install = () => {
+    if (document.getElementById('rp-demo-cursor')) return;
+    const cursor = document.createElement('div');
+    cursor.id = 'rp-demo-cursor';
+    cursor.style.cssText = 'position:fixed;left:0;top:0;width:26px;height:26px;z-index:2147483647;' +
+      'pointer-events:none;transform:translate(-100px,-100px);filter:drop-shadow(0 2px 3px rgba(0,0,0,.45))';
+    cursor.innerHTML = '<svg viewBox="0 0 24 24" width="26" height="26"><path d="M4 2l15 11.5-6.6 1 3.9 7.2-2.9 1.5' +
+      '-3.8-7.3L5 20.5z" fill="#111" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/></svg>';
+    document.documentElement.appendChild(cursor);
+    addEventListener('mousemove', (event) => {
+      cursor.style.transform = `translate(${event.clientX - 4}px, ${event.clientY - 2}px)`;
+    }, true);
+    addEventListener('mousedown', (event) => {
+      const ring = document.createElement('div');
+      ring.style.cssText = 'position:fixed;z-index:2147483646;pointer-events:none;border-radius:50%;' +
+        'width:16px;height:16px;border:3px solid rgba(37,99,235,.9);background:rgba(37,99,235,.25);' +
+        `left:${event.clientX - 11}px;top:${event.clientY - 11}px;transition:transform .45s ease-out, opacity .45s ease-out`;
+      document.documentElement.appendChild(ring);
+      requestAnimationFrame(() => { ring.style.transform = 'scale(3.2)'; ring.style.opacity = '0'; });
+      setTimeout(() => ring.remove(), 500);
+    }, true);
+  };
+  if (document.readyState === 'loading') addEventListener('DOMContentLoaded', install); else install();
+})();
+"""
+
+# Controls worth pressing that are on screen right now and not covered by something else: [{x, y, label}].
+DEMO_TARGETS_JS = """
+() => {
+  const found = [];
+  for (const element of document.querySelectorAll('[role=tab], button, summary, [role=button]')) {
+    if (element.disabled || element.closest('form') || element.getAttribute('type') === 'submit') continue;
+    if (element.getAttribute('aria-selected') === 'true' || element.getAttribute('aria-current')) continue;
+    const box = element.getBoundingClientRect();
+    if (box.width < 24 || box.height < 16 || box.width > 600) continue;
+    const x = box.left + box.width / 2;
+    const y = box.top + box.height / 2;
+    if (x < 8 || y < 8 || x > innerWidth - 8 || y > innerHeight - 8) continue;
+    const top = document.elementFromPoint(x, y);
+    if (!top || !(element === top || element.contains(top))) continue;
+    const label = (element.innerText || element.getAttribute('aria-label') || element.title || '').trim().slice(0, 60);
+    found.push({x, y, label});
+  }
+  return found;
+}
+"""
+
+
+def _ffmpeg() -> str:
+    """The ffmpeg that ships with imageio-ffmpeg (pip installs it, nothing to set up), else one on PATH."""
+    try:
+        import imageio_ffmpeg
+
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception:
+        found = shutil.which("ffmpeg")
+        if not found:
+            raise RuntimeError("no ffmpeg: pip install imageio-ffmpeg")
+        return found
+
+
+def _demo_tour(page, deadline: float) -> None:
+    """Use the page the way a visitor would: look, press a few controls, scroll through it, come back up."""
+    width, height = DEMO_SIZE
+    start_url = page.url.split("#")[0]
+    page.mouse.move(width * 0.78, height * 0.82)
+    page.mouse.move(width * 0.5, height * 0.45, steps=30)
+    page.wait_for_timeout(900)
+    pressed: set[str] = set()
+    for screen in range(DEMO_MAX_SCREENS):
+        for target in page.evaluate(DEMO_TARGETS_JS):
+            if len(pressed) >= DEMO_MAX_CLICKS or time.monotonic() > deadline - 4:
+                break
+            label = target["label"]
+            if len(label) < 2 or label in pressed or DEMO_SKIP_LABEL.search(label):
+                continue
+            pressed.add(label)
+            page.mouse.move(target["x"], target["y"], steps=28)
+            page.wait_for_timeout(280)
+            page.mouse.click(target["x"], target["y"])
+            page.wait_for_timeout(1400)
+            if page.url.split("#")[0] != start_url:  # the control was a link in disguise: the demo stays on the product
+                return
+            if screen or len(pressed) >= 2:  # two controls on the first screen, then one per screen
+                break
+        if time.monotonic() > deadline - 3:
+            break
+        before = page.evaluate("window.scrollY")
+        page.mouse.move(width * 0.5, height * 0.55, steps=12)
+        for _ in range(26):
+            page.mouse.wheel(0, height * 0.8 / 26)
+            page.wait_for_timeout(28)
+        page.wait_for_timeout(1000)
+        if page.evaluate("window.scrollY") == before:
+            break
+    page.evaluate("window.scrollTo({top: 0, behavior: 'smooth'})")
+    page.wait_for_timeout(1300)
+
+
+def record_demo(url: str, output: Path) -> Path:
+    """Record a short silent MP4 of the live page being used. Raises when the page or the encoding fails.
+
+    The browser is a throwaway profile that only reads: every request that is not a GET is blocked, so the
+    recording can press buttons without ever submitting, signing up or saving anything.
+    """
+    from playwright.sync_api import sync_playwright
+
+    width, height = DEMO_SIZE
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="reachpilot_demo_") as folder:
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(channel="msedge", headless=True)
+            context = browser.new_context(
+                viewport={"width": width, "height": height},
+                record_video_dir=folder,
+                record_video_size={"width": width, "height": height},
+                color_scheme="light",
+            )
+            context.route("**/*", lambda route: route.continue_() if route.request.method == "GET" else route.abort())
+            context.add_init_script(DEMO_CURSOR_JS)
+            context.on("page", lambda popup: popup.close() if len(context.pages) > 1 else None)
+            page = context.new_page()
+            page.on("dialog", lambda dialog: dialog.dismiss())
+            started = time.monotonic()
+            try:
+                response = page.goto(url, wait_until="networkidle", timeout=45000)
+                if response is None or response.status >= 400:
+                    raise RuntimeError(f"{url} answered HTTP {response.status if response else 'nothing'}")
+                page.wait_for_timeout(1200)
+                lead_in = max(time.monotonic() - started - 0.4, 0.0)  # the blank loading part, cut from the video
+                tour_start = time.monotonic()
+                try:
+                    _demo_tour(page, tour_start + DEMO_MAX_SECONDS)
+                except Exception:
+                    pass  # a control that misbehaves ends the tour early; what was recorded so far is still a demo
+                remaining = DEMO_MIN_SECONDS - (time.monotonic() - tour_start)
+                if remaining > 0:
+                    page.wait_for_timeout(remaining * 1000)
+                raw = Path(page.video.path())
+            finally:
+                context.close()  # this is what writes the recording to disk
+                browser.close()
+        subprocess.run(
+            [_ffmpeg(), "-y", "-loglevel", "error", "-ss", f"{lead_in:.2f}", "-i", str(raw),
+             "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",  # silent track: some players need one
+             "-vf", "fps=30,format=yuv420p", "-c:v", "libx264", "-preset", "medium", "-crf", "27",
+             "-c:a", "aac", "-b:a", "48k", "-shortest", "-movflags", "+faststart", str(output)],
+            check=True, capture_output=True, timeout=240, creationflags=CREATE_NO_WINDOW,
+        )
+    if output.stat().st_size < DEMO_MIN_BYTES:
+        output.unlink()
+        raise RuntimeError(f"the recording of {url} came out empty")
+    return output
+
+
+def demo_for_post(angle: str, subjects: list[RepoFacts], out_dir: Path) -> Path | None:
+    """The demo video for a post about one project with a live site; None for roundups and repos without a site."""
+    if angle == "roundup" or len(subjects) != 1:
+        return None
+    facts = subjects[0]
+    if not facts.homepage or "//github.com/" in facts.homepage:
+        return None
+    return record_demo(facts.homepage, out_dir / f"{facts.name}_demo.mp4")

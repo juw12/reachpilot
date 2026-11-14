@@ -24,6 +24,7 @@
   "roundup_every_n_posts": 6,
   "mode": "auto",
   "links_in_first_comment": true,
+  "demo_video": true,
   "linkedin_api_version": "202609",
   "ollama_model": "",
   "exclude_repos": [

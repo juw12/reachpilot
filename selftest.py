@@ -301,7 +301,7 @@ with tempfile.TemporaryDirectory() as temp_dir:
         def __init__(self, creds):
             self.creds = creds
 
-        def publish(self, text, title, images, link, extra, idempotency_key):
+        def publish(self, text, title, images, link, extra, idempotency_key, video=None):
             channel = "mastodon" if "instance" in self.creds else "bluesky"
             calls.append((channel, len(images), idempotency_key))
             if channel in self.fail:
@@ -765,6 +765,366 @@ check("first comment" not in inlined and "GitHub: https://github.com/juw12" in i
       and inlined.endswith("\\#OpenSource"), "linkedin: pointer line swapped for the links, hashtags kept")
 no_pointer = inline_links("Just a post.", "GitHub: https://github.com/juw12")
 check(no_pointer == "Just a post.\n\nGitHub: https://github.com/juw12", "linkedin: links appended when there is no pointer line")
+
+# Demo video: recorded for a single-project post, posted natively where the platform takes one, screenshots as the fallback
+import contextlib  # noqa: E402
+import copy  # noqa: E402
+
+import linkedin_api  # noqa: E402
+import visuals  # noqa: E402
+
+
+class VideoResponse:
+    def __init__(self, payload=None, status=200, headers=None):
+        self.payload = payload if payload is not None else {}
+        self.status_code = status
+        self.ok = status < 300
+        self.text = json.dumps(self.payload)
+        self.headers = {"Content-Type": "application/json", **(headers or {})}
+
+    def json(self):
+        return self.payload
+
+
+@contextlib.contextmanager
+def fake_http(routes):
+    """Stand-ins for requests.get/post/put/head: the first (method, url part) route that matches answers.
+
+    A list answers one item per call. Yields the calls made as (method, url, kwargs). No waiting, no network.
+    """
+    calls = []
+
+    def respond(method):
+        def handler(url, **kwargs):
+            calls.append((method, url, kwargs))
+            for route_method, url_part, reply in routes:
+                if route_method == method and url_part in url:
+                    return reply.pop(0) if isinstance(reply, list) else reply
+            return VideoResponse({"error": f"unexpected {method} {url}"}, 500)
+        return handler
+
+    with contextlib.ExitStack() as stack:
+        for method in ("get", "post", "put", "head"):
+            stack.enter_context(mock.patch(f"channels.requests.{method}", respond(method)))
+        stack.enter_context(mock.patch("time.sleep"))
+        yield calls
+
+
+def urls_called(calls, url_part):
+    return [url for _, url, _ in calls if url_part in url]
+
+
+demo_link = "https://juw12.github.io/demo/watt-reserve.mp4"
+split_video, split_shots = channels.split_media(["out/watt-reserve_demo.mp4", "out/home.png", "out/list.png"])
+check(split_video == Path("out/watt-reserve_demo.mp4") and split_shots == [Path("out/home.png"), Path("out/list.png")]
+      and channels.split_media(["out/home.png"]) == (None, [Path("out/home.png")]),
+      "demo video: a post's media splits into the video and the screenshots")
+check(channels.DEMO_VIDEO_SIZE == visuals.DEMO_SIZE, "demo video: channels and visuals agree on the frame size")
+check("demo" in trylinks.RESERVED_NAMES, "demo video: no project go-page can take the demo/ folder")
+
+github_only = copy.copy(facts)
+github_only.homepage = "https://github.com/juw12/watt-reserve"
+no_site = copy.copy(facts)
+no_site.homepage = ""
+with mock.patch("visuals.record_demo", side_effect=lambda url, output: output) as recorder:
+    recorded = visuals.demo_for_post("launch", [facts], Path("out"))
+    skipped = [
+        visuals.demo_for_post("roundup", [facts], Path("out")),
+        visuals.demo_for_post("launch", [facts, github_only], Path("out")),
+        visuals.demo_for_post("launch", [github_only], Path("out")),
+        visuals.demo_for_post("launch", [no_site], Path("out")),
+    ]
+check(recorded == Path("out") / "watt-reserve_demo.mp4" and recorder.call_args[0][0] == facts.homepage,
+      "demo video: a single-project post records its live site")
+check(skipped == [None] * 4 and recorder.call_count == 1,
+      "demo video: roundups and projects without a live site get no recording")
+
+video_variants = channels.build_variants(post_body, post_comment, "launch", facts, video_url=demo_link)
+check(all(video_variants[name]["extra"].get("video_url") == demo_link for name in channels.BUFFER_VIDEO)
+      and not any("video_url" in variant["extra"] for name, variant in video_variants.items()
+                  if name not in channels.BUFFER_VIDEO)
+      and video_variants["x"]["extra"]["image_url"] and "video_url" not in variants["x"]["extra"],
+      "demo video: only X and Threads carry the hosted video link, and they keep the image as fallback")
+
+need_db = sqlite3.connect(":memory:")
+check(channels.needs_video_url(need_db, free_config, free_secrets, "2026-12-01 08:00")
+      and not channels.needs_video_url(free_db, free_config, free_secrets, "2026-11-11 08:00")
+      and not channels.needs_video_url(need_db, {"channels": channels.ALL}, {"channels": {"bluesky": {"handle": "a"}}},
+                                       "2026-12-01 08:00")
+      and not channels.needs_video_url(need_db, {"channels": ["x"]}, {"channels": {"x": {"client_id": "c"}}},
+                                       "2026-12-01 08:00"),
+      "demo video: hosted only when X or Threads through Buffer is still to be queued")
+channels.prepare(need_db, free_config, free_secrets, "2026-12-01 08:00", "watt-reserve", "launch", post_body, post_comment,
+                 [], facts, demo_link)
+stored_extra = json.loads(need_db.execute("SELECT extra FROM channel_posts WHERE channel='x'").fetchone()[0])
+check(stored_extra.get("video_url") == demo_link, "demo video: the hosted link is stored with the queued X post")
+
+with tempfile.TemporaryDirectory() as temp_dir:
+    clip = Path(temp_dir) / "watt-reserve_demo.mp4"
+    clip.write_bytes(b"0123456789")
+    shot = Path(temp_dir) / "home.png"
+    PILImage.new("RGB", (640, 360), "navy").save(shot)
+    logging.disable(logging.WARNING)  # the fallbacks below warn on purpose
+    try:
+        # LinkedIn: byte-range upload, finalize with the part ids, wait until available, post with the video
+        linkedin = linkedin_api.LinkedInClient({"person_urn": "urn:li:person:me", "access_token": "t"}, "202511")
+        with fake_http([
+            ("post", "action=initializeUpload", VideoResponse({"value": {
+                "video": "urn:li:video:V1", "uploadToken": "tok",
+                "uploadInstructions": [
+                    {"uploadUrl": "https://upload.test/part1", "firstByte": 0, "lastByte": 3},
+                    {"uploadUrl": "https://upload.test/part2", "firstByte": 4, "lastByte": 9},
+                ]}})),
+            ("put", "part1", VideoResponse(headers={"ETag": '"e1"'})),
+            ("put", "part2", VideoResponse(headers={"ETag": '"e2"'})),
+            ("post", "action=finalizeUpload", VideoResponse()),
+            ("get", "/rest/videos/", [VideoResponse({"status": "PROCESSING"}), VideoResponse({"status": "AVAILABLE"})]),
+            ("post", "/rest/posts", VideoResponse(status=201, headers={"x-restli-id": "urn:li:share:99"})),
+        ]) as calls:
+            video_urn = linkedin.upload_video(clip)
+            share_urn = linkedin.create_post("Hello", [("urn:li:image:I1", "alt")], video=(video_urn, "watt-reserve demo"))
+        parts = [kwargs["data"] for method, _, kwargs in calls if method == "put"]
+        finalize = next(kwargs["json"] for _, url, kwargs in calls if "finalizeUpload" in url)["finalizeUploadRequest"]
+        posted = next(kwargs["json"] for _, url, kwargs in calls if url.endswith("/rest/posts"))
+        check(video_urn == "urn:li:video:V1" and parts == [b"0123", b"456789"]
+              and finalize == {"video": "urn:li:video:V1", "uploadToken": "tok", "uploadedPartIds": ["e1", "e2"]}
+              and len(urls_called(calls, "/rest/videos/")) == 2,
+              "linkedin: video uploaded in the byte ranges asked for, finalized, and waited for")
+        check(share_urn == "urn:li:share:99"
+              and posted["content"] == {"media": {"id": "urn:li:video:V1", "title": "watt-reserve demo"}},
+              "linkedin: the post carries the video instead of the images")
+        with fake_http([
+            ("post", "action=initializeUpload", VideoResponse({"value": {
+                "video": "urn:li:video:V2", "uploadInstructions": [
+                    {"uploadUrl": "https://upload.test/part1", "firstByte": 0, "lastByte": 9}]}})),
+            ("put", "part1", VideoResponse(headers={"ETag": "e1"})),
+            ("post", "action=finalizeUpload", VideoResponse()),
+            ("get", "/rest/videos/", VideoResponse({"status": "PROCESSING_FAILED"})),
+        ]):
+            try:
+                linkedin.upload_video(clip)
+                failed_processing = False
+            except RuntimeError:
+                failed_processing = True
+        check(failed_processing, "linkedin: a video LinkedIn cannot process is reported, not posted")
+
+        # autopilot.publish: a refused video post falls back to the screenshots, so the slot still posts
+        linkedin_posts = []
+
+        class FakeLinkedIn:
+            refuse_video = True
+
+            def __init__(self, token, api_version):
+                pass
+
+            def upload_video(self, path):
+                return "urn:li:video:V1"
+
+            def upload_image(self, path):
+                return "urn:li:image:I1"
+
+            def create_post(self, text, images, video=None):
+                linkedin_posts.append((len(images), video))
+                if video and self.refuse_video:
+                    raise RuntimeError("post failed: HTTP 422")
+                return "urn:li:share:1"
+
+            @staticmethod
+            def post_url(urn):
+                return "https://linkedin.test/" + urn
+
+        publish_db = sqlite3.connect(":memory:")
+        publish_db.execute("CREATE TABLE posts(slot TEXT, status TEXT, urn TEXT, url TEXT, posted_at TEXT, error TEXT)")
+        publish_db.execute("INSERT INTO posts(slot, status) VALUES('2026-12-01 08:00', 'draft')")
+        publish_row = ("auto", "watt-reserve", "launch", "Hello", "", json.dumps([str(clip), str(shot)]))
+        publish_config = {"linkedin_api_version": "202511", "timezone_offset_hours": 7}
+        with mock.patch("linkedin_api.LinkedInClient", FakeLinkedIn), mock.patch("autopilot.notify"), \
+             mock.patch("autopilot.track_links", side_effect=lambda config, db, text: text):
+            autopilot.publish(publish_config, publish_db, "2026-12-01 08:00", publish_row, {})
+            refused_then_images = list(linkedin_posts)
+            linkedin_posts.clear()
+            FakeLinkedIn.refuse_video = False
+            autopilot.publish(publish_config, publish_db, "2026-12-01 08:00", publish_row, {})
+        check(refused_then_images == [(0, ("urn:li:video:V1", "watt-reserve demo")), (1, None)]
+              and publish_db.execute("SELECT status FROM posts").fetchone()[0] == "posted",
+              f"linkedin: a refused video post goes out with the screenshots instead ({refused_then_images})")
+        check(linkedin_posts == [(0, ("urn:li:video:V1", "watt-reserve demo"))],
+              f"linkedin: an accepted video post is posted once, without images ({linkedin_posts})")
+
+        # Bluesky: service token for the user's own server, upload, wait for the job, embed the processed blob
+        bluesky_session = VideoResponse({
+            "accessJwt": "jwt", "did": "did:plc:me", "handle": "juw12.bsky.social",
+            "didDoc": {"service": [{"serviceEndpoint": "https://pds.example.test"}]},
+        })
+        video_blob = {"$type": "blob", "ref": {"$link": "bafyvideo"}, "mimeType": "video/mp4", "size": 10}
+        bluesky = channels.Bluesky({"handle": "juw12.bsky.social", "app_password": "p"})
+        with fake_http([
+            ("post", "createSession", bluesky_session),
+            ("get", "getServiceAuth", VideoResponse({"token": "service-token"})),
+            ("post", "uploadVideo", VideoResponse({"jobId": "job1", "state": "JOB_STATE_CREATED"})),
+            ("get", "getJobStatus", [
+                VideoResponse({"jobStatus": {"jobId": "job1", "state": "JOB_STATE_ENCODING"}}),
+                VideoResponse({"jobStatus": {"jobId": "job1", "state": "JOB_STATE_COMPLETED", "blob": video_blob}}),
+            ]),
+            ("post", "uploadBlob", VideoResponse({"blob": {"ref": "image"}})),
+            ("post", "createRecord", VideoResponse({"uri": "at://did:plc:me/app.bsky.feed.post/abc"})),
+        ]) as calls:
+            bluesky_url = bluesky.publish(text="Hello", title="", images=[shot], link=facts.homepage, extra={},
+                                          idempotency_key="k", video=clip)
+        auth = next(kwargs for _, url, kwargs in calls if "getServiceAuth" in url)
+        upload = next(kwargs for _, url, kwargs in calls if "uploadVideo" in url)
+        embed = next(kwargs for _, url, kwargs in calls if "createRecord" in url)["json"]["record"]["embed"]
+        check(bluesky_url.endswith("/post/abc") and auth["params"]["aud"] == "did:web:pds.example.test"
+              and upload["headers"]["Authorization"] == "Bearer service-token" and upload["data"] == b"0123456789"
+              and embed["$type"] == "app.bsky.embed.video" and embed["video"] == video_blob
+              and embed["aspectRatio"] == {"width": 1280, "height": 720} and not urls_called(calls, "uploadBlob"),
+              "bluesky: the processed video is embedded in place of the screenshots")
+        with fake_http([
+            ("post", "createSession", bluesky_session),
+            ("get", "getServiceAuth", VideoResponse({"token": "service-token"})),
+            ("post", "uploadVideo", VideoResponse({"error": "upload limit reached"}, 400)),
+            ("post", "uploadBlob", VideoResponse({"blob": {"ref": "image"}})),
+            ("post", "createRecord", VideoResponse({"uri": "at://did:plc:me/app.bsky.feed.post/def"})),
+        ]) as calls:
+            bluesky.publish(text="Hello", title="", images=[shot], link="", extra={}, idempotency_key="k", video=clip)
+        embed = next(kwargs for _, url, kwargs in calls if "createRecord" in url)["json"]["record"]["embed"]
+        check(embed["$type"] == "app.bsky.embed.images" and len(embed["images"]) == 1,
+              "bluesky: a refused video falls back to the screenshots")
+
+        # Mastodon: the upload answers 202, the media check 206 until it is ready
+        mastodon = channels.Mastodon({"instance": "mastodon.test", "access_token": "t"})
+        with fake_http([
+            ("post", "/api/v2/media", VideoResponse({"id": "m9"}, 202)),
+            ("get", "/api/v1/media/m9", [VideoResponse({"id": "m9"}, 206), VideoResponse({"id": "m9"})]),
+            ("post", "/api/v1/statuses", VideoResponse({"url": "https://mastodon.test/@me/1"})),
+        ]) as calls:
+            mastodon_url = mastodon.publish(text="Hello", title="", images=[shot], link="", extra={}, idempotency_key="k",
+                                            video=clip)
+        status = next(kwargs for _, url, kwargs in calls if "/api/v1/statuses" in url)
+        check(mastodon_url == "https://mastodon.test/@me/1" and status["data"]["media_ids[]"] == ["m9"]
+              and len(urls_called(calls, "/api/v1/media/m9")) == 2 and len(urls_called(calls, "/api/v2/media")) == 1,
+              "mastodon: waits until the video is processed, then attaches it alone")
+        with fake_http([
+            ("post", "/api/v2/media", [VideoResponse({"error": "too large"}, 422), VideoResponse({"id": "img1"})]),
+            ("post", "/api/v1/statuses", VideoResponse({"url": "https://mastodon.test/@me/2"})),
+        ]) as calls:
+            mastodon.publish(text="Hello", title="", images=[shot], link="", extra={}, idempotency_key="k", video=clip)
+        status = next(kwargs for _, url, kwargs in calls if "/api/v1/statuses" in url)
+        check(status["data"]["media_ids[]"] == ["img1"], "mastodon: a refused video falls back to the screenshots")
+
+        # Telegram: sendVideo, or the screenshot when the bot refuses the file
+        telegram = channels.Telegram({"bot_token": "b", "chat_id": "@juwenbuilds"})
+        with fake_http([("post", "/sendVideo", VideoResponse({"ok": True, "result": {"message_id": 7}}))]) as calls:
+            telegram_url = telegram.publish(text="Hello", title="", images=[shot], link="", extra={}, idempotency_key="k",
+                                            video=clip)
+        check(telegram_url == "https://t.me/juwenbuilds/7" and len(calls) == 1
+              and calls[0][2]["files"]["video"][0] == "watt-reserve_demo.mp4" and calls[0][2]["data"]["caption"] == "Hello",
+              "telegram: the video is sent with the post as its caption")
+        with fake_http([
+            ("post", "/sendVideo", VideoResponse({"ok": False, "description": "file is too big"}, 413)),
+            ("post", "/sendPhoto", VideoResponse({"ok": True, "result": {"message_id": 8}})),
+        ]) as calls:
+            telegram_url = telegram.publish(text="Hello", title="", images=[shot], link="", extra={}, idempotency_key="k",
+                                            video=clip)
+        check(telegram_url == "https://t.me/juwenbuilds/8" and [url.rsplit("/", 1)[-1] for _, url, _ in calls]
+              == ["sendVideo", "sendPhoto"], "telegram: a refused video falls back to the screenshot")
+
+        # Discord: the video when it fits the webhook limit and is accepted, otherwise the screenshot
+        discord = channels.Discord({"webhook_url": "https://discord.test/api/webhooks/1/abc"})
+        discord_message = {"id": "30", "channel_id": "20", "guild_id": "10"}
+        with fake_http([("post", "discord.test", VideoResponse(discord_message))]) as calls:
+            discord.publish(text="Hello", title="", images=[shot], link="", extra={}, idempotency_key="k", video=clip)
+        check(len(calls) == 1 and calls[0][2]["files"]["files[0]"][0] == "watt-reserve_demo.mp4",
+              "discord: the video is attached to the post")
+        with fake_http([("post", "discord.test", [VideoResponse({"message": "too large"}, 413),
+                                                  VideoResponse(discord_message)])]) as calls:
+            discord.publish(text="Hello", title="", images=[shot], link="", extra={}, idempotency_key="k", video=clip)
+        check([kwargs["files"]["files[0]"][0] for _, _, kwargs in calls] == ["watt-reserve_demo.mp4", "home.jpg"],
+              "discord: a refused video falls back to the screenshot")
+        with fake_http([("post", "discord.test", VideoResponse(discord_message))]) as calls, \
+             mock.patch.object(channels, "DISCORD_MAX_VIDEO_BYTES", 5):
+            discord.publish(text="Hello", title="", images=[shot], link="", extra={}, idempotency_key="k", video=clip)
+        check([kwargs["files"]["files[0]"][0] for _, _, kwargs in calls] == ["home.jpg"],
+              "discord: a video over the webhook size limit is never uploaded")
+
+        # X / Threads through Buffer: the hosted video when its URL answers, otherwise the project image
+        buffer_extra = {"image_url": "https://example.test/shot.png", "video_url": demo_link}
+        buffer_posted = VideoResponse({"data": {"createPost": {"post": {"id": "p1", "externalLink": "https://x.test/9"}}}})
+
+        def buffer_assets(calls):
+            return [kwargs["json"]["variables"]["input"]["assets"] for method, _, kwargs in calls if method == "post"]
+
+        with fake_http([("head", demo_link, VideoResponse()), ("post", channels.BUFFER_API, buffer_posted)]) as calls:
+            buffer_video_url = channels.XViaBuffer(buffer_creds).publish(
+                text=x_post, title="", images=[], link="", extra=buffer_extra, idempotency_key="k", video=clip)
+        check(buffer_video_url == "https://x.test/9" and buffer_assets(calls) == [[{"video": {"url": demo_link}}]],
+              "x/buffer: posts the hosted demo video when its link is live")
+        with fake_http([("head", demo_link, VideoResponse(status=404)), ("post", channels.BUFFER_API, buffer_posted)]) as calls:
+            channels.ThreadsViaBuffer(threads_creds).publish(
+                text=x_post, title="", images=[], link="", extra=buffer_extra, idempotency_key="k", video=clip)
+        check(buffer_assets(calls) == [[{"image": {"url": "https://example.test/shot.png"}}]],
+              "threads/buffer: a video link that is not live yet posts the image")
+        with fake_http([
+            ("head", demo_link, VideoResponse()),
+            ("post", channels.BUFFER_API, [
+                VideoResponse({"data": {"createPost": {"message": "Video is not supported"}}}), buffer_posted]),
+        ]) as calls:
+            channels.XViaBuffer(buffer_creds).publish(
+                text=x_post, title="", images=[], link="", extra=buffer_extra, idempotency_key="k", video=clip)
+        check(buffer_assets(calls) == [[{"video": {"url": demo_link}}], [{"image": {"url": "https://example.test/shot.png"}}]],
+              "x/buffer: a video Buffer refuses is re-posted with the image")
+
+        # autopilot: the video leads the post's media, a failed recording never costs the post, and the switch works
+        choice = {"angle": "launch", "facts": [facts]}
+        with mock.patch("autopilot.visuals.images_for_post", return_value=[shot]):
+            with mock.patch("autopilot.visuals.demo_for_post", return_value=clip):
+                media = autopilot.build_images({"github_user": "juw12"}, choice, "2026-12-01 08:00")
+            with mock.patch("autopilot.visuals.demo_for_post", side_effect=RuntimeError("no browser")):
+                media_without = autopilot.build_images({"github_user": "juw12"}, choice, "2026-12-01 08:00")
+            with mock.patch("autopilot.visuals.demo_for_post", return_value=clip) as switched_off:
+                media_off = autopilot.build_images({"github_user": "juw12", "demo_video": False}, choice, "2026-12-01 08:00")
+        check(media == [str(clip), str(shot)], "autopilot: the demo video comes first in a post's media")
+        check(media_without == [str(shot)], "autopilot: a failed recording still posts the screenshots")
+        check(media_off == [str(shot)] and not switched_off.called, 'autopilot: "demo_video": false records nothing')
+
+        with mock.patch.object(autopilot, "DRAFTS", Path(temp_dir) / "drafts"):
+            draft_text = autopilot.write_draft("2026-12-01 08:00", "Hello", "Links", media).read_text(encoding="utf-8")
+        check(f"## Demo video\n\n- {clip}" in draft_text and f"## Images\n\n- {shot}" in draft_text
+              and draft_text.count("_demo.mp4") == 1, "autopilot: the draft lists the demo video apart from the images")
+
+        # Hosting for Buffer: demo/<repo>.mp4 on the Pages site, pushed once, reused while recent, "" when it cannot go live
+        pages = Path(temp_dir) / ".pages"
+        pages.mkdir()
+        git_calls = []
+        push_code = [0]
+
+        def fake_pages_git(args, cwd):
+            git_calls.append(args[0])
+            return subprocess.CompletedProcess(args, push_code[0] if args[0] == "push" else 0, "", "rejected")
+
+        with mock.patch("trylinks._pages_checkout", return_value=True), mock.patch("trylinks._git", fake_pages_git), \
+             mock.patch("time.sleep"):
+            with mock.patch("trylinks._is_live", side_effect=[False, True]):
+                hosted_url = trylinks.host_demo_video("juw12", "watt-reserve", clip, pages, quiet)
+            first_git = list(git_calls)
+            git_calls.clear()
+            with mock.patch("trylinks._is_live", return_value=True):
+                reused_url = trylinks.host_demo_video("juw12", "watt-reserve", clip, pages, quiet)
+            reuse_git = list(git_calls)
+            with mock.patch("trylinks._is_live", return_value=False):
+                never_live = trylinks.host_demo_video("juw12", "kilat", clip, pages, quiet)
+            push_code[0] = 1
+            with mock.patch("trylinks._is_live", return_value=True):
+                push_failed = trylinks.host_demo_video("juw12", "cairn", clip, pages, quiet)
+        with mock.patch("trylinks._pages_checkout", return_value=False):
+            no_checkout = trylinks.host_demo_video("juw12", "watt-reserve", clip, pages, quiet)
+        check(hosted_url == demo_link and (pages / "demo" / "watt-reserve.mp4").read_bytes() == b"0123456789"
+              and first_git == ["add", "commit", "push"], f"demo hosting: the clip is committed, pushed and served ({first_git})")
+        check(reused_url == demo_link and reuse_git == [], "demo hosting: a recent live clip is reused without a new commit")
+        check(never_live == "" and push_failed == "" and no_checkout == "",
+              "demo hosting: no link is handed out unless the clip is really live")
+    finally:
+        logging.disable(logging.NOTSET)
 
 print("\nALL PASSED" if not failures else f"\n{len(failures)} FAILED")
 sys.exit(1 if failures else 0)

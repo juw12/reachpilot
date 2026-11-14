@@ -11,6 +11,10 @@ Runs every 30 minutes from Windows Task Scheduler (`autopilot.py install`). Each
 Each post also goes to the other platforms you connected (channels.py): Bluesky, Mastodon, Dev.to, Telegram,
 Discord, and X, Threads and Substack (free through Buffer). Each platform publishes and retries on its own.
 
+A post about one project with a live site also gets a demo video: a short screen recording of the site being used
+(visuals.record_demo). The video leads the post wherever the platform takes one and the screenshots are the fallback.
+Switch it off with "demo_video": false in config.json.
+
 Commands:  init | auth | channels | tick | preview [N] | status | install | uninstall
 Kill switch: create a file named PAUSE in this folder.
 """
@@ -399,6 +403,7 @@ class Picker:
 
 
 def build_images(config, choice, slot: str) -> list[str]:
+    """The post's media: the demo video first (when the project has a live site), then the screenshots."""
     if choice.get("images"):
         return choice["images"]
     out_dir = GENERATED / slot.replace(":", "").replace(" ", "_")
@@ -407,7 +412,13 @@ def build_images(config, choice, slot: str) -> list[str]:
     except Exception as error:
         log.warning("Image capture failed (%s); posting text-only", error)
         paths = []
-    return [str(path) for path in paths]
+    video = None
+    if config.get("demo_video", True):
+        try:
+            video = visuals.demo_for_post(choice["angle"], choice["facts"], out_dir)
+        except Exception as error:
+            log.warning("Demo video failed (%s); posting the screenshots only", error)
+    return [str(path) for path in ([video] if video else []) + list(paths)]
 
 
 # ------------------------------------------------------------------ posting
@@ -515,13 +526,27 @@ def publish(config, db, slot, row, token) -> None:
     comment = track_links(config, db, comment)
     body = track_links(config, db, body)
     client = LinkedInClient(token, config["linkedin_api_version"])
-    uploaded = []
-    for path in json.loads(images_json):
+    video, image_paths = channels.split_media(json.loads(images_json))
+    post_urn = None
+    if video:
         try:
-            uploaded.append((client.upload_image(path), f"Screenshot: {Path(path).stem.replace('_', ' ')}"))
+            video_urn = client.upload_video(video)
         except Exception as error:
-            log.warning("Skipping image %s: %s", path, error)
-    post_urn = client.create_post(body, uploaded)
+            log.warning("Demo video upload failed (%s); posting the screenshots instead", error)
+            video_urn = None
+        if video_urn:
+            try:
+                post_urn = client.create_post(body, [], video=(video_urn, f"{repo or 'Project'} demo"))
+            except RuntimeError as error:  # LinkedIn refused the video post, so nothing was posted yet
+                log.warning("LinkedIn refused the video post (%s); posting the screenshots instead", error)
+    if post_urn is None:
+        uploaded = []
+        for path in image_paths:
+            try:
+                uploaded.append((client.upload_image(path), f"Screenshot: {Path(path).stem.replace('_', ' ')}"))
+            except Exception as error:
+                log.warning("Skipping image %s: %s", path, error)
+        post_urn = client.create_post(body, uploaded)
     url = client.post_url(post_urn)
     posted_at = local_now(config).strftime("%Y-%m-%d %H:%M")
     db.execute(
@@ -563,9 +588,16 @@ def facts_for(config, db, repo: str | None, repos: dict) -> object | None:
 def queue_channels(config, db, slot: str, row, facts) -> None:
     """Once per slot: the Bluesky / Mastodon / Dev.to / Telegram / Discord versions."""
     source, repo, angle, body, comment, images_json = row[:6]
-    queued = channels.prepare(
-        db, config, load_secrets(), slot, repo, angle, body, comment or "", json.loads(images_json or "[]"), facts,
-    )
+    media = json.loads(images_json or "[]")
+    secrets = load_secrets()
+    video, _ = channels.split_media(media)
+    video_url = ""
+    if video and repo and video.exists() and channels.needs_video_url(db, config, secrets, slot):
+        try:  # X and Threads go through Buffer, which fetches media by public URL
+            video_url = trylinks.host_demo_video(config["github_user"], repo, video, PAGES_CHECKOUT, log)
+        except Exception as error:
+            log.warning("Hosting the demo video failed (%s); X and Threads get the image", error)
+    queued = channels.prepare(db, config, secrets, slot, repo, angle, body, comment or "", media, facts, video_url)
     if queued:
         log.info("Queued %s for %s", ", ".join(channels.LABELS[name] for name in queued), slot)
 
@@ -670,8 +702,12 @@ def tick(config, db) -> None:
 def write_draft(slot: str, body: str, comment: str, images: list[str], variants: dict | None = None) -> Path:
     DRAFTS.mkdir(exist_ok=True)
     path = DRAFTS / (slot.replace(":", "").replace(" ", "_") + ".md")
-    image_lines = "\n".join(f"- {image}" for image in images)
-    text = f"# Slot {slot}\n\n{body}\n\n## First comment\n\n{comment}\n\n## Images\n\n{image_lines}\n"
+    video, pictures = channels.split_media(images)
+    image_lines = "\n".join(f"- {image}" for image in pictures)
+    text = f"# Slot {slot}\n\n{body}\n\n## First comment\n\n{comment}\n\n"
+    if video:
+        text += f"## Demo video\n\n- {video}\n\n"
+    text += f"## Images\n\n{image_lines}\n"
     for channel, variant in (variants or {}).items():
         heading = channels.LABELS[channel] + (f": {variant['title']}" if variant["title"] else "")
         text += f"\n## {heading} ({len(variant['body'])} chars)\n\n{variant['body']}\n"

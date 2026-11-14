@@ -396,7 +396,8 @@ class Handler(BaseHTTPRequestHandler):
         if not allowed or not path.is_file():
             self.send(404, b"Not found", "text/plain")
             return
-        self.send(200, path.read_bytes(), mimetypes.guess_type(path.name)[0] or "application/octet-stream")
+        kind = "video/mp4" if path.suffix.lower() == ".mp4" else mimetypes.guess_type(path.name)[0]
+        self.send(200, path.read_bytes(), kind or "application/octet-stream")
 
     def send(self, code: int, body: bytes, content_type: str) -> None:
         self.send_response(code)

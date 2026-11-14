@@ -5,7 +5,8 @@
 <p align="center">
   <b>Turns your GitHub into a posting schedule.</b><br>
   For developers who ship side projects but never get round to posting them. ReachPilot writes each post from
-  your repo's real facts, adds a fresh screenshot, posts it through LinkedIn's official API, cuts it to fit Bluesky,
+  your repo's real facts, adds a short demo video of the product being used (or a fresh screenshot), posts it
+  through LinkedIn's official API, cuts it to fit Bluesky,
   Mastodon, Dev.to, and X, Threads and Substack (free through Buffer), and learns which projects people click.
 </p>
 
@@ -37,7 +38,12 @@ Every 30 minutes, Windows Task Scheduler runs one pass:
    new repo → new release → your hand-written queue → active-repo update → top-performer roundup → an older project from a fresh angle.
 3. **Writes the post from facts only**: README tagline and feature bullets, description, topics, commit messages.
    A guard rejects any number that isn't in the source. No invented users, stars or backstory.
-4. **Adds real visuals**: a fresh screenshot of the live site (and the repo page), plus media from the README.
+4. **Adds real visuals**: a short demo video of the product being used, recorded fresh from the live site
+   (8 to 22 seconds: it looks, presses a few controls, scrolls through and comes back up), posted natively on
+   LinkedIn and every platform that takes video. The recording only reads the site: every request that is not
+   a GET is blocked and sign-in, pay, delete and download buttons are never pressed. Projects without a live
+   site, and any platform that refuses the video, get a fresh screenshot of the site (and the repo page) plus
+   media from the README instead. Switch the video off with `"demo_video": false` in `config.json`.
 5. **Never repeats itself**: four angles (launch, one-feature deep dive, behind the build, ask for feedback),
    different README facts each time, a 21-day cooldown per project and a similarity cap against every past post.
    If nothing fresh qualifies, it skips the slot instead of reposting.
@@ -59,13 +65,13 @@ Every LinkedIn slot also goes to the platforms you connect, each cut to fit from
 
 | Platform | What it gets | You need |
 |---|---|---|
-| Bluesky | short post (300 characters), up to 4 screenshots, clickable link | your password once (setup turns it into an app password and stores only that) |
-| Mastodon | short post (500 characters), screenshots | an access token from your instance |
+| Bluesky | short post (300 characters), the demo video (or up to 4 screenshots), clickable link | your password once (setup turns it into an app password and stores only that) |
+| Mastodon | short post (500 characters), the demo video (or screenshots) | an access token from your instance |
 | Dev.to | an article for launches and releases (max one per project every 60 days), canonical URL back to you | an API key |
-| Telegram | the full post with the first screenshot, in your own channel | a bot token + channel |
-| Discord | the full post with the first screenshot, in your own server | a webhook URL |
-| X | short post (280 characters as X counts them), the project's image, one link | a free Buffer account with your X connected, and a Buffer API key (Buffer publishes it, so no X API fees) |
-| Threads | short post (500 characters), one topic tag, the project's image, one link | Threads connected in the same Buffer account (same API key) |
+| Telegram | the full post with the demo video (or the first screenshot), in your own channel | a bot token + channel |
+| Discord | the full post with the demo video (or the first screenshot), in your own server | a webhook URL |
+| X | short post (280 characters as X counts them), the demo video (or the project's image), one link | a free Buffer account with your X connected, and a Buffer API key (Buffer publishes it, so no X API fees) |
+| Threads | short post (500 characters), one topic tag, the demo video (or the project's image), one link | Threads connected in the same Buffer account (same API key) |
 | Substack | a Substack Note with the post and links, the project's image | Substack connected in the same Buffer account (same API key) |
 
 Each platform publishes and retries on its own (3 attempts within 3 days), so one platform failing never blocks
@@ -73,8 +79,10 @@ LinkedIn or the others. `preview` shows every platform's version.
 
 X's own API now charges per post, so ReachPilot posts to X through [Buffer](https://buffer.com)'s free plan
 and public API instead: Buffer is an official X partner and publishes the post to your account straight away,
-at no cost. Buffer can't take local files, so the X post carries the README's first image (or GitHub's card for
-the repo). If you'd rather use the paid X API directly, type `api` at the setup prompt; those posts are capped
+at no cost. Buffer can't take local files, so the demo video is published at
+`https://<you>.github.io/demo/<repo>.mp4` (your GitHub Pages repo, replaced at most every 60 days) and Buffer
+fetches it from there for X and Threads. When that link isn't live yet, or Buffer refuses the video, the post
+carries the README's first image (or GitHub's card for the repo). If you'd rather use the paid X API directly, type `api` at the setup prompt; those posts are capped
 by `x_monthly_budget_usd` in `config.json` (about $0.20 per post with a link; default $5 a month).
 
 Once a day `growth.py` grows the audience and points all of it at GitHub:
@@ -105,7 +113,8 @@ It never follows, likes or replies to strangers automatically: Mastodon instance
 
 ## Setup
 
-You need Windows 10 or 11, Python 3.10+, Microsoft Edge (used for screenshots, so no browser download),
+You need Windows 10 or 11, Python 3.10+, Microsoft Edge (used for screenshots and the demo recording, so no browser download; `pip` brings its own
+ffmpeg through `imageio-ffmpeg`),
 the [GitHub CLI](https://cli.github.com/) and a free LinkedIn developer app.
 
 ```powershell
@@ -144,9 +153,9 @@ the dashboard and a Windows notification remind you a week before.
 | Service | Why | What is sent |
 |---|---|---|
 | GitHub | find repos, READMEs, commits, traffic | read-only requests through `gh` (public API as fallback) |
-| LinkedIn | publish and measure posts | the post text, images and the first comment with links |
-| Bluesky, Mastodon, Dev.to, Telegram, Discord (only those you connect) | publish the cut-down post | the post text, screenshots and links |
-| Buffer (X, Threads, Substack, only those you connect) | publishes the cut-down post right away | the post text, the project image URL and links |
+| LinkedIn | publish and measure posts | the post text, the demo video or images, and the first comment with links |
+| Bluesky, Mastodon, Dev.to, Telegram, Discord (only those you connect) | publish the cut-down post | the post text, the demo video or screenshots, and links |
+| Buffer (X, Threads, Substack, only those you connect) | publishes the cut-down post right away | the post text, the demo video URL or project image URL, and links |
 | GoatCounter (optional) | count "Try it" clicks | a page view when someone opens a tracked go-link |
 | Ollama (optional, local) | rephrase a post | nothing leaves your PC |
 
@@ -185,12 +194,12 @@ numbers are older than 15 minutes it starts `promotion.py refresh` in the backgr
 | `autopilot.py` | scheduler and commands |
 | `composer.py` | post writing and the no-invented-facts guards |
 | `github_source.py` | README and commit facts |
-| `visuals.py` | screenshots (Edge, headless) |
-| `linkedin_api.py` | OAuth, images, posts, comments |
+| `visuals.py` | screenshots and the demo video recording (Edge, headless) |
+| `linkedin_api.py` | OAuth, images, video, posts, comments |
 | `channels.py` | Bluesky, Mastodon, Dev.to, Telegram, Discord: per-platform cutting, publishing, retries |
 | `growth.py` | daily: profiles, pinned intro, follow-back, follower counts |
 | `analytics.py` | reach scoring |
-| `trylinks.py` | tracked go-links |
+| `trylinks.py` | tracked go-links, demo video hosting on GitHub Pages |
 | `dashboard.py` + `dashboard.html` | local dashboard (restarts itself onto new code) |
 | `hub.py` | dashboard modules, to-do list and whitelisted actions |
 | `selfupdate.py` | fast-forward updater used by the dashboard and the Updates task |

@@ -888,7 +888,7 @@ def help_sections(tasks: dict, podcast: dict | None = None) -> list[dict]:
 
     entries = [
         {"module": "LinkedIn", "runs": "Every 30 minutes; posts Tue/Wed/Thu 08:00. " + when("linkedin", ""),
-         "auto": "Picks a project, writes the post from real README facts, adds screenshots, posts through the official API, learns from clicks and stars.",
+         "auto": "Picks a project, writes the post from real README facts, records a short demo video of the live site and adds screenshots, posts through the official API, learns from clicks and stars.",
          "you": "Renew the LinkedIn login every 60 days (you get a reminder here and a Windows notification)."},
         {"module": "Platforms", "runs": "With every LinkedIn slot (same task, same days).",
          "auto": "Cuts each post to fit Bluesky (300 characters) and Mastodon (500), sends the full post to your Telegram channel and Discord "
