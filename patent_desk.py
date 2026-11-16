@@ -9,7 +9,8 @@ one every day:
                 fills it.
     readiness   eight checks over the dossier and the repository's test runs on GitHub, 100 points in total
     package     once the dossier has content: a draft US provisional specification (Markdown, HTML and PDF),
-                the cover sheet fields (form PTO/SB/16), a filing checklist and notes for the attorney
+                the cover sheet fields (form PTO/SB/16), a filing checklist and notes for the attorney;
+                for a ready package also the form itself with the dossier's values typed in, to check and sign
     dates       before filing: the 12-month date of a public repository; after filing: the 12 months to file
                 the non-provisional or PCT application, which cannot be extended
 
@@ -72,6 +73,25 @@ EDGE = (
     Path(os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)")) / "Microsoft" / "Edge" / "Application" / "msedge.exe",
     Path(os.environ.get("PROGRAMFILES", r"C:\Program Files")) / "Microsoft" / "Edge" / "Application" / "msedge.exe",
 )
+# Form PTO/SB/16, the provisional cover sheet, as the USPTO publishes it. The desk keeps one blank copy next to
+# the dossiers (data/patents/forms/, git-ignored) and types a project's values into a copy of it. The names are
+# the form's own field names. Address, entity status, fee, payment, government interest, signature and date are
+# never typed in: they are yours.
+SB16_URL = "https://www.uspto.gov/sites/default/files/documents/sb0016.pdf"
+SB16_FILE = "sb16_prefilled.pdf"
+SB16_ROWS = 5  # inventor rows on the form; a sixth inventor goes on the form's continuation sheet, by hand
+SB16_ON = "/On"
+SB16_FIELDS = {
+    "given": "Given Name first and middle if anyRow{row}",
+    "family": "Family Name or SurnameRow{row}",
+    "residence": "Residence City and either State or Foreign CountryRow{row}",
+    "title": "TITLE OF THE INVENTION 500 characters maxRow1",
+    "specification": "Specification eg description of the invention",
+    "pages": "Number of Pages",
+    "drawings": "Drawings",
+    "sheets": "Number of Sheets",
+    "docket": "DOCKET NUMBER",
+}
 
 
 def dossiers_dir() -> Path:
@@ -522,7 +542,7 @@ def to_html(blocks: list[tuple]) -> str:
             f"<style>{style}</style></head><body>\n" + "\n".join(parts) + "\n</body></html>\n")
 
 
-def cover_sheet(name: str, dossier: dict, pages: int | None = None) -> str:
+def cover_sheet(name: str, dossier: dict, pages: int | None = None, prefilled: bool = False) -> str:
     title = (_text(dossier.get("title")) or name)[:500]
     figures = [figure for figure in _items(dossier.get("figures")) if isinstance(figure, dict) and _text(figure.get("file"))]
     inventors = [inventor for inventor in _items(dossier.get("inventors")) if isinstance(inventor, dict)]
@@ -545,6 +565,11 @@ def cover_sheet(name: str, dossier: dict, pages: int | None = None) -> str:
         (f"- Specification: specification.pdf has {pages} page(s) in total, drawing sheets included" if pages else
          "- Specification: count the pages of specification.pdf: ____ pages"),
         f"- Drawings: {len(figures)} sheet(s)" if figures else "- Drawings: none listed in the dossier",
+    ]
+    if pages and figures and pages > len(figures):
+        lines.append(f"- On the form: {pages - len(figures)} page(s) of specification and {len(figures)} sheet(s) of drawings. "
+                     "Each figure prints on a sheet of its own, after the text.")
+    lines += [
         "- Application Data Sheet (37 CFR 1.76): optional", "",
         "## Entity status and fee", "",
         f"Provisional filing fee when this was written: {FEES}. Check the current USPTO fee schedule before paying.",
@@ -553,6 +578,14 @@ def cover_sheet(name: str, dossier: dict, pages: int | None = None) -> str:
         "## Payment", "", "Card or deposit account, entered at Patent Center.", "",
         "## US Government interest", "", "Was the invention made under a contract with a US Government agency? Normally: No.", "",
     ]
+    if prefilled:
+        lines += [
+            "## The form itself", "",
+            f"{SB16_FILE} in this folder is form PTO/SB/16 from uspto.gov with the inventor, title, page and sheet counts",
+            "and the docket number above typed in. It is a draft: check every field against this sheet, then add your",
+            "address, entity status, fee and payment, the government interest answer, your signature and the date.",
+            "ReachPilot sends it nowhere.", "",
+        ]
     return "\n".join(lines)
 
 
@@ -572,6 +605,7 @@ def checklist(name: str, row: dict | None = None) -> str:
         "   Ask the attorney whether your country of residence requires a first filing at home or a permission to file abroad.",
         "5. To file yourself: create a USPTO.gov account, pass its identity verification, and open Patent Center.",
         "6. Upload specification.pdf and the drawings, and fill the cover sheet fields from cover_sheet.md (form PTO/SB/16).",
+        f"   When {SB16_FILE} is in this folder, it is that form with those fields typed in: check it, complete it, sign it.",
         f"7. Pay the provisional filing fee: {FEES}. Check the current fee schedule first.",
         "8. Save the filing receipt. On the Patent desk card in ReachPilot, press Record filing and enter the date and the application number.",
         "9. From that date you have 12 months to file the non-provisional or PCT application. That date cannot be extended.",
@@ -600,20 +634,141 @@ def attorney_notes(name: str, dossier: dict, item: dict | None = None) -> str:
     return "\n".join(lines)
 
 
-def print_pdf(source: Path, target: Path, timeout: int = 90) -> bool:
-    """HTML to PDF with the Edge that ships with Windows. False when Edge is missing or the print fails."""
-    edge = next((path for path in EDGE if path.exists()), None)
+def complete_pdf(path: Path) -> bool:
+    """A PDF that was written to its end: the header, more than 1000 bytes, and the end-of-file mark."""
+    try:
+        with open(path, "rb") as handle:
+            head = handle.read(5)
+            size = handle.seek(0, os.SEEK_END)
+            handle.seek(max(0, size - 1024))
+            tail = handle.read()
+    except OSError:
+        return False
+    return head.startswith(b"%PDF") and size > 1000 and b"%%EOF" in tail
+
+
+def _stop_tree(process) -> None:
+    """Stop a process and everything it started. A headless Edge leaves its children running when only the
+    parent is stopped. This Edge has a profile of its own, so no other Edge window belongs to it."""
+    try:
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/T", "/F", "/PID", str(process.pid)], stdin=subprocess.DEVNULL,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=20,
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        process.kill()
+        process.wait(timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+
+def print_pdf(source: Path, target: Path, timeout: int = 90, edge: Path | None = None,
+              launch=subprocess.Popen, stop=_stop_tree) -> bool:
+    """HTML to PDF with the Edge that ships with Windows. False when Edge is missing or no complete PDF came out.
+    Edge sometimes writes the file and then does not exit: after the timeout that Edge is stopped, and the file
+    counts when it is complete. Nothing is read from Edge's output, so a child that holds a pipe cannot block."""
+    edge = edge or next((path for path in EDGE if path.exists()), None)
     if edge is None:
         return False
     target.unlink(missing_ok=True)
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as profile:
         try:
-            subprocess.run([str(edge), "--headless=new", "--disable-gpu", "--no-pdf-header-footer", f"--user-data-dir={profile}",
-                            f"--print-to-pdf={target}", source.resolve().as_uri()],
-                           capture_output=True, timeout=timeout, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            process = launch([str(edge), "--headless=new", "--disable-gpu", "--no-pdf-header-footer", f"--user-data-dir={profile}",
+                              f"--print-to-pdf={target}", source.resolve().as_uri()],
+                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        except OSError:
+            return False
+        try:
+            process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            stop(process)
         except (OSError, subprocess.SubprocessError):
             return False
-    return target.exists() and target.stat().st_size > 1000
+    return complete_pdf(target)
+
+
+def sb16_values(name: str, dossier: dict, pages: int | None = None) -> dict:
+    """What the desk can say on form PTO/SB/16, by the form's field names: inventors, title, docket number, and
+    the page and sheet counts when they are known. Empty values are left out, so a blank stays blank."""
+    values = {SB16_FIELDS["title"]: (_text(dossier.get("title")) or name)[:500], SB16_FIELDS["docket"]: name}
+    inventors = [inventor for inventor in _items(dossier.get("inventors")) if isinstance(inventor, dict)]
+    for row, inventor in enumerate(inventors[:SB16_ROWS], 1):
+        for key in ("given", "family", "residence"):
+            if _text(inventor.get(key)):
+                values[SB16_FIELDS[key].format(row=row)] = _text(inventor.get(key))
+    sheets = len([figure for figure in _items(dossier.get("figures")) if isinstance(figure, dict) and _text(figure.get("file"))])
+    if pages and pages > sheets:  # the printed PDF holds the text and then one sheet per figure
+        values[SB16_FIELDS["specification"]] = SB16_ON
+        values[SB16_FIELDS["pages"]] = str(pages - sheets)
+    if sheets:
+        values[SB16_FIELDS["drawings"]] = SB16_ON
+        values[SB16_FIELDS["sheets"]] = str(sheets)
+    return values
+
+
+def _download(url: str, limit: int = 5_000_000) -> bytes:
+    from urllib.request import Request, urlopen
+
+    with urlopen(Request(url, headers={"User-Agent": "Mozilla/5.0 (ReachPilot patent desk)"}), timeout=30) as reply:
+        return reply.read(limit)
+
+
+_sb16_asked = False
+
+
+def sb16_form(download=None) -> Path | None:
+    """The blank form, data/patents/forms/sb0016.pdf. Fetched from uspto.gov when it is not there yet, at most
+    once per run. None when it cannot be had; the next run asks again."""
+    global _sb16_asked
+    path = patents.DATA_DIR / "forms" / "sb0016.pdf"
+    if complete_pdf(path):
+        return path
+    if download is None:
+        if _sb16_asked:
+            return None
+        _sb16_asked = True
+    try:
+        data = (download or _download)(SB16_URL)
+    except Exception:  # no network, a proxy, a moved file: the package is built without the form
+        return None
+    if not isinstance(data, bytes) or not data.startswith(b"%PDF") or b"%%EOF" not in data[-1024:]:
+        return None
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
+    return path if complete_pdf(path) else None
+
+
+def can_prefill() -> bool:
+    try:
+        import pypdf  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+def prefill_sb16(form: Path, target: Path, values: dict) -> bool:
+    """A copy of the form with the values typed in, read back before it is kept. False, and no file, when pypdf
+    is not installed, the form lacks one of the fields, or the copy does not read back as written."""
+    target.unlink(missing_ok=True)
+    if not can_prefill():
+        return False
+    from pypdf import PdfReader, PdfWriter
+
+    try:
+        writer = PdfWriter(clone_from=str(form))
+        for page in writer.pages:
+            if "/Annots" in page:
+                writer.update_page_form_field_values(page, values, auto_regenerate=False)
+        writer.set_need_appearances_writer(True)
+        with open(target, "wb") as handle:
+            writer.write(handle)
+        fields = PdfReader(str(target)).get_fields() or {}
+        kept = bool(values) and all(key in fields and str(fields[key].get("/V")) == value for key, value in values.items())
+    except Exception:  # a damaged or changed form must not stop the package
+        kept = False
+    if not kept:
+        target.unlink(missing_ok=True)
+    return kept
 
 
 def pdf_pages(path: Path) -> int | None:
@@ -643,8 +798,27 @@ def build_package(name: str, dossier: dict, item: dict | None = None, row: dict 
     (target / "attorney_notes.md").write_text(attorney_notes(name, dossier, item), encoding="utf-8")
     made = pdf and print_pdf(target / "specification.html", target / "specification.pdf")
     pages = pdf_pages(target / "specification.pdf") if made else None
-    (target / "cover_sheet.md").write_text(cover_sheet(name, dossier, pages), encoding="utf-8")
-    return {"built": date.today().isoformat(), "pdf": bool(made), "draft": not ready}
+    filled = False
+    if pdf:  # the form only for a package that is ready: a typed-in cover sheet on a draft invites filing it
+        form = sb16_form() if ready and can_prefill() else None
+        filled = bool(form) and prefill_sb16(form, target / SB16_FILE, sb16_values(name, dossier, pages))
+        if not filled:
+            (target / SB16_FILE).unlink(missing_ok=True)
+    (target / "cover_sheet.md").write_text(cover_sheet(name, dossier, pages, filled), encoding="utf-8")
+    return {"built": date.today().isoformat(), "pdf": bool(made), "draft": not ready, "sb16": filled}
+
+
+def package_stale(old: dict, fingerprint: str, target: Path, pdf: bool = True, ready: bool = False,
+                  edge: bool | None = None, form=sb16_form) -> bool:
+    """Whether a package is built again: the dossier, stage or score changed, the specification is gone, or a
+    part that could not be made last time (the printed PDF, the typed-in form) can be tried again."""
+    if old.get("fingerprint") != fingerprint or not (target / "specification.md").exists():
+        return True
+    if not pdf:
+        return False
+    if not old.get("pdf") and (any(path.exists() for path in EDGE) if edge is None else edge):
+        return True
+    return ready and not old.get("sb16") and can_prefill() and form() is not None
 
 
 def _fingerprint(dossier: dict, item: dict) -> str:
@@ -757,7 +931,7 @@ def refresh(today: date | None = None, fetch_ci=ci_state, pdf: bool = True) -> d
             continue
         fingerprint = _fingerprint(dossier, item)
         old = fact.get("package") if isinstance(fact.get("package"), dict) else {}
-        if old.get("fingerprint") == fingerprint and (folder(item["name"]) / "provisional" / "specification.md").exists():
+        if not package_stale(old, fingerprint, folder(item["name"]) / "provisional", pdf, item["stage"] == "ready"):
             continue
         fact["package"] = {**build_package(item["name"], dossier, item, by_name.get(item["name"]), pdf), "fingerprint": fingerprint}
         built += 1

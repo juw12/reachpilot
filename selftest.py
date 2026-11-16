@@ -3132,6 +3132,260 @@ try:
     check("specification.pdf has 5 page(s) in total, drawing sheets included" in counted_sheet and "____ pages" not in counted_sheet
           and "Drawings: 2 sheet(s)" in counted_sheet and "count the pages of specification.pdf: ____ pages" in cover_text,
           "patent desk: the cover sheet states the page count of the printed specification, and asks you to count when no PDF was printed")
+    # The printed PDF: Edge may write the file and then not exit. The form PTO/SB/16 with the dossier's values typed in.
+    hinge = patent_desk.load_dossier("hinge-lab")
+    form_field = patent_desk.SB16_FIELDS
+    typed = patent_desk.sb16_values("hinge-lab", hinge, 5)
+    check(typed == {
+        form_field["title"]: "Friction hinge with a printed torque limiter", form_field["docket"]: "hinge-lab",
+        form_field["given"].format(row=1): "Ada", form_field["family"].format(row=1): "Example",
+        form_field["residence"].format(row=1): "Springfield, Nowhere",
+        form_field["specification"]: "/On", form_field["pages"]: "3", form_field["drawings"]: "/On", form_field["sheets"]: "2"},
+        "patent desk: the form gets the title, the docket number, the inventor and the two counts, and nothing else")
+    uncounted = patent_desk.sb16_values("hinge-lab", hinge)
+    check(form_field["pages"] not in uncounted and form_field["specification"] not in uncounted and uncounted[form_field["sheets"]] == "2"
+          and form_field["pages"] not in patent_desk.sb16_values("hinge-lab", hinge, 2),
+          "patent desk: without a page count that leaves text pages, the form's page number and its box stay empty")
+    crowd = patent_desk.sb16_values("crowd", {"title": "T" * 600, "inventors": [
+        {"given": f"Given{number}", "family": f"Family{number}"} for number in range(1, 8)]})
+    check(len(crowd[form_field["title"]]) == 500 and crowd[form_field["family"].format(row=5)] == "Family5"
+          and form_field["given"].format(row=6) not in crowd and not any("Residence" in key for key in crowd)
+          and form_field["drawings"] not in crowd and form_field["sheets"] not in crowd
+          and patent_desk.sb16_values("bare", {"inventors": [{"given": "", "family": None}, "damaged"]})
+          == {form_field["title"]: "bare", form_field["docket"]: "bare"},
+          "patent desk: the title is cut to the form's 500 characters, five inventor rows are typed, and a blank stays blank")
+    typed_sheet = patent_desk.cover_sheet("hinge-lab", hinge, 5, True)
+    check("- On the form: 3 page(s) of specification and 2 sheet(s) of drawings." in typed_sheet
+          and "## The form itself" in typed_sheet and "sb16_prefilled.pdf" in typed_sheet and "ReachPilot sends it nowhere." in typed_sheet
+          and "- On the form: 3 page(s) of specification" in counted_sheet and "## The form itself" not in counted_sheet
+          and "sb16_prefilled.pdf" not in counted_sheet and "On the form" not in cover_text
+          and "sb16_prefilled.pdf" in (package / "filing_checklist.md").read_text(encoding="utf-8"),
+          "patent desk: the cover sheet splits the pages into text and drawing sheets, and names the typed-in form only when it was made")
+
+    fake_pdf = (b"%PDF-1.4\n1 0 obj<</Type /Pages /Count 5 /Kids [2 0 R 3 0 R 4 0 R 5 0 R 6 0 R]>>endobj\n"
+                + b"".join(b"%d 0 obj<</Type /Page /Parent 1 0 R>>endobj\n" % number for number in range(2, 7))
+                + b"% " + b"x" * 1000 + b"\n%%EOF\n")
+    edge_options = []
+    edge_stopped = []
+
+    def fake_edge(content, hangs):
+        def launch(command, **options):
+            printed = Path(next(part for part in command if part.startswith("--print-to-pdf=")).split("=", 1)[1])
+            process = mock.Mock()
+
+            def wait(timeout=None):
+                if content is not None:
+                    printed.write_bytes(content)
+                if hangs:
+                    raise patent_desk.subprocess.TimeoutExpired(command, timeout)
+                return 0
+
+            process.wait = wait
+            edge_options.append(options)
+            return process
+        return launch
+
+    def no_edge(command, **options):
+        raise OSError("cannot start")
+
+    with tempfile.TemporaryDirectory() as print_folder:
+        page_source = Path(print_folder) / "page.html"
+        page_source.write_text("<p>page</p>", encoding="utf-8")
+        printed_pdf = Path(print_folder) / "page.pdf"
+        check(patent_desk.pdf_pages(Path(print_folder) / "none.pdf") is None and not patent_desk.complete_pdf(printed_pdf), "patent desk: no file is no PDF")
+        printed_pdf.write_bytes(fake_pdf)
+        whole = patent_desk.complete_pdf(printed_pdf) and patent_desk.pdf_pages(printed_pdf) == 5
+        printed_pdf.write_bytes(fake_pdf[:600])
+        cut_short = patent_desk.complete_pdf(printed_pdf)
+        printed_pdf.write_bytes(b"%PDF-1.4\n%%EOF\n")
+        too_small = patent_desk.complete_pdf(printed_pdf)
+        printed_pdf.write_bytes(b"<html>" + b"x" * 2000 + b"%%EOF")
+        check(whole and not cut_short and not too_small and not patent_desk.complete_pdf(printed_pdf),
+              "patent desk: a PDF counts when it has its header, its end-of-file mark and more than a stub's bytes")
+
+        def edge_print(content, hangs, launch=None):
+            return patent_desk.print_pdf(page_source, printed_pdf, timeout=1, edge=Path("edge"),
+                                         launch=launch or fake_edge(content, hangs), stop=edge_stopped.append)
+
+        hung_but_written = edge_print(fake_pdf, True)
+        check(hung_but_written is True and len(edge_stopped) == 1 and printed_pdf.read_bytes() == fake_pdf
+              and edge_options[-1]["stdout"] == patent_desk.subprocess.DEVNULL and edge_options[-1]["stderr"] == patent_desk.subprocess.DEVNULL,
+              "patent desk: an Edge that wrote the PDF and did not exit is stopped, and its complete file is kept; no pipe is read")
+        hung_half_written = edge_print(fake_pdf[:600], True)
+        hung_and_empty = edge_print(None, True)
+        check(hung_half_written is False and hung_and_empty is False and len(edge_stopped) == 3 and not printed_pdf.exists(),
+              "patent desk: an Edge that hung on a half-written or missing PDF gives no PDF")
+        printed_pdf.write_bytes(fake_pdf)
+        stale_print = edge_print(None, False)
+        clean_print = edge_print(fake_pdf, False)
+        with mock.patch.object(patent_desk, "EDGE", ()):
+            without_edge = patent_desk.print_pdf(page_source, printed_pdf)
+        check(stale_print is False and clean_print is True and len(edge_stopped) == 3 and edge_print(None, False, no_edge) is False
+              and without_edge is False,
+              "patent desk: a normal print stops nothing; an old PDF is not passed off as new; no Edge, no PDF")
+
+    def no_network(url):
+        raise OSError("no network")
+
+    form_asked = []
+
+    def form_host(url):
+        form_asked.append(url)
+        return fake_pdf
+
+    check(patent_desk.sb16_form(no_network) is None and patent_desk.sb16_form(lambda url: b"<html>blocked</html>") is None
+          and patent_desk.sb16_form(lambda url: fake_pdf[:600]) is None and not (patents.DATA_DIR / "forms").exists(),
+          "patent desk: no network, a block page or a cut-off download leaves no form behind")
+    kept_form = patent_desk.sb16_form(form_host)
+    check(kept_form == patents.DATA_DIR / "forms" / "sb0016.pdf" and kept_form.read_bytes() == fake_pdf
+          and form_asked == [patent_desk.SB16_URL] and patent_desk.SB16_URL.startswith("https://www.uspto.gov/")
+          and patent_desk.sb16_form(no_network) == kept_form,
+          "patent desk: the blank form comes from uspto.gov once and is then read from data/patents/forms")
+    kept_form.unlink()
+    asked_before = patent_desk._sb16_asked
+    try:
+        patent_desk._sb16_asked = False
+        with mock.patch.object(patent_desk, "_download", side_effect=OSError("no network")) as asked_form:
+            check(patent_desk.sb16_form() is None and patent_desk.sb16_form() is None and asked_form.call_count == 1,
+                  "patent desk: a form that cannot be fetched is asked for once per run, not once per package")
+    finally:
+        patent_desk._sb16_asked = asked_before
+
+    stale = patent_desk.package_stale
+    built_whole = {"fingerprint": "f1", "pdf": True, "sb16": True}
+    check(stale({}, "f1", package) and stale(built_whole, "f2", package) and stale(built_whole, "f1", desk_home / "nowhere")
+          and not stale(built_whole, "f1", package, True, True, True, lambda: package)
+          and not stale({"fingerprint": "f1"}, "f1", package, False, True, True, lambda: package),
+          "patent desk: a package is built again when the dossier changed or the specification is gone, and otherwise left alone")
+    check(stale({**built_whole, "pdf": False}, "f1", package, True, False, True, lambda: None)
+          and not stale({**built_whole, "pdf": False}, "f1", package, True, False, False, lambda: None)
+          and stale({"fingerprint": "f1", "pdf": True}, "f1", package, True, True, True, lambda: package) is patent_desk.can_prefill()
+          and not stale({"fingerprint": "f1", "pdf": True}, "f1", package, True, False, True, lambda: package)
+          and not stale({"fingerprint": "f1", "pdf": True}, "f1", package, True, True, True, lambda: None),
+          "patent desk: a PDF or a typed-in form that could not be made is tried again on the next run, when it can be made")
+
+    form_made = package / patent_desk.SB16_FILE
+    with mock.patch.dict(sys.modules, {"pypdf": None}):
+        check(not patent_desk.can_prefill() and patent_desk.prefill_sb16(package / "specification.md", form_made, typed) is False
+              and not form_made.exists() and not stale({"fingerprint": "f1", "pdf": True}, "f1", package, True, True, True, lambda: package),
+              "patent desk: without pypdf no form is typed in, and nothing fails")
+
+    def fake_print(source, target, *rest, **options):
+        target.write_bytes(fake_pdf)
+        return True
+
+    desk_row = {row["name"]: row for row in desk_rows}
+
+    def build_printed(name, form):
+        with mock.patch.object(patent_desk, "print_pdf", fake_print), mock.patch.object(patent_desk, "sb16_form", form):
+            return patent_desk.build_package(name, patent_desk.load_dossier(name), on_desk[name], desk_row.get(name), True)
+
+    if patent_desk.can_prefill():
+        from pypdf import PdfReader, PdfWriter
+        from pypdf.generic import ArrayObject, DictionaryObject, FloatObject, NameObject, NumberObject, StreamObject, TextStringObject
+
+        def tiny_form(path, text_names, box_names):
+            """A one-page form with the kinds of field PTO/SB/16 has: text fields, and check boxes with /On and /Off."""
+            def box(*numbers):
+                return ArrayObject(FloatObject(number) for number in numbers)
+
+            writer = PdfWriter()
+            page = writer.add_blank_page(width=612, height=792)
+            font = writer._add_object(DictionaryObject({
+                NameObject("/Type"): NameObject("/Font"), NameObject("/Subtype"): NameObject("/Type1"),
+                NameObject("/BaseFont"): NameObject("/Helvetica")}))
+            widgets = ArrayObject()
+            for index, title in enumerate(list(text_names) + list(box_names)):
+                top = 760 - 20 * index
+                widget = DictionaryObject({
+                    NameObject("/Type"): NameObject("/Annot"), NameObject("/Subtype"): NameObject("/Widget"),
+                    NameObject("/T"): TextStringObject(title), NameObject("/Rect"): box(40, top - 14, 400, top),
+                    NameObject("/F"): NumberObject(4), NameObject("/P"): page.indirect_reference})
+                if title in box_names:
+                    marks = DictionaryObject()
+                    for state in ("/On", "/Off"):
+                        mark = StreamObject()
+                        mark[NameObject("/Type")] = NameObject("/XObject")
+                        mark[NameObject("/Subtype")] = NameObject("/Form")
+                        mark[NameObject("/BBox")] = box(0, 0, 14, 14)
+                        mark._data = b"0 0 14 14 re f" if state == "/On" else b""
+                        marks[NameObject(state)] = writer._add_object(mark)
+                    widget.update({NameObject("/FT"): NameObject("/Btn"), NameObject("/V"): NameObject("/Off"),
+                                   NameObject("/AS"): NameObject("/Off"), NameObject("/AP"): DictionaryObject({NameObject("/N"): marks})})
+                else:
+                    widget.update({NameObject("/FT"): NameObject("/Tx"), NameObject("/DA"): TextStringObject("/Helv 9 Tf 0 g")})
+                widgets.append(writer._add_object(widget))
+            page[NameObject("/Annots")] = widgets
+            writer._root_object[NameObject("/AcroForm")] = DictionaryObject({
+                NameObject("/Fields"): widgets, NameObject("/DA"): TextStringObject("/Helv 9 Tf 0 g"),
+                NameObject("/DR"): DictionaryObject({NameObject("/Font"): DictionaryObject({NameObject("/Helv"): font})})})
+            with open(path, "wb") as handle:
+                writer.write(handle)
+
+        def form_state(path):
+            reader = PdfReader(str(path))
+            values = {key: (None if field.get("/V") is None else str(field.get("/V"))) for key, field in reader.get_fields().items()}
+            shown = {str(widget.get_object()["/T"]): str(widget.get_object().get("/AS"))
+                     for widget in reader.pages[0]["/Annots"] if widget.get_object().get("/FT") == "/Btn"}
+            return values, shown
+
+        yours = ["Signature", "Mailing Address", "Micro entity"]
+        blank_form = desk_home / "blank_form.pdf"
+        tiny_form(blank_form,
+                  [form_field[key].format(row=row) for row in (1, 2) for key in ("given", "family", "residence")]
+                  + [form_field["title"], form_field["pages"], form_field["sheets"], form_field["docket"]] + yours[:2],
+                  [form_field["specification"], form_field["drawings"], yours[2]])
+        blank_bytes = blank_form.read_bytes()
+        filled_ok = patent_desk.prefill_sb16(blank_form, form_made, typed)
+        filled_values, filled_boxes = form_state(form_made) if filled_ok else ({}, {})
+        check(filled_ok and patent_desk.complete_pdf(form_made) and all(filled_values.get(key) == value for key, value in typed.items())
+              and filled_boxes == {form_field["specification"]: "/On", form_field["drawings"]: "/On", yours[2]: "/Off"}
+              and filled_values[yours[0]] is None and filled_values[yours[1]] is None and filled_values[yours[2]] == "/Off"
+              and filled_values[form_field["given"].format(row=2)] is None and blank_form.read_bytes() == blank_bytes,
+              "patent desk: the form is a copy with the values typed in and read back; signature, address and entity stay untouched")
+        logging.disable(logging.CRITICAL)
+        try:
+            unknown_field = patent_desk.prefill_sb16(blank_form, form_made, {**typed, "Not on this form": "x"})
+            left_behind = form_made.exists()
+            not_a_form = patent_desk.prefill_sb16(package / "specification.md", form_made, typed)
+            nothing_to_type = patent_desk.prefill_sb16(blank_form, form_made, {})
+        finally:
+            logging.disable(logging.NOTSET)
+        check(unknown_field is False and not left_behind and not_a_form is False and nothing_to_type is False and not form_made.exists(),
+              "patent desk: a form that lacks a field, or is not the form, leaves no typed-in copy behind")
+
+        form_calls = mock.Mock(return_value=blank_form)
+        ready_build = build_printed("hinge-lab", form_calls)
+        ready_values = form_state(form_made)[0] if form_made.exists() else {}
+        check(ready_build == {"built": patent_date.today().isoformat(), "pdf": True, "draft": False, "sb16": True}
+              and ready_values.get(form_field["pages"]) == "3" and ready_values.get(form_field["sheets"]) == "2"
+              and ready_values.get(form_field["docket"]) == "hinge-lab"
+              and "## The form itself" in (package / "cover_sheet.md").read_text(encoding="utf-8")
+              and "- On the form: 3 page(s) of specification and 2 sheet(s) of drawings." in (package / "cover_sheet.md").read_text(encoding="utf-8"),
+              "patent desk: a ready package gets the typed-in form, with the page count of the PDF that was just printed")
+        draft_build = build_printed("pocket-rig", form_calls)
+        draft_package = patent_desk.folder("pocket-rig") / "provisional"
+        check(draft_build == {"built": patent_date.today().isoformat(), "pdf": True, "draft": True, "sb16": False}
+              and form_calls.call_count == 1 and not (draft_package / patent_desk.SB16_FILE).exists()
+              and "The form itself" not in (draft_package / "cover_sheet.md").read_text(encoding="utf-8"),
+              "patent desk: a draft package never gets a typed-in form")
+        no_form_build = build_printed("hinge-lab", lambda: None)
+        check(no_form_build["sb16"] is False and no_form_build["pdf"] is True and not form_made.exists()
+              and "The form itself" not in (package / "cover_sheet.md").read_text(encoding="utf-8")
+              and "specification.pdf has 5 page(s)" in (package / "cover_sheet.md").read_text(encoding="utf-8"),
+              "patent desk: when the blank form cannot be had, an older typed-in copy is removed and the package is still built")
+    else:
+        no_pypdf_build = build_printed("hinge-lab", lambda: package / "specification.md")
+        check(no_pypdf_build["sb16"] is False and no_pypdf_build["pdf"] is True and not form_made.exists(),
+              "patent desk: without pypdf the package is built without the typed-in form")
+    for name in ("hinge-lab", "pocket-rig"):  # back to what the run without a PDF left, for the checks below
+        for printed_name in ("specification.pdf", patent_desk.SB16_FILE):
+            (patent_desk.folder(name) / "provisional" / printed_name).unlink(missing_ok=True)
+        patent_desk.build_package(name, patent_desk.load_dossier(name), on_desk[name], desk_row.get(name), False)
+    check(sorted(path.name for path in package.iterdir())
+          == ["attorney_notes.md", "cover_sheet.md", "filing_checklist.md", "specification.html", "specification.md"]
+          and (package / "cover_sheet.md").read_text(encoding="utf-8") == cover_text,
+          "patent desk: a build without a PDF writes no form and no page count")
     draft_folder = patent_desk.folder("pocket-rig") / "provisional"
     check("This repository is private" in (package / "filing_checklist.md").read_text(encoding="utf-8")
           and "cannot be extended" in (package / "filing_checklist.md").read_text(encoding="utf-8")

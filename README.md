@@ -380,6 +380,9 @@ not decided to publish, licence or skip, and shows them in a second Overview car
   computed, and the specification prints that word in its heading.
 - **ready to file**: all eight pass. The run has built a provisional package in the dossier folder: the
   specification as PDF, HTML and Markdown, the cover sheet fields, a filing checklist and notes for an attorney.
+  It also gets `sb16_prefilled.pdf`: the patent office's cover sheet form PTO/SB/16 with the inventor, the
+  title, the page and drawing-sheet counts and the docket number typed in. Your address, entity status, fee
+  and signature stay blank. It is a draft to check, complete and sign.
 - **filed**: you record the filing date and application number on the card, and the desk counts down the 12
   months to the non-provisional or PCT application.
 - **waiting on ownership**: a project that touches your employer's field stays here until you mark it cleared.
@@ -388,7 +391,9 @@ Stage changes are kept as a short history, and a ready package, a closing window
 to-dos. ReachPilot files nothing: a filing needs your identity check at the patent office, your name as inventor
 and your payment. The readiness number counts what is written down; it cannot judge novelty, so have an attorney
 read a draft before it is filed. The PDF is printed with Microsoft Edge when it is installed; without it the HTML
-and Markdown are still written. `python patent_desk.py show` prints the desk.
+and Markdown are still written. The form needs `pip install pypdf`; the blank form is fetched once from uspto.gov
+into `data/patents/forms/` (git-ignored) and is never committed. A PDF or a form that could not be made is tried
+again on the next daily run. `python patent_desk.py show` prints the desk.
 
 ## Files
 
