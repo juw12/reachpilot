@@ -142,6 +142,112 @@ def _pretty_task_time(raw: str) -> str:
 
 # ------------------------------------------------------------------ jobs module
 
+AUTO_APPLY_KINDS = {"APPLIED": "applied", "needs you": "needs_you", "later": "later", "already": "already", "ready": "ready"}
+AUTO_APPLY_LINE = re.compile(r"^  (left for you|trying|APPLIED|needs you|later|ready|already)\s+(?:\d+|dig)\s+(.*)$")
+AUTO_APPLY_HEADER = re.compile(r"^Auto-apply (CRASHED )?(\d{4}-\d\d-\d\d \d\d:\d\d)( \(dry run\))?")
+
+
+def auto_apply_view(folder: Path) -> dict | None:
+    """What the scheduled auto-apply (modules/jobs/auto_apply.py) did, read from the two files it writes:
+    logs/auto_apply.log (one block per run) and digest_apply_state.json (its queue from the Big tech mail).
+    Real runs only, newest first. None where it has never run, so the Jobs tab has no Auto-apply card there."""
+    log = folder / "logs" / "auto_apply.log"
+    try:
+        with log.open("rb") as handle:
+            handle.seek(max(0, log.stat().st_size - 200_000))
+            lines = handle.read().decode("utf-8", errors="replace").splitlines()
+        fresh = time.time() - log.stat().st_mtime < 1800
+    except OSError:
+        return None
+
+    def new_run(when: str, dry: bool = False) -> dict:
+        return {"when": when, "dry": dry, "crashed": "", "submitted": None, "results": [], "left": [], "notes": []}
+
+    runs: list[dict] = []
+    trying, in_crash = "", False
+    for line in lines:
+        header = AUTO_APPLY_HEADER.match(line)
+        if header and not header.group(1):
+            runs.append(new_run(header.group(2), bool(header.group(3))))
+            trying, in_crash = "", False
+            continue
+        if header:  # the crash marker closes the run it interrupted; a finished run before it is left alone
+            if not runs or runs[-1]["submitted"] is not None or runs[-1]["crashed"]:
+                runs.append(new_run(header.group(2)))
+            runs[-1]["crashed"] = header.group(2)
+            in_crash = True
+            continue
+        if not runs or in_crash:  # in_crash: the traceback under the marker
+            continue
+        run = runs[-1]
+        footer = re.match(r"Submitted (\d+) application", line)
+        if footer:
+            run["submitted"] = int(footer.group(1))
+            continue
+        entry = AUTO_APPLY_LINE.match(line)
+        if not entry:
+            if line.startswith("  (") or "stay queued" in line:
+                run["notes"].append(line.strip().strip("()")[:240])
+            continue
+        kind, rest = entry.group(1), entry.group(2).strip()
+        if kind == "trying":
+            trying = rest
+        elif kind == "left for you":
+            job, _, reason = rest.partition(": ")
+            run["left"].append((job.strip(), reason.strip()))
+        else:  # the line repeats the label of the "trying" line above it, then says how it ended
+            if trying and rest.startswith(trying):
+                job, detail = trying, rest[len(trying):]
+            else:
+                job, _, detail = rest.partition(": ")
+            run["results"].append({"when": run["when"], "kind": AUTO_APPLY_KINDS[kind], "job": job.strip(),
+                                   "detail": detail.strip(" :")[:300]})
+
+    runs = [run for run in runs if not run["dry"]][::-1]
+    if not runs:
+        return None
+    for position, run in enumerate(runs):
+        if run["crashed"]:
+            run["state"] = "crashed"
+        elif run["submitted"] is not None:
+            run["state"] = "finished"
+        else:  # no closing line: still going if the log moved in the last half hour, otherwise it was cut off
+            run["state"] = "running" if position == 0 and fresh else "stopped"
+        run["counts"] = {name: sum(1 for row in run["results"] if row["kind"] == name) for name in AUTO_APPLY_KINDS.values()}
+
+    reasons: dict[str, list[str]] = {}
+    for job, reason in runs[0]["left"]:
+        names = reasons.setdefault(re.split(r"[:;]", reason)[0].strip() or "no reason given", [])
+        if job not in names:
+            names.append(job)
+    left = sorted(({"reason": reason, "jobs": names} for reason, names in reasons.items()), key=lambda item: -len(item["jobs"]))
+
+    digest = {"counts": {}, "queued": [], "needs_you": []}
+    try:
+        state = json.loads((folder / "digest_apply_state.json").read_text(encoding="utf-8"))
+        entries = [entry for entry in state.values() if isinstance(entry, dict)]
+    except (ValueError, OSError, AttributeError):
+        entries = []
+    waiting: dict[str, list[str]] = {}
+    for entry in entries:
+        status = str(entry.get("status") or "queued")
+        digest["counts"][status] = digest["counts"].get(status, 0) + 1
+        if status == "queued":
+            waiting.setdefault(str(entry.get("company") or "?"), []).append(str(entry.get("title") or ""))
+        elif status == "needs_you":
+            digest["needs_you"].append({"company": str(entry.get("company") or ""), "title": str(entry.get("title") or ""),
+                                        "detail": str(entry.get("detail") or "")[:300], "url": entry.get("url") or ""})
+    digest["queued"] = sorted(({"company": company, "titles": titles} for company, titles in waiting.items()),
+                              key=lambda item: (-len(item["titles"]), item["company"]))
+    return {
+        "runs": [{"when": run["when"], "state": run["state"], "crashed": run["crashed"], "submitted": run["submitted"],
+                  "counts": run["counts"], "left": len({job for job, _ in run["left"]}), "notes": run["notes"]} for run in runs[:6]],
+        "results": [row for run in runs[:3] for row in run["results"]][:40],
+        "left": left,
+        "digest": digest,
+    }
+
+
 def jobs_section() -> dict:
     tracker = JOBS / "jobs_tracker.xlsx"
     if not tracker.exists():
@@ -226,6 +332,10 @@ def jobs_section() -> dict:
         if answers.exists():
             fill_me = [line.split("|")[0].strip() for line in answers.read_text(encoding="utf-8").splitlines()
                        if "FILL ME" in line and "|" in line and not line.startswith("#")]
+        try:  # the auto-apply card is extra: a log it cannot read must not take the Jobs tab down
+            auto_apply = auto_apply_view(JOBS)
+        except Exception:
+            auto_apply = None
         found_by_day = count_by_day(as_date(row.get("First seen")) for row in rows)
         applied_by_day = count_by_day(as_date(row.get("Applied on")) for row in applied)
         return {
@@ -250,6 +360,7 @@ def jobs_section() -> dict:
             "last_error": last_error,
             "fill_me": fill_me,
             "tracker": str(tracker),
+            "auto_apply": auto_apply,
         }
 
     return cached(f"jobs:{tracker.stat().st_mtime}", 60, build)

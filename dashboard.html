@@ -1057,6 +1057,49 @@ function renderTodo(d) {
     ${items.length ? items.map((item) => todoCard(item)).join("") : `<div class="empty">Nothing needs you right now. New items appear here when an automation gets stuck.</div>`}`;
 }
 
+// The scheduled auto-apply (modules/jobs/auto_apply.py): its last runs, what it skipped and why, and its queue.
+// Absent where it has never run (hub.auto_apply_view returns nothing), so the card is simply not drawn there.
+function autoApplyCard(a) {
+  if (!a || !a.runs || !a.runs.length) return "";
+  const STATE = { finished: ["Finished", "good"], crashed: ["Crashed", "bad"], running: ["Running now", "warn"], stopped: ["Stopped early", "bad"] };
+  const RESULT = { applied: ["Applied", "good"], needs_you: ["Could not finish", "warn"], later: ["Will retry", "grey"], already: ["Already applied", "grey"], ready: ["Ready", "grey"] };
+  const badge = ([text, tone]) => `<span class="badge ${tone}">${esc(text)}</span>`;
+  const time = (stamp) => esc(String(stamp || "").split(" ")[1] || "");
+  const last = a.runs[0];
+  const digest = a.digest || {};
+  const counts = digest.counts || {};
+  const queued = digest.queued || [];
+  const stuck = digest.needs_you || [];
+  const left = a.left || [];
+  const results = a.results || [];
+  const leftTotal = left.reduce((sum, group) => sum + group.jobs.length, 0);
+  const tried = (run) => Object.values(run.counts || {}).reduce((sum, count) => sum + count, 0);
+  return `<div class="card" style="margin-bottom:18px">
+      <h3>Auto-apply</h3>
+      <p class="hint">Runs by itself at 08:15, 13:15 and 19:15 and submits the jobs it can finish alone. What it could not finish is listed here with the reason.</p>
+      <p><b>Last run</b> ${esc(niceDate(last.when))} ${badge(STATE[last.state] || [last.state, "grey"])}
+        · submitted <b>${num(last.submitted || 0)}</b> · left for you <b>${num(leftTotal)}</b> · waiting in the queue <b>${num(counts.queued || 0)}</b></p>
+      ${last.state === "crashed" ? `<p class="hint">It crashed at ${time(last.crashed)} before it finished. Jobs it had not reached stay queued for the next run.</p>` : ""}
+      ${last.state === "stopped" ? `<p class="hint">It stopped without a closing line. Jobs it had not reached stay queued for the next run.</p>` : ""}
+      ${(last.notes || []).map((note) => `<p class="hint">${esc(note)}</p>`).join("")}
+      ${results.length ? `<div class="scroll" tabindex="0" role="region" aria-label="Scrollable table"><table>
+        <thead><tr><th>Run</th><th>Job</th><th>Result</th></tr></thead><tbody>
+        ${results.map((row) => `<tr><td>${esc(niceDate(row.when))}</td><td><b>${esc(row.job)}</b>${row.detail ? `<div class="hint" style="white-space:normal">${esc(row.detail)}</div>` : ""}</td><td>${badge(RESULT[row.kind] || [row.kind, "grey"])}</td></tr>`).join("")}
+        </tbody></table></div>` : `<div class="empty">No job was tried in the last runs.</div>`}
+      ${stuck.length ? `<details open><summary>Needs you (${num(stuck.length)})</summary>
+        ${stuck.map((job) => `<p><b>${esc(job.company)}</b> ${link(job.url, job.title)}<br><span class="hint">${esc(job.detail)}</span></p>`).join("")}</details>` : ""}
+      ${left.length ? `<details><summary>Left for you (${num(leftTotal)})</summary>
+        ${left.map((group) => `<p><b>${esc(group.reason)}</b> (${num(group.jobs.length)})<br><span class="hint">${group.jobs.map(esc).join(" · ")}</span></p>`).join("")}</details>` : ""}
+      ${queued.length ? `<details><summary>Waiting in the queue (${num(counts.queued || 0)})</summary>
+        <p class="hint">From the Big tech mail. A few per company go out in each run${counts.applied ? `; ${num(counts.applied)} already applied from this queue` : ""}.</p>
+        ${queued.map((group) => `<p><b>${esc(group.company)}</b> (${num(group.titles.length)})<br><span class="hint">${group.titles.map(esc).join(" · ")}</span></p>`).join("")}</details>` : ""}
+      ${a.runs.length > 1 ? `<details><summary>Earlier runs (${num(a.runs.length - 1)})</summary><div class="scroll" tabindex="0" role="region" aria-label="Scrollable table"><table>
+        <thead><tr><th>Run</th><th>Result</th><th class="num">Tried</th><th class="num">Submitted</th></tr></thead><tbody>
+        ${a.runs.slice(1).map((run) => `<tr><td>${esc(niceDate(run.when))}</td><td>${badge(STATE[run.state] || [run.state, "grey"])}</td><td class="num">${num(tried(run))}</td><td class="num">${num(run.submitted || 0)}</td></tr>`).join("")}
+        </tbody></table></div></details>` : ""}
+    </div>`;
+}
+
 function renderJobs(d) {
   const j = d.hub.jobs;
   const section = document.getElementById("jobs");
@@ -1084,6 +1127,7 @@ function renderJobs(d) {
       <p class="hint">The apply session opens each job, fills the form (CV, cover letter, visa, salary, notice period) and waits for you to press Submit. It marks the job Applied when the site confirms.</p>
       <div class="actions">${actionButton("jobs_apply", "Start apply session")}${actionButton("jobs_search_now", "Search for new jobs now", true)}${actionButton("jobs_open_tracker", "Open tracker (Excel)", true)}${actionButton("open_answers", "Edit my answers", true)}</div>
     </div>
+    ${autoApplyCard(j.auto_apply)}
     ${j.needs_you.length ? `<div class="card" style="margin-bottom:18px"><h3>Stopped and waiting for you</h3><div class="scroll" tabindex="0" role="region" aria-label="Scrollable table"><table>
       <thead><tr><th class="num">Score</th><th>Job</th><th>Location</th><th>Site</th><th></th></tr></thead><tbody>${j.needs_you.map(row).join("")}</tbody></table></div></div>` : ""}
     <div class="card" style="margin-bottom:18px"><h3>Today's list</h3>

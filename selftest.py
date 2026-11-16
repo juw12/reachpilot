@@ -2403,6 +2403,87 @@ check("data/patents/" in (Path(__file__).parent / ".gitignore").read_text(encodi
 check(("patents" in hub.TASKS) == (hub.ROOT / "data" / "patents").exists(),
       "hub patents: the daily task is listed only where the screen is installed")
 
+# Jobs tab, Auto-apply card (hub.auto_apply_view): what the scheduled auto-apply did, read from its log and its queue.
+# Offline, made-up companies, files in a temporary folder.
+AUTO_APPLY_LOG = """Auto-apply 2030-01-02 08:15 (dry run)
+  trying        100 Northwind - Test Engineer (Springfield)
+  ready         100 Northwind - Test Engineer (Springfield): rehearsal reached Review
+Submitted 0 application(s).
+
+Auto-apply 2030-01-02 13:15
+  left for you   90 Initech - Design Engineer: needs a sign-in; no saved account
+  trying        100 Northwind - Test Engineer (Springfield)
+  APPLIED       100 Northwind - Test Engineer (Springfield)  proof: proofs/northwind.png
+  trying         95 Contoso - Mechanical Engineer (Shelbyville)
+  needs you      95 Contoso - Mechanical Engineer (Shelbyville): 'Application Questions' needs: Notice period
+  (2 job(s) stay queued: company limit per run)
+Submitted 1 application(s).
+
+Auto-apply 2030-01-02 19:15
+  left for you  100 Globex - Graduate Engineer: title does not fit (graduate / staff level)
+  left for you  100 Globex - Staff Engineer: title does not fit (graduate / staff level)
+  left for you  100 Globex - Staff Engineer: title does not fit (graduate / staff level)
+  left for you   90 Initech - Design Engineer: needs a sign-in; no saved account
+  trying        100 Contoso - Mechanical Engineer (Shelbyville)
+Auto-apply CRASHED 2030-01-02 19:40
+Traceback (most recent call last):
+  File "auto_apply.py", line 1, in <module>
+TimeoutError: BrowserType.launch: Timeout 180000ms exceeded.
+"""
+with tempfile.TemporaryDirectory() as auto_apply_tmp:
+    auto_apply_folder = Path(auto_apply_tmp)
+    check(hub.auto_apply_view(auto_apply_folder) is None, "hub auto-apply: no log, no card")
+    auto_apply_log = auto_apply_folder / "logs" / "auto_apply.log"
+    auto_apply_log.parent.mkdir()
+    auto_apply_log.write_text(AUTO_APPLY_LOG.split("\n\n")[0] + "\n", encoding="utf-8")
+    check(hub.auto_apply_view(auto_apply_folder) is None, "hub auto-apply: a dry run alone gives no card")
+    auto_apply_log.write_text(AUTO_APPLY_LOG, encoding="utf-8")
+    (auto_apply_folder / "digest_apply_state.json").write_text(json.dumps({
+        "a": {"company": "Globex", "title": "Process Engineer", "status": "queued"},
+        "b": {"company": "Globex", "title": "Test Engineer"},
+        "c": {"company": "Initech", "title": "Design Engineer", "status": "queued"},
+        "d": {"company": "Northwind", "title": "Test Engineer", "status": "applied"},
+        "e": {"company": "Contoso", "title": "Mechanical Engineer", "status": "needs_you",
+              "detail": "Notice period", "url": "https://example.com/job/1"},
+    }), encoding="utf-8")
+    auto_view = hub.auto_apply_view(auto_apply_folder)
+    crashed_run, finished_run = auto_view["runs"]
+    check([run["when"] for run in auto_view["runs"]] == ["2030-01-02 19:15", "2030-01-02 13:15"],
+          "hub auto-apply: real runs only, newest first (the dry run is left out)")
+    check(crashed_run["state"] == "crashed" and crashed_run["crashed"] == "2030-01-02 19:40"
+          and crashed_run["submitted"] is None and not any(crashed_run["counts"].values()),
+          f"hub auto-apply: a crash closes the run it interrupted and the traceback is not read as results ({crashed_run})")
+    check(finished_run["state"] == "finished" and finished_run["submitted"] == 1 and finished_run["left"] == 1
+          and finished_run["counts"] == {"applied": 1, "needs_you": 1, "later": 0, "already": 0, "ready": 0}
+          and finished_run["notes"] == ["2 job(s) stay queued: company limit per run"],
+          f"hub auto-apply: a finished run with its counts and its note ({finished_run})")
+    check([(row["kind"], row["job"], row["detail"]) for row in auto_view["results"]] == [
+        ("applied", "Northwind - Test Engineer (Springfield)", "proof: proofs/northwind.png"),
+        ("needs_you", "Contoso - Mechanical Engineer (Shelbyville)", "'Application Questions' needs: Notice period"),
+    ], f"hub auto-apply: each result names the job and how it ended ({auto_view['results']})")
+    check(auto_view["left"] == [
+        {"reason": "title does not fit (graduate / staff level)", "jobs": ["Globex - Graduate Engineer", "Globex - Staff Engineer"]},
+        {"reason": "needs a sign-in", "jobs": ["Initech - Design Engineer"]},
+    ] and crashed_run["left"] == 3, f"hub auto-apply: jobs left for you, grouped by reason, each job once ({auto_view['left']})")
+    check(auto_view["digest"]["counts"] == {"queued": 3, "applied": 1, "needs_you": 1}
+          and auto_view["digest"]["queued"] == [{"company": "Globex", "titles": ["Process Engineer", "Test Engineer"]},
+                                                {"company": "Initech", "titles": ["Design Engineer"]}]
+          and auto_view["digest"]["needs_you"] == [{"company": "Contoso", "title": "Mechanical Engineer",
+                                                    "detail": "Notice period", "url": "https://example.com/job/1"}],
+          f"hub auto-apply: the queue by company and the jobs that need you ({auto_view['digest']})")
+    (auto_apply_folder / "digest_apply_state.json").write_text("{not json", encoding="utf-8")
+    auto_apply_log.write_text("Auto-apply 2030-01-03 08:15\n  trying        100 Contoso - Mechanical Engineer (Shelbyville)\n",
+                              encoding="utf-8")
+    open_run = hub.auto_apply_view(auto_apply_folder)
+    check(open_run["runs"][0]["state"] == "running" and open_run["digest"] == {"counts": {}, "queued": [], "needs_you": []},
+          "hub auto-apply: no closing line and a fresh log means still running; a damaged queue file gives an empty queue")
+    os.utime(auto_apply_log, (0, 0))
+    check(hub.auto_apply_view(auto_apply_folder)["runs"][0]["state"] == "stopped",
+          "hub auto-apply: no closing line and an old log means it was cut off")
+jobs_page = (Path(__file__).parent / "dashboard.html").read_text(encoding="utf-8")
+check("function autoApplyCard" in jobs_page and "autoApplyCard(j.auto_apply)" in jobs_page,
+      "dashboard: the Jobs tab shows the Auto-apply card")
+
 # patent desk (patent_desk.py): readiness, stages, the dates after a filing, history, the package, the daily run.
 # Offline, made-up projects, no PDF (Edge is not on the CI runner) and no folder is opened.
 import patent_desk  # noqa: E402
