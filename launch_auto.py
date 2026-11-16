@@ -36,7 +36,7 @@ import sys
 import time
 import urllib.parse
 from contextlib import contextmanager
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 CODE_DIR = Path(__file__).resolve().parent
@@ -58,6 +58,9 @@ NUDGE_LINKS = 6  # links of one step that are repeated in the reminder
 LINK_LIMIT = 40
 LINK_STRIKES = 2  # a link is reported after this many failed days in a row, not on one slow answer
 SCORE_DROP = 0.5  # judge noise is about 0.3, so only a larger fall is reported
+JUDGE_TIMEOUT = 1500  # seconds for one weekly judge run: the judges answer side by side and each may retry
+# twice (180 s a try), so the slowest observed run took 549 s on 16 Nov 2026. 600 s left it 51 s of room.
+
 ACTION = re.compile(r"^launch:([a-z_]{2,30}):([a-z0-9][a-z0-9-]{0,39})$")
 ADDRESS = re.compile(r"^[^\s@,;<>]+@[^\s@,;<>]+\.[^\s@,;<>]+$")
 WEB_LINK = re.compile(r"https?://[^\s<>()\[\]\"'`]+")
@@ -725,6 +728,17 @@ def _judges_answered(verdict: dict) -> str:
     return f"{answered} of {len(judges)}"
 
 
+def _judge_missed(proposal: dict) -> bool:
+    """True when the last weekly judge run gave no score, so the newest score is not this week's one."""
+    failed_on = _day(proposal.get("judge_failed_on"))
+    if failed_on is None:
+        return False
+    scores = proposal.get("scores") or []
+    newest = _day(scores[-1].get("date")) if scores else None
+    return newest is None or failed_on > newest
+
+
+
 def step_proposal(test_id: str, cfg: dict, state: dict, now: datetime, force: bool = False) -> str:
     proposal = state.setdefault("proposal", {})
     today = now.date().isoformat()
@@ -745,20 +759,31 @@ def step_proposal(test_id: str, cfg: dict, state: dict, now: datetime, force: bo
     judge = cfg.get("judge") or {}
     history = proposal.setdefault("scores", [])
     last = _day(history[-1]["date"]) if history else None
-    if judge.get("command") and (last is None or (now.date() - last).days >= int(judge.get("every_days") or 7)):
+    every = int(judge.get("every_days") or 7)
+    due_now = last is None or (now.date() - last).days >= every
+    if judge.get("command") and (due_now or (force and _judge_missed(proposal))):
+        # "Check again now" asks a judge whose last run gave no score, and leaves the week alone otherwise.
         out = test_dir(test_id) / "judge.json"
         out.unlink(missing_ok=True)
-        _run_command(judge["command"], folder, 600, {"repo": str(folder), "out": str(out), "python": sys.executable})
+        finished, tail = _run_command(judge["command"], folder, JUDGE_TIMEOUT,
+                                      {"repo": str(folder), "out": str(out), "python": sys.executable})
         try:
             verdict = json.loads(out.read_text(encoding="utf-8"))
             score = float(verdict["council_score"])
         except (OSError, ValueError, KeyError, TypeError):
-            proposal["judge_error"] = f"no score on {today}"
+            if finished:
+                why = "its answer carried no score"
+            else:
+                why = f"it did not finish within {JUDGE_TIMEOUT // 60} minutes" + (f" ({tail})" if tail else "")
+            proposal["judge_error"] = why
+            proposal["judge_failed_on"] = today
         else:
             proposal.pop("judge_error", None)
+            proposal.pop("judge_failed_on", None)
             history.append({"date": today, "score": round(score, 2), "commit": commit, "judges": _judges_answered(verdict)})
             del history[:-26]
             proposal["fixes"] = [str(entry.get("fix") if isinstance(entry, dict) else entry)[:240] for entry in (verdict.get("fixes") or [])[:3]]
+
     failed = [check["name"] for check in checks if not check["ok"]]
     return f"proposal: {len(checks) - len(failed)} of {len(checks)} checks pass, {links['total']} links, commit {commit}"
 
@@ -780,6 +805,7 @@ def proposal_rows(test_id: str, cfg: dict, state: dict, now: datetime) -> list[d
     problems = [f"check \"{check['name']}\" fails ({check.get('tail') or 'no output'})" for check in failed]
     problems += [f"link does not answer for {LINK_STRIKES} days: {url}" for url in dead[:3]]
     judged = ""
+    every = int((cfg.get("judge") or {}).get("every_days") or 7)
     if scores:
         best = max(entry["score"] for entry in scores)
         latest = scores[-1]
@@ -788,15 +814,27 @@ def proposal_rows(test_id: str, cfg: dict, state: dict, now: datetime) -> list[d
         judged = f" Judge: {latest['score']:.2f} on {latest['date']}{where}{who} (best {best:.2f}, {len(scores)} run{'' if len(scores) == 1 else 's'})."
         if latest.get("commit") and proposal.get("commit") and latest["commit"] != proposal["commit"]:
             judged += " The page changed after that score; the weekly run judges the new text."
+        judged += f" Next weekly run {_nice((_day(latest['date']) or now.date()) + timedelta(days=every))}."
         if latest["score"] < best - SCORE_DROP:
             problems.append(f"the judge's score fell from {best:.2f} to {latest['score']:.2f}")
-    elif (cfg.get("judge") or {}).get("command"):
+    elif (cfg.get("judge") or {}).get("command") and not _judge_missed(proposal):
         judged = f" Judge: {proposal.get('judge_error') or 'first run pending'}."
     stale = f" GitHub was not reachable on {proposal['sync_failed_on']}; this is the last good check." if proposal.get("sync_error") else ""
     summary = (
         f"Last check {proposal.get('checked_at')} at commit {proposal.get('commit')}: "
-        f"{len(checks) - len(failed)} of {len(checks)} checks pass, {links.get('total', 0) - len(dead)} of {links.get('total', 0)} cited links answer.{judged}{stale}"
+        f"{len(checks) - len(failed)} of {len(checks)} checks pass, {links.get('total', 0) - len(dead)} of {links.get('total', 0)} cited links answer.{stale}"
     )
+    if _judge_missed(proposal):
+        # No score this week: say so, instead of letting the old score stand in for the weekly one.
+        newest = (f" The last score is {scores[-1]['score']:.2f} on {scores[-1]['date']}"
+                  + (f" at commit {scores[-1]['commit']}" if scores[-1].get("commit") else "")
+                  + ", so this week has no score of its own.") if scores else " There is no score yet."
+        return [{**row, "title": f"{name}: the weekly judge on {_nice(_day(proposal.get('judge_failed_on')))} gave no score",
+                 "status": "blocked",
+                 "detail": (f"The judges gave no score: {proposal.get('judge_error') or 'no answer'}.{newest} "
+                            f"The page and the letters are unchanged; \"Check again now\" asks the judge again. " + summary)[:560],
+                 "actions": again}]
+    summary += judged
     fixes = proposal.get("fixes") or []
     ideas = (" Judge's top suggestion: " + fixes[0]) if fixes else ""
     if problems:

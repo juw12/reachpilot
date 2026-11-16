@@ -3645,6 +3645,9 @@ def auto_sync(url, folder):
 def auto_command(command, folder, timeout, replace=None):
     if replace:  # the judge: it writes its verdict to {out}
         auto_calls["judge"] += 1
+        auto_world["judge_budget"] = timeout
+        if not auto_world.get("judge_ok", True):
+            return False, "TimeoutExpired"
         Path(replace["out"]).write_text(json.dumps({"council_score": auto_world["score"],
                                                     "judges": {"one": {"total": 9.3}, "two": {"total": 8.9}, "three": {"error": "timed out"}},
                                                     "fixes": [{"fix": "Say who you are in the first line."}]}), encoding="utf-8")
@@ -4003,6 +4006,35 @@ try:
     fallen = auto_row("auto-proposal", auto_at("2026-11-23T09:00"))
     check(auto_calls["judge"] == 2 and fallen["status"] == "blocked" and "score fell from 9.10 to 8.40" in fallen["detail"],
           "launch auto proposal: a clear fall in the weekly score is reported")
+    check("Next weekly run Mon 23 Nov." in healthy["detail"] and auto_world["judge_budget"] >= 1200,
+          "launch auto proposal: the row says when the next weekly run is due, and the judge gets more than the 549 s "
+          "the slowest observed run needed in 600 s")
+
+    # C2. a weekly run that gives no score is reported, not papered over with last week's score
+    auto_fresh()
+    auto_calls.update({"sync": 0, "judge": 0}); auto_world["judge_budget"] = 0
+    auto_world["judge_ok"] = False
+    launch_auto.run(now=auto_at("2026-11-16T09:00"))
+    mute = auto_row("auto-proposal", auto_at("2026-11-16T09:00"))
+    check(auto_calls["judge"] == 1 and mute["status"] == "blocked"
+          and mute["title"] == "Pack: the weekly judge on Mon 16 Nov gave no score"
+          and "it did not finish within 25 minutes (TimeoutExpired)" in mute["detail"]
+          and "There is no score yet." in mute["detail"],
+          "launch auto proposal: a judge that gives no score is shown on the row, with the reason")
+    auto_world["judge_ok"] = True
+    launch_auto.run(force=True, now=auto_at("2026-11-16T10:00"))
+    again = auto_row("auto-proposal", auto_at("2026-11-16T10:00"))
+    check(auto_calls["judge"] == 2 and again["status"] == "auto" and "Judge: 9.10 on 2026-11-16" in again["detail"],
+          "launch auto proposal: 'Check again now' asks a judge that gave no score again, on the same day")
+    auto_world["judge_ok"] = False
+    launch_auto.run(now=auto_at("2026-11-23T09:00"))
+    missed = auto_row("auto-proposal", auto_at("2026-11-23T09:00"))
+    check(auto_calls["judge"] == 3 and missed["status"] == "blocked"
+          and missed["title"] == "Pack: the weekly judge on Mon 23 Nov gave no score"
+          and "The last score is 9.10 on 2026-11-16 at commit abc1234, so this week has no score of its own." in missed["detail"]
+          and "letters are unchanged" in missed["detail"],
+          "launch auto proposal: a missed weekly run says the newest score is not this week's one, and the letters stand")
+    auto_world["judge_ok"] = True
 
     # D. the dashboard card and its buttons
     auto_fresh(keep_contacts=True)
