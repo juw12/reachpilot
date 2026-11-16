@@ -791,6 +791,36 @@ function launchCards(launch) {
   }).join("");
 }
 
+function tradebotCard(t) {
+  if (!t || !t.installed) return "";
+  const links = (t.links || []).length
+    ? `<div class="launch-links">${t.links.map((l) => link(l.url, l.label)).join("")}</div>` : "";
+  if (!t.available) {
+    return `<div class="card" style="margin-bottom:18px">
+      <h3>TradeBot · Indodax</h3>
+      <p class="hint">No answer yet from TradeBot's status page. The next try is in a few minutes.</p>
+      ${links}
+    </div>`;
+  }
+  const steps = (t.steps || []).map((s, index) => `<tr>
+      <td><b>${index + 1}. ${esc(s.title)}</b>
+        <div>${esc(s.detail)}</div>
+        <div class="hint step-detail">${esc(s.how)}</div></td>
+      <td><span class="badge ${esc(s.state)}">${esc(s.state_label)}</span></td>
+    </tr>`).join("");
+  return `<div class="card module" style="margin-bottom:18px">
+    <h3><span>TradeBot · Indodax${t.version ? ` <span class="badge grey">version ${esc(t.version)}</span>` : ""}</span>${t.real ? `<span class="badge warn">real money</span>` : ""}</h3>
+    <div class="big">${esc(t.headline)}</div>
+    <div class="hint">How it works, step by step, with the state of each step right now. Read only: nothing here can trade.
+      ${t.stale ? ` <span class="badge warn">offline: last good answer${t.read_at ? ` from ${esc(t.read_at)}` : ""}</span>` : ""}</div>
+    <table style="margin-top:8px">
+      <thead><tr><th>Step</th><th>State</th></tr></thead>
+      <tbody>${steps}</tbody>
+    </table>
+    ${links}
+  </div>`;
+}
+
 function patentCard(p) {
   if (!p || !p.installed) return "";
   const scanNow = actionButton("patents_run_now", "Scan now", true);
@@ -985,6 +1015,7 @@ function drawOverview(d) {
       ${todo.length > 5 ? `<button class="btn ghost" data-goto="todo">See all ${todo.length} in To do ›</button>` : ""}
     </div>` : `<div class="card" style="margin-bottom:18px"><h3>Nothing needs you right now</h3><p class="hint">Everything is running on its own.</p></div>`}
     ${launchCards(h.launch)}
+    ${tradebotCard(h.tradebot)}
     ${patentCard(h.patents)}
     ${patentDeskCard(h.patents)}
     ${runStrip(h.tasks)}

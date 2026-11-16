@@ -310,6 +310,14 @@ only reads a public `summary.json` that the tested project publishes; it never w
 file can't be reached, the card shows the last good answer and says so. Steps that should not be public go in
 `launch_private.json` next to the code; that file is git-ignored and is shown only on this dashboard.
 
+**TradeBot card.** The Overview also shows how the trading bot's Indodax copies work, as five steps with the
+state of each one right now: the round on Cloudflare, the sender on a PC, the copies at Indodax, the real-money
+gate and the Telegram control. It reads only the bot's public status page (`TRADEBOT_STATUS_URL` in `hub.py`),
+which carries switches and counts and no amount, coin or result. The card is read only: nothing on it can trade,
+pause or open real money. Pausing and resuming are done in Telegram, and real money is switched on only on the
+PC that runs the sender. A silent sender or a tripped safety stop becomes a to-do, urgent when real money is in
+play. When the status page can't be reached, the card shows the last known answer and raises no to-do from it.
+
 **Launch automations.** `python launch_auto.py install` adds an hourly task (`\ReachPilot\Launch automations`)
 that takes over steps of a launch test which only wait on a date or on somebody else. Its rows appear on the same
 card, marked *automatic*, and replace the public steps they cover:
