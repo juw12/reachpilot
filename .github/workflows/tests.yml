@@ -9,6 +9,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -16,3 +18,9 @@ jobs:
       - run: python selftest.py
         env:
           CI: "1"
+      # No private repository name in the files or in any commit. The names come from a secret and are never printed.
+      # A pull request from a fork has no secret and passes; a push to main must have the list.
+      - name: Leak check
+        run: python leakcheck.py --history ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && '--require' || '' }}
+        env:
+          PRIVATE_NAMES: ${{ secrets.PRIVATE_NAMES }}

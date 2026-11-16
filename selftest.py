@@ -200,6 +200,99 @@ finally:
 ignored_files = (Path(__file__).parent / ".gitignore").read_text(encoding="utf-8").split()
 check("config.local.json" in ignored_files, "config: config.local.json is git-ignored, so its names are never committed")
 
+# leakcheck: a private repository name never reaches this public repository, and a hit never prints the name
+import leakcheck  # noqa: E402
+import subprocess as leak_subprocess  # noqa: E402
+
+leak_home = Path(tempfile.mkdtemp())
+leak_scan = leak_home / "scan.json"
+leak_local = leak_home / "config.local.json"
+leak_scan.write_text(json.dumps({"repos": [
+    {"name": "Quiet-Heron", "private": True}, {"name": "open-book", "private": False},
+    {"name": "ab", "private": True}, {"name": "weekly", "private": True}]}), encoding="utf-8")
+check(leakcheck.local_names(leak_scan, leak_home / "none.json") == ["quiet-heron", "weekly"],
+      "leakcheck: the list is the private repos of the scan, lower case, without public ones and 2-letter names")
+leak_local.write_text("\ufeff" + json.dumps({"leak_words": ["Tall Crane", 5], "leak_accepted": ["WEEKLY"]}),
+                      encoding="utf-8")
+leak_names = leakcheck.local_names(leak_scan, leak_local)
+check(leak_names == ["quiet-heron", "tall crane"],
+      f"leakcheck: config.local.json adds my words and takes out the names I accepted ({leak_names})")
+check(leakcheck.local_names(leak_home / "none.json", leak_home / "none2.json") == []
+      and leakcheck.compile_names([]) is None, "leakcheck: no scan and no local file means no list, not a crash")
+check(leakcheck.parse_names("Quiet-Heron, tall crane\nquiet-heron\n\nab") == ["quiet-heron", "tall crane"],
+      "leakcheck: a secret is read one name per line or comma, without duplicates")
+leak_pattern = leakcheck.compile_names(leak_names)
+check(leakcheck.lines_with_hits("fine\nsee Quiet-Heron here\nold-quiet-heron-2 and quiet-herons\n", leak_pattern) == [2],
+      "leakcheck: a name is found in any case, and not inside a longer name")
+
+
+def leak_git(*arguments):
+    leak_subprocess.run(["git", "-C", str(leak_repo), "-c", "user.name=t", "-c", "user.email=t@example.com",
+                         "-c", "commit.gpgsign=false", *arguments], capture_output=True, check=True)
+
+
+leak_repo = leak_home / "repo"
+leak_repo.mkdir()
+leak_git("init", "-q")
+(leak_repo / "notes.txt").write_text("first line\nabout quiet-heron\n", encoding="utf-8")
+(leak_repo / "picture.bin").write_bytes(b"\0\0quiet-heron")
+leak_git("add", "-A")
+leak_git("commit", "-q", "-m", "start")
+(leak_repo / "notes.txt").write_text("first line\nabout a bird\n", encoding="utf-8")
+leak_git("add", "-A")
+leak_git("commit", "-q", "-m", "tidy after Tall Crane")
+check(leakcheck.scan_files(leak_repo, leak_pattern) == [],
+      "leakcheck: a name that was removed is not reported in the tracked files, and a binary file is skipped")
+leak_history = leakcheck.scan_history(leak_repo, leak_pattern)
+check(len(leak_history) == 2 and leak_history[0].endswith("(message)") and leak_history[1].endswith(" notes.txt"),
+      f"leakcheck: the history still shows the commit that added the name, and the commit message ({leak_history})")
+(leak_repo / "notes.txt").write_text("first line\nabout a bird\nQUIET-HERON again\n", encoding="utf-8")
+(leak_repo / "tall crane.md").write_text("ok\n", encoding="utf-8")
+leak_git("add", "-A")
+check(leakcheck.scan_files(leak_repo, leak_pattern) == ["notes.txt:3", "[listed name].md (the path itself)"],
+      "leakcheck: a tracked line and a file name that hold a name are reported as a place, the name masked")
+original_leak_paths = (leakcheck.CODE_DIR, leakcheck.SCAN_FILE, leakcheck.LOCAL_CONFIG)
+leakcheck.CODE_DIR, leakcheck.SCAN_FILE, leakcheck.LOCAL_CONFIG = leak_repo, leak_scan, leak_local
+import contextlib  # noqa: E402
+import io  # noqa: E402
+
+try:
+    with mock.patch.dict(os.environ, {"PRIVATE_NAMES": ""}):
+        leak_output = io.StringIO()
+        with contextlib.redirect_stdout(leak_output):
+            leak_exit = leakcheck.main(["--history"])
+        leak_text = leak_output.getvalue().lower()
+        check(leak_exit == 1 and "leak notes.txt:3" in leak_text,
+              f"leakcheck: a hit ends with exit code 1 and names the place ({leak_exit})")
+        check("quiet-heron" not in leak_text and "tall crane" not in leak_text,
+              "leakcheck: the output never shows the name it found, so a public CI log stays clean")
+    with mock.patch.dict(os.environ, {"PRIVATE_NAMES": "no-such-name"}):
+        with contextlib.redirect_stdout(io.StringIO()):
+            check(leakcheck.main(["--history"]) == 0, "leakcheck: the CI secret replaces the local list, and no hit is exit code 0")
+    leakcheck.SCAN_FILE, leakcheck.LOCAL_CONFIG = leak_home / "none.json", leak_home / "none2.json"
+    with mock.patch.dict(os.environ, {"PRIVATE_NAMES": ""}):
+        with contextlib.redirect_stdout(io.StringIO()):
+            check(leakcheck.main([]) == 0 and leakcheck.main(["--require"]) == 2,
+                  "leakcheck: without a list a pull request from a fork passes, and --require on main fails")
+    stored = {}
+
+    def fake_secret_run(command, input=None, **keywords):
+        stored["command"], stored["body"] = command, input
+        return mock.Mock(returncode=0)
+
+    with mock.patch("subprocess.run", side_effect=fake_secret_run):
+        sync_message = leakcheck.sync(["quiet-heron", "tall crane"])
+    check(stored.get("command") == ["gh", "secret", "set", "PRIVATE_NAMES"] and stored.get("body") == b"quiet-heron\ntall crane"
+          and "quiet-heron" not in sync_message and "2 name(s)" in sync_message,
+          "leakcheck: --sync sends the list to gh on standard input, never on the command line, and reports only a count")
+    check("Nothing stored" in leakcheck.sync([]), "leakcheck: --sync with an empty list does not overwrite the secret")
+finally:
+    leakcheck.CODE_DIR, leakcheck.SCAN_FILE, leakcheck.LOCAL_CONFIG = original_leak_paths
+workflow_text = (Path(__file__).parent / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
+check("fetch-depth: 0" in workflow_text and "leakcheck.py --history" in workflow_text
+      and "secrets.PRIVATE_NAMES" in workflow_text and "--require" in workflow_text,
+      "leakcheck: the test workflow fetches the full history and runs the leak check against the secret")
+
 # refresh_try_links (daily path) must also tolerate a failed go-page sync and not blow the cache
 daily_db = sqlite3.connect(":memory:")
 daily_db.executescript(
