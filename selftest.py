@@ -3231,6 +3231,19 @@ try:
         check(patent_desk.pdf_pages(two_pages) == 2 and patent_desk.pdf_pages(mismatch) is None
               and patent_desk.pdf_pages(not_a_pdf) is None and patent_desk.pdf_pages(Path(pages_folder) / "missing.pdf") is None,
               "patent desk: the page count comes from the PDF itself, and is left out when the file does not agree with itself")
+        # Edge prints a longer document with a page tree in branches: 8 pages under one branch, 2 under the next.
+        branches = Path(pages_folder) / "branches.pdf"
+        branches.write_bytes(b"%PDF-1.4\n1 0 obj<</Type /Pages /Count 8 /Parent 3 0 R /Kids [4 0 R]>>endobj\n"
+                             b"2 0 obj<</Type /Pages /Count 2 /Parent 3 0 R /Kids [12 0 R]>>endobj\n"
+                             b"3 0 obj<</Type /Pages /Count 10 /Kids [1 0 R 2 0 R]>>endobj\n"
+                             + b"".join(b"%d 0 obj<</Type /Page /Parent 1 0 R>>endobj\n" % number for number in range(4, 14))
+                             + b"%%EOF\n")
+        short_root = Path(pages_folder) / "short_root.pdf"
+        short_root.write_bytes(branches.read_bytes().replace(b"/Count 10", b"/Count 9"))
+        check(patent_desk.pdf_pages(branches) == 10 and patent_desk.pdf_pages(short_root) is None
+              and patent_desk.sb16_values("hinge-lab", patent_desk.load_dossier("hinge-lab"), patent_desk.pdf_pages(branches))
+              [patent_desk.SB16_FIELDS["pages"]] == "8",
+              "patent desk: a page tree in branches is counted by its root, so a longer specification still gets its page number on the form")
     counted_sheet = patent_desk.cover_sheet("hinge-lab", patent_desk.load_dossier("hinge-lab"), 5)
     check("specification.pdf has 5 page(s) in total, drawing sheets included" in counted_sheet and "____ pages" not in counted_sheet
           and "Drawings: 2 sheet(s)" in counted_sheet and "count the pages of specification.pdf: ____ pages" in cover_text,
@@ -3366,6 +3379,16 @@ try:
           and not stale({"fingerprint": "f1", "pdf": True}, "f1", package, True, False, True, lambda: package)
           and not stale({"fingerprint": "f1", "pdf": True}, "f1", package, True, True, True, lambda: None),
           "patent desk: a PDF or a typed-in form that could not be made is tried again on the next run, when it can be made")
+    with tempfile.TemporaryDirectory() as counted_folder:
+        counted = Path(counted_folder)
+        (counted / "specification.md").write_text("text", encoding="utf-8")
+        no_pdf_yet = stale(built_whole, "f1", counted, True, True, True, lambda: package)
+        (counted / "specification.pdf").write_bytes(fake_pdf)
+        check(not no_pdf_yet and stale(built_whole, "f1", counted, True, True, True, lambda: package)
+              and stale({**built_whole, "pages": None}, "f1", counted, True, True, True, lambda: package)
+              and not stale({**built_whole, "pages": 5}, "f1", counted, True, True, True, lambda: package)
+              and not stale(built_whole, "f1", counted, True, False, True, lambda: package),
+              "patent desk: a form typed in without its page count is made again once the printed PDF can be counted, and then left alone")
 
     form_made = package / patent_desk.SB16_FILE
     with mock.patch.dict(sys.modules, {"pypdf": None}):
@@ -3460,7 +3483,7 @@ try:
         form_calls = mock.Mock(return_value=blank_form)
         ready_build = build_printed("hinge-lab", form_calls)
         ready_values = form_state(form_made)[0] if form_made.exists() else {}
-        check(ready_build == {"built": patent_date.today().isoformat(), "pdf": True, "draft": False, "sb16": True}
+        check(ready_build == {"built": patent_date.today().isoformat(), "pdf": True, "draft": False, "sb16": True, "pages": 5}
               and ready_values.get(form_field["pages"]) == "3" and ready_values.get(form_field["sheets"]) == "2"
               and ready_values.get(form_field["docket"]) == "hinge-lab"
               and "## The form itself" in (package / "cover_sheet.md").read_text(encoding="utf-8")
@@ -3468,7 +3491,7 @@ try:
               "patent desk: a ready package gets the typed-in form, with the page count of the PDF that was just printed")
         draft_build = build_printed("pocket-rig", form_calls)
         draft_package = patent_desk.folder("pocket-rig") / "provisional"
-        check(draft_build == {"built": patent_date.today().isoformat(), "pdf": True, "draft": True, "sb16": False}
+        check(draft_build == {"built": patent_date.today().isoformat(), "pdf": True, "draft": True, "sb16": False, "pages": 5}
               and form_calls.call_count == 1 and not (draft_package / patent_desk.SB16_FILE).exists()
               and "The form itself" not in (draft_package / "cover_sheet.md").read_text(encoding="utf-8"),
               "patent desk: a draft package never gets a typed-in form")
