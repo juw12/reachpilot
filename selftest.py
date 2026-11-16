@@ -604,6 +604,149 @@ finally:
     for cache_key in [key for key in hub._cache if str(key).startswith("launch:")]:
         hub._cache.pop(cache_key, None)
 
+# hub: the TradeBot card - five steps from the trading bot's public status page, read only
+import re  # noqa: E402
+import shutil  # noqa: E402
+
+tradebot_now = datetime.fromisoformat("2026-11-16T15:00:00+07:00")
+tradebot_ms = int(tradebot_now.timestamp() * 1000)
+
+
+def tradebot_status(**indodax):
+    block = {"configured": True, "lastReportAt": tradebot_ms - 60000, "mode": "practice", "paused": False,
+             "keys": False, "checked": False, "tripped": False, "openCopies": 2, "realOpen": 0}
+    block.update(indodax)
+    return {"ok": True, "service": "trade-bot", "version": "0.10.0", "build": "test", "money": "practice",
+            "configured": True, "bot": "demo_trade_bot", "paired": True, "running": True,
+            "lastRound": {"at": tradebot_ms - 2 * 60000, "markets": 12, "errors": 0}, "indodax": block}
+
+
+def tradebot_card(status, stale=False):
+    return hub._tradebot_view({"summary": status, "stale": stale, "read_at": "Mon 16 Nov · 15:00"}, now=tradebot_now)
+
+
+practice = tradebot_card(tradebot_status())
+check(practice["available"] and practice["version"] == "0.10.0" and practice["published"] and not practice["real"],
+      "hub tradebot: a full answer makes an available card")
+check([step["title"] for step in practice["steps"]] == [
+    "The bot reads the markets", "The sender on a PC asks for the signals", "Copies at Indodax",
+    "The real-money gate", "Control and alerts in Telegram"], "hub tradebot: five steps in the order the chain runs")
+check(practice["headline"] == "Practice: 2 copies open" and [step["state"] for step in practice["steps"]] == ["good"] * 5,
+      "hub tradebot: practice with a reporting sender is all good")
+check(practice["steps"][3]["state_label"] == "closed" and "No real buy can be sent" in practice["steps"][3]["detail"],
+      "hub tradebot: the gate reads closed in practice")
+check("@demo_trade_bot" in practice["steps"][4]["detail"], "hub tradebot: the control step names the bot")
+check(practice["needs_me"] == [] and hub.tradebot_todo(practice) == [], "hub tradebot: practice needs nothing from me")
+check(all(step["how"] and step["detail"] and step["state_label"] for step in practice["steps"]),
+      "hub tradebot: every step says how it works and what it is doing now")
+
+real_open = tradebot_card(tradebot_status(mode="real", keys=True, checked=True, openCopies=2, realOpen=1))
+check(real_open["real"] and real_open["headline"] == "Real money: 1 real copy open"
+      and real_open["steps"][3]["state_label"] == "open" and real_open["steps"][3]["state"] == "warn"
+      and real_open["needs_me"] == [], "hub tradebot: real money is said plainly and is not an alarm by itself")
+
+silent_real = tradebot_card(tradebot_status(mode="real", keys=True, checked=True, realOpen=1,
+                                            lastReportAt=tradebot_ms - 25 * 60000))
+silent_todo = hub.tradebot_todo(silent_real)
+check(silent_real["steps"][1]["state"] == "bad" and silent_real["headline"] == "Sender silent with real money in play",
+      "hub tradebot: a silent sender with real money is bad")
+check(len(silent_todo) == 1 and silent_todo[0]["priority"] == 1 and silent_todo[0]["module"] == "TradeBot"
+      and silent_todo[0]["title"] == "TradeBot: the Indodax sender is silent with real money in play"
+      and "25 minutes ago" in silent_todo[0]["detail"] and silent_todo[0]["action"] is None,
+      "hub tradebot: a silent sender with real money is an urgent to-do with no button")
+silent_practice = tradebot_card(tradebot_status(lastReportAt=tradebot_ms - 25 * 60000))
+check(silent_practice["steps"][1]["state"] == "warn" and [item["priority"] for item in silent_practice["needs_me"]] == [3],
+      "hub tradebot: a silent sender in practice is a low to-do")
+check(tradebot_card(tradebot_status(lastReportAt=tradebot_ms - 9 * 60000))["needs_me"] == [],
+      "hub tradebot: nine minutes without a report is not silent yet")
+
+tripped_real = tradebot_card(tradebot_status(mode="real", keys=True, checked=True, realOpen=1, tripped=True))
+check(tripped_real["headline"] == "Safety stop tripped" and tripped_real["steps"][2]["state"] == "bad"
+      and [item["priority"] for item in tripped_real["needs_me"]] == [1]
+      and "-Clear" in tripped_real["needs_me"][0]["detail"], "hub tradebot: a tripped stop with real money is urgent")
+check([item["priority"] for item in tradebot_card(tradebot_status(tripped=True))["needs_me"]] == [2],
+      "hub tradebot: a tripped stop in practice is a normal to-do")
+
+unchecked = tradebot_card(tradebot_status(mode="real", keys=True, checked=False))
+check(unchecked["steps"][3]["state"] == "bad" and [item["priority"] for item in unchecked["needs_me"]] == [2]
+      and "-Check" in unchecked["needs_me"][0]["detail"], "hub tradebot: real mode with an unchecked key asks for the check")
+
+paused = tradebot_card(tradebot_status(paused=True))
+check(paused["headline"] == "Practice: 2 copies open, new buys paused" and paused["steps"][2]["state_label"] == "paused"
+      and "Sells and the stop still work" in paused["steps"][2]["detail"] and paused["needs_me"] == [],
+      "hub tradebot: a pause is shown and is not a to-do")
+
+old_build = tradebot_status()
+del old_build["indodax"]
+old_build["version"] = "0.8.0"
+old_card = tradebot_card(old_build)
+check(old_card["available"] and old_card["headline"] == "The live build has no Indodax sender yet"
+      and not old_card["published"] and old_card["needs_me"] == [] and len(old_card["steps"]) == 5
+      and old_card["steps"][0]["state"] == "good", "hub tradebot: an older build without Indodax still makes a calm card")
+
+not_set_up = tradebot_card(tradebot_status(configured=False, lastReportAt=None, mode=None, keys=None, checked=None,
+                                           tripped=None, openCopies=None, realOpen=None))
+check(not_set_up["headline"] == "Indodax sender not set up" and [item["priority"] for item in not_set_up["needs_me"]] == [3],
+      "hub tradebot: no sender key is a low to-do")
+never = tradebot_card(tradebot_status(lastReportAt=None, mode=None, keys=None, checked=None, tripped=None,
+                                      openCopies=None, realOpen=None))
+check(never["headline"] == "Sender key issued, sender not started" and never["steps"][1]["state_label"] == "never reported"
+      and never["steps"][3]["state_label"] == "no report yet", "hub tradebot: a key without a report says the sender never started")
+
+late_round = tradebot_status()
+late_round["lastRound"]["at"] = tradebot_ms - 40 * 60000
+check(tradebot_card(late_round)["steps"][0]["state_label"] == "late", "hub tradebot: a round 40 minutes old is late")
+
+offline = tradebot_card(tradebot_status(mode="real", keys=True, checked=True, realOpen=1, tripped=True,
+                                        lastReportAt=tradebot_ms - 90 * 60000), stale=True)
+check(offline["stale"] and offline["needs_me"] == [] and hub.tradebot_todo(offline) == []
+      and offline["steps"][0]["state_label"].startswith("last known")
+      and offline["steps"][1]["state_label"].startswith("last known"),
+      "hub tradebot: an offline answer is last known and raises no to-do")
+
+for garbage in (None, "text", [], {}, {"service": "something-else", "indodax": {"paused": False}}):
+    broken = tradebot_card(garbage)
+    check(broken["installed"] and not broken["available"] and broken["steps"] == [] and hub.tradebot_todo(broken) == [],
+          f"hub tradebot: {type(garbage).__name__} answer is not a card")
+hostile = tradebot_status(mode="<script>", openCopies="many", realOpen=-3, keys="yes", lastReportAt="soon")
+hostile["version"] = "<b>9</b>"
+hostile["bot"] = "x y <img>"
+hostile["lastRound"] = "never"
+hostile_card = tradebot_card(hostile)
+check(hostile_card["available"] and hostile_card["version"] is None and "<" not in json.dumps(hostile_card["steps"])
+      and "the bot" in hostile_card["steps"][4]["detail"], "hub tradebot: odd values from the network are dropped, not shown")
+
+check(hub.tradebot_todo(None) == [] and hub.tradebot_todo({"installed": True, "available": False}) == [],
+      "hub tradebot: no section, no to-dos")
+check(hub.help_sections({}, None, None, None, practice)[-1]["module"] == "TradeBot"
+      and "TradeBot" not in [entry["module"] for entry in hub.help_sections({}, None, None, None)],
+      "hub tradebot: help entry only when the card exists")
+tradebot_words = json.dumps([practice, real_open, silent_real, tripped_real, hub.help_sections({}, None, None, None, practice)[-1]])
+check(not re.search(r"Rp\s?\d|\b(BTC|ETH|USDT|IDR)\b", tradebot_words), "hub tradebot: no amount and no coin on the card")
+
+tradebot_home = Path(tempfile.mkdtemp(prefix="rp-tradebot-"))
+tradebot_real = (hub._launch_fetch, hub.LAUNCH_CACHE)
+try:
+    hub.LAUNCH_CACHE = tradebot_home / "cache"
+    hub._cache.pop("tradebot", None)
+    hub._launch_fetch = lambda url: None
+    check(hub.tradebot_section()["available"] is False, "hub tradebot: no answer and no cache is a card that says so")
+    hub._cache.pop("tradebot", None)
+    asked = []
+    hub._launch_fetch = lambda url: asked.append(url) or tradebot_status()
+    first = hub.tradebot_section()
+    hub.tradebot_section()
+    check(first["available"] and asked == [hub.TRADEBOT_STATUS_URL], "hub tradebot: one read of the status page, then the cache")
+    hub._cache.pop("tradebot", None)
+    hub._launch_fetch = lambda url: None
+    kept = hub.tradebot_section()
+    check(kept["available"] and kept["stale"] and hub.tradebot_todo(kept) == [],
+          "hub tradebot: offline shows the last good answer and asks for nothing")
+finally:
+    hub._launch_fetch, hub.LAUNCH_CACHE = tradebot_real
+    hub._cache.pop("tradebot", None)
+    shutil.rmtree(tradebot_home, ignore_errors=True)
+
 # hub: the podcast tile - the reader mirrors podcast.py's own rules (published + audio on the site; pending = held for review)
 podcast_home = Path(tempfile.mkdtemp(prefix="rp-podcast-"))
 try:
