@@ -17,6 +17,8 @@ on. It records the project's own site being used; a project without one is shown
 through a page built here from its README (showcase.py). A roundup gets one video for all its projects, and the
 prepared seed posts get one in front of their pictures. The pictures stay as the fallback, and one post in every
 "picture_every" leads with them instead. Switch the videos off with "demo_video": false in config.json.
+The videos are read aloud by a voice that runs on this PC when it is installed (voiceover.py; "voice_over": false
+keeps them silent).
 
 After a post about one project its video also gets a page of its own (showcase.publish_watch, "watch_pages"),
 and a creator who covered the project is thanked in the post (creators.py).
@@ -52,6 +54,7 @@ import reels  # noqa: E402
 import showcase  # noqa: E402
 import trylinks  # noqa: E402
 import visuals  # noqa: E402
+import voiceover  # noqa: E402
 
 CONFIG_PATH = ROOT / "config.json"
 SECRETS_PATH = ROOT / "secrets.json"
@@ -426,11 +429,13 @@ def video_subjects(choice) -> list:
     return choice.get("facts") or choice.get("video_subjects") or []
 
 
-def styled_videos(config, choice, out_dir: Path, db=None, used=(), url: str = "", served: dict | None = None) -> list[Path]:
+def styled_videos(config, choice, out_dir: Path, db=None, used=(), url: str = "", served: dict | None = None,
+                  say=None) -> list[Path]:
     """The post's video as a short vertical one in every cut (reels.py); [] when the plain recording should be tried.
 
     url is the page to record and served the pages the recording browser answers itself (showcase.target).
     used is [(repo, format)] of videos made earlier in this run, newest first (the preview makes several at once).
+    say reads the captions aloud (voiceover.load); None keeps the video silent.
     Sets choice["video"] to the format and the hook line that goes on top of the post.
     """
     subjects = video_subjects(choice)
@@ -450,7 +455,7 @@ def styled_videos(config, choice, out_dir: Path, db=None, used=(), url: str = ""
             own_hooks = (config.get("video_hooks") or {}).get(facts.name)
             plan = reels.plan(facts, video_format, rng, own_hooks, url=url, shows_product=url == facts.homepage)
             plan.pages = served or {}
-        videos = reels.record(plan, out_dir)
+        videos = reels.record(plan, out_dir, say)
     except Exception as error:
         log.warning("Styled video failed (%s); trying the plain recording", error)
         return []
@@ -489,10 +494,12 @@ def build_images(config, choice, slot: str, db=None, used=(), earlier: int = 0) 
     if config.get("demo_video", True) and subjects and not (pictures and picture_turn(config, db, earlier)):
         try:
             url, served = showcase.target(config["github_user"], choice["angle"], subjects)
-            videos = styled_videos(config, choice, out_dir, db, used, url, served)
+            say = voiceover.load(config)
+            videos = styled_videos(config, choice, out_dir, db, used, url, served, say)
             if not videos:
                 name = showcase.subject_name(choice["angle"], subjects)
-                videos = [visuals.record_demo(url, out_dir / f"{name}_demo.mp4", served)]
+                narrate = reels.plain_narrator(subjects, say) if say else None
+                videos = [visuals.record_demo(url, out_dir / f"{name}_demo.mp4", served, narrate)]
         except Exception as error:
             log.warning("Video failed (%s); posting the pictures only", error)
     choice["media_kind"] = "video" if videos else "pictures" if pictures else "text"

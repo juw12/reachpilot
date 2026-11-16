@@ -21,6 +21,9 @@ __pycache__/
 *.pyc
 dashboard.ico
 
+# The voice's model files (voiceover.py): 340 MB, downloaded once
+models/
+
 # Private ReachPilot modules (job search, e-mail applications, digest): personal data, never commit
 modules/
 data/github_public_cache/

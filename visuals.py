@@ -13,6 +13,7 @@ from pathlib import Path
 
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 
+import voiceover
 from github_source import CREATE_NO_WINDOW, RepoFacts, gh_api
 
 FONT_DIR = Path("C:/Windows/Fonts")
@@ -410,18 +411,42 @@ def record_raw(url: str, folder: Path, phone: bool = False, served: dict[str, st
     return raw, lead_in, tour_seconds
 
 
-def record_demo(url: str, output: Path, served: dict[str, str] | None = None) -> Path:
-    """Record a short silent MP4 of the page being used. Raises when the page or the encoding fails."""
+def demo_args(ffmpeg: str, raw: Path, lead_in: float, tour_seconds: float, output: Path,
+              track: Path | None = None, voiced: float = 0.0) -> list[str]:
+    """The ffmpeg command for the plain recording. track: a narration of voiced seconds (voiceover.py), else silence."""
+    speed = _demo_speed(tour_seconds)
+    command = [ffmpeg, "-y", "-loglevel", "error", "-ss", f"{lead_in:.2f}", "-i", str(raw)]
+    picture = ["-c:v", "libx264", "-preset", "medium", "-crf", "27"]
+    if track:
+        # The video lasts until the tour and the voice are both done: the last frame holds, the sound is padded.
+        length = min(DEMO_MAX_SECONDS, max(tour_seconds / speed, voiced))
+        return command + [
+            "-i", str(track),
+            "-vf", f"setpts=PTS/{speed:.3f},fps=30,tpad=stop_mode=clone:stop_duration={voiced:.2f},format=yuv420p", *picture,
+            "-af", f"{voiceover.AUDIO_FILTER},apad", "-c:a", "aac", "-b:a", voiceover.AUDIO_BITRATE, "-ac", "2", "-ar", "44100",
+            "-t", f"{length:.2f}", "-movflags", "+faststart", str(output),
+        ]
+    return command + [
+        "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",  # silent track: some players need one
+        "-vf", f"setpts=PTS/{speed:.3f},fps=30,format=yuv420p", *picture,
+        "-c:a", "aac", "-b:a", "48k", "-shortest", "-t", str(DEMO_MAX_SECONDS),  # never longer than the limit
+        "-movflags", "+faststart", str(output),
+    ]
+
+
+def record_demo(url: str, output: Path, served: dict[str, str] | None = None, narrate=None) -> Path:
+    """Record a short MP4 of the page being used. Raises when the page or the encoding fails.
+
+    narrate(track) writes a spoken track and returns its length in seconds (reels.plain_narrator); the video is
+    silent without it, or when it returns 0.
+    """
     output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="reachpilot_demo_") as folder:
         raw, lead_in, tour_seconds = record_raw(url, Path(folder), served=served)
-        speed = _demo_speed(tour_seconds)
+        track = Path(folder) / "voice.wav"
+        voiced = narrate(track) if narrate else 0.0
         subprocess.run(
-            [_ffmpeg(), "-y", "-loglevel", "error", "-ss", f"{lead_in:.2f}", "-i", str(raw),
-             "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",  # silent track: some players need one
-             "-vf", f"setpts=PTS/{speed:.3f},fps=30,format=yuv420p", "-c:v", "libx264", "-preset", "medium", "-crf", "27",
-             "-c:a", "aac", "-b:a", "48k", "-shortest", "-t", str(DEMO_MAX_SECONDS),  # never longer than the limit
-             "-movflags", "+faststart", str(output)],
+            demo_args(_ffmpeg(), raw, lead_in, tour_seconds, output, track if voiced else None, voiced),
             check=True, capture_output=True, timeout=240, creationflags=CREATE_NO_WINDOW,
         )
     if output.stat().st_size < DEMO_MIN_BYTES:

@@ -1480,6 +1480,204 @@ for cut, scale in (("feed", "scale=696:960"), ("tall", "scale=894:1232")):
 check(urllib.parse.urljoin(reel_facts.homepage, visuals.PHONE_WRAPPER_PATH).startswith("https://juw12.github.io/"),
       "visuals: the phone view is served from the site's own origin, so the site keeps its storage")
 
+# The voice (voiceover.py): the captions read aloud, the video timed to the reading. No model is loaded here:
+# a stand-in "voice" gives 15 characters a second of non-silent samples.
+import wave  # noqa: E402
+
+import voiceover  # noqa: E402
+
+
+def fake_voice(characters_a_second=15.0, speeds=None):
+    def say(text, speed=1.0):
+        if speeds is not None:
+            speeds.append(speed)
+        return b"\x01\x10" * int(voiceover.SAMPLE_RATE * len(text) / characters_a_second / speed)
+    return say
+
+
+def broken_voice(text, speed=1.0):
+    raise RuntimeError("no voice today")
+
+
+def track_facts(path):
+    """(seconds, the samples as bytes) of a WAV written by voiceover.write_track."""
+    with wave.open(str(path), "rb") as track:
+        return track.getnframes() / track.getframerate(), track.readframes(track.getnframes())
+
+
+def sounds_at(samples, second):
+    at = int(round(second * voiceover.SAMPLE_RATE)) * 2
+    return samples[at: at + 2] != b"\0\0"
+
+
+spoken_cases = {
+    "POV: you just found EarlyStar": "P.O.V., you just found EarlyStar.",
+    f"All on GitHub: {github_address}": "All on GitHub.",
+    "Works offline as an installable app": "Works offline as an installable app.",
+    "is it really free?": "is it really free?",
+    "Use Claude Code / Codex / OpenCode skills with any model": "Use Claude Code, Codex, OpenCode skills with any model.",
+    "Runs on Windows/macOS": "Runs on Windows macOS.",
+    "Tracks every appliance you own, adds up the watts they draw\u2026": "Tracks every appliance you own, adds up the watts they draw.",
+    "**3x** faster & 40% smaller \u2014 e.g. on phones": "3 times faster and 40 percent smaller, for example, on phones.",
+    github_address: "",
+    "https://juw12.github.io/earlystar/": "",
+    "\u2b50 \u2192": "",
+    "Paste a link \u2192 get the video": "Paste a link to get the video.",
+    "Paste a link -> get the video": "Paste a link to get the video.",
+}
+spoken_wrong = {caption: voiceover.speakable(caption) for caption, wanted in spoken_cases.items()
+                if voiceover.speakable(caption) != wanted}
+check(not spoken_wrong, f"voiceover: a caption becomes a sentence a voice can read, addresses left out ({spoken_wrong})")
+
+read_lines = ["Know how long your battery lasts.", "", "Star it on GitHub."]
+read_clips = voiceover.read(read_lines, fake_voice())
+read_seconds = sum(voiceover.seconds(clip) for clip in read_clips)
+check(read_clips[1] == b"" and abs(read_seconds - (33 + 18) / 15) < 0.01, "voiceover: every line is read once, an empty line is silence")
+read_speeds = []
+hurried = voiceover.read(read_lines, fake_voice(speeds=read_speeds), room=read_seconds / 1.2)
+check(sum(voiceover.seconds(clip) for clip in hurried) <= read_seconds / 1.2 and 1.2 < max(read_speeds) <= voiceover.FASTEST,
+      f"voiceover: speech that runs over is read again just fast enough to fit ({max(read_speeds):.2f}x)")
+for label, refused_call in (
+    ("is never read faster than a person would", lambda: voiceover.read(read_lines, fake_voice(), room=read_seconds / 1.5)),
+    ("counts a voice that gives no sound as a failure", lambda: voiceover.read(read_lines, lambda text, speed=1.0: b"")),
+):
+    try:
+        refused_call()
+        refused = False
+    except ValueError:
+        refused = True
+    check(refused, f"voiceover: speech {label}")
+
+with tempfile.TemporaryDirectory() as voice_dir:
+    voice_dir = Path(voice_dir)
+    # A voiced video is as long as its script: every caption stays up while its line is said
+    voiced_ok = True
+    for video_format in ("hook", "pov", "question", "listicle"):
+        voiced_plan = reels.plan(reel_facts, video_format, random.Random(3))
+        track = reels.narrate(voiced_plan, fake_voice(), voice_dir / f"{video_format}.wav")
+        rows = voiced_plan.timeline()
+        said = reels.spoken(voiced_plan)
+        track_seconds, samples = track_facts(track)
+        voiced_ok = voiced_ok and (
+            [row[0] for row in rows] == ["hook"] + ["beat"] * len(voiced_plan.beats) + ["end"]
+            and [row[1] for row in rows] == [voiced_plan.hook, *voiced_plan.beats, voiced_plan.github]
+            and rows[0][2] == 0.0 and rows[-1][3] == voiced_plan.seconds == round(sum(voiced_plan.lengths), 2)
+            and all(abs(before[3] - after[2]) < 1e-9 for before, after in zip(rows, rows[1:]))
+            and all(end - start >= max(reels.SHORTEST_ROW, len(line) / 15 + voiceover.BREATH) - 0.01
+                    for (_, _, start, end), line in zip(rows, said))
+            and rows[-1][3] - rows[-1][2] >= reels.END_SECONDS - 1e-9
+            and abs(track_seconds - voiced_plan.seconds) < 0.001
+            and all(sounds_at(samples, start + voiceover.LEAD + 0.05) and not sounds_at(samples, max(0.0, start + voiceover.LEAD - 0.05))
+                    for (_, _, start, _), line in zip(rows, said) if line)
+        )
+    check(voiced_ok, "reels: a voiced video gives every caption the time its line takes, gapless, and each line starts with its caption")
+
+    # The speedrun promises 15 seconds on screen: it is read faster instead of running longer
+    speedrun_plan = reels.plan(reel_facts, "speedrun", random.Random(3))
+    reels.narrate(speedrun_plan, fake_voice(), voice_dir / "speedrun.wav")
+    speedrun_rows = speedrun_plan.timeline()
+    check(speedrun_plan.seconds == reels.SPEEDRUN_SECONDS and abs(sum(speedrun_plan.lengths) - reels.SPEEDRUN_SECONDS) < 1e-6
+          and speedrun_rows[-1][3] == reels.SPEEDRUN_SECONDS and abs(track_facts(voice_dir / "speedrun.wav")[0] - 15) < 0.001
+          and speedrun_rows[-1][3] - speedrun_rows[-1][2] >= reels.END_SECONDS - 1e-6,
+          f"reels: a voiced speedrun still lasts {reels.SPEEDRUN_SECONDS} seconds and keeps its end card ({speedrun_plan.lengths})")
+    hurried_runs = []
+    for characters_a_second in (12, 11, 10, 9, 8, 7, 6, 5):
+        slow_plan, slow_speeds = reels.plan(reel_facts, "speedrun", random.Random(3)), []
+        try:
+            reels.narrate(slow_plan, fake_voice(characters_a_second, slow_speeds), voice_dir / "slow.wav")
+            fitted = slow_plan.seconds == reels.SPEEDRUN_SECONDS and abs(sum(slow_plan.lengths) - 15) < 1e-6 \
+                and max(slow_speeds) <= voiceover.FASTEST
+        except ValueError:
+            fitted = slow_plan.lengths == [] and slow_plan.seconds == reels.SPEEDRUN_SECONDS  # refused: the plan is untouched
+        hurried_runs.append((fitted, max(slow_speeds), bool(slow_plan.lengths)))
+    check(all(fitted for fitted, _, _ in hurried_runs)
+          and any(speed > 1 and voiced for _, speed, voiced in hurried_runs) and not hurried_runs[-1][2],
+          f"reels: a speedrun that runs over is read faster, and refused when even that does not fit ({hurried_runs})")
+
+    # The plain recording has no captions, so its voice says what the video is
+    plain_seconds = reels.plain_narrator([reel_facts], fake_voice())(voice_dir / "plain.wav")
+    plain_said = ["This is Watt Reserve.", "Plan home battery backup for blackouts, offline.", "Star it on GitHub."]
+    check(abs(plain_seconds - sum(len(line) / 15 + voiceover.BREATH for line in plain_said)) < 0.01
+          and abs(track_facts(voice_dir / "plain.wav")[0] - plain_seconds) < 0.001,
+          f"reels: the plain recording is introduced, described and ends on the star ({plain_seconds:.2f} s)")
+    logging.disable(logging.CRITICAL)
+    try:
+        check(reels.plain_narrator([reel_facts, star_facts], broken_voice)(voice_dir / "broken.wav") == 0.0,
+              "reels: a voice that fails leaves the plain recording silent")
+
+        # record(): the voice is only ever an addition; when it fails the video is made without it
+        def recorded_with(say):
+            record_plan = reels.plan(reel_facts, "hook", random.Random(3))
+            with mock.patch("reels.visuals.record_raw", return_value=(Path("raw.webm"), 1.0, 12.0)), \
+                 mock.patch("reels.render") as renderer:
+                outputs = reels.record(record_plan, voice_dir / "out", say)
+            return record_plan, renderer, outputs
+
+        record_plan, renderer, outputs = recorded_with(fake_voice())
+        check(renderer.call_count == 2 and all(call[0][7].name == "voice.wav" for call in renderer.call_args_list)
+              and record_plan.lengths
+              and [path.name for path in outputs] == ["watt-reserve_demo_hook_feed.mp4", "watt-reserve_demo_hook_tall.mp4"],
+              "reels: with a voice both cuts are rendered with the same spoken track")
+        record_plan, renderer, _ = recorded_with(broken_voice)
+        check(renderer.call_count == 2 and all(call[0][7] is None for call in renderer.call_args_list)
+              and record_plan.lengths == [] and record_plan.seconds == reels.SECONDS,
+              "reels: when the voice fails the video is still made, silent and on its usual timeline")
+        record_plan, renderer, _ = recorded_with(None)
+        check(all(call[0][7] is None for call in renderer.call_args_list) and record_plan.seconds == reels.SECONDS,
+              "reels: without a voice nothing about the video changes")
+    finally:
+        logging.disable(logging.NOTSET)
+
+    # Where the voice comes from: switched off, not installed or no model files all mean "silent", never an error
+    model_dir = voice_dir / "models"
+    model_dir.mkdir()
+    with mock.patch.object(voiceover, "MODEL_FOLDERS", (voice_dir / "nowhere",)):
+        check(voiceover.model_folder({}) is None and voiceover.model_folder({"voice_models": str(model_dir)}) is None,
+              "voiceover: no model files, no voice")
+        logging.disable(logging.CRITICAL)
+        try:
+            check(voiceover.load({"voice_over": False}) is None and voiceover.load({"voice_models": str(model_dir)}) is None,
+                  'voiceover: "voice_over": false or a missing model keeps the videos silent')
+        finally:
+            logging.disable(logging.NOTSET)
+        for model_file in voiceover.MODEL_FILES:
+            (model_dir / model_file).write_bytes(b"")
+        check(voiceover.model_folder({"voice_models": str(model_dir)}) == model_dir, 'voiceover: "voice_models" names the folder with both files')
+check(shipped_config.get("voice_over") is True, "voiceover: the shipped config has the voice switched on")
+
+voiced_command = reels.ffmpeg_args("ffmpeg", Path("raw.webm"), 1.5, 1.1, "feed", 21.4, Path("frame.png"), timed_overlays,
+                                   Path("bar.png"), Path("out.mp4"), Path("voice.wav"))
+silent_command = reels.ffmpeg_args("ffmpeg", Path("raw.webm"), 1.5, 1.1, "feed", 18, Path("frame.png"), timed_overlays,
+                                   Path("bar.png"), Path("out.mp4"))
+check("voice.wav" in voiced_command and not any("anullsrc" in part for part in voiced_command)
+      and voiced_command[voiced_command.index("-af") + 1] == voiceover.AUDIO_FILTER
+      and voiced_command[voiced_command.index("-b:a") + 1] == voiceover.AUDIO_BITRATE
+      and voiced_command[voiced_command.index("-t") + 1] == "21.4" and voiced_command.count("-i") == len(timed_overlays) + 4
+      and "1:a" in voiced_command,
+      "reels: a voiced cut takes the spoken track as its sound and lasts as long as the script")
+check(any("anullsrc" in part for part in silent_command) and "-af" not in silent_command
+      and silent_command[silent_command.index("-b:a") + 1] == "48k" and silent_command[silent_command.index("-maxrate") + 1] == "3500k",
+      "reels: a silent cut is encoded exactly as before")
+size_ok = all(
+    (int(command[command.index("-maxrate") + 1][:-1]) + 96) * seconds <= reels.SIZE_BUDGET_KBIT
+    for seconds in (15, 18, 21.4, 26, 34)
+    for command in [reels.ffmpeg_args("ffmpeg", Path("raw.webm"), 1.5, 1.1, "tall", seconds, Path("frame.png"), timed_overlays,
+                                      Path("bar.png"), Path("out.mp4"), Path("voice.wav"))]
+)
+check(size_ok and reels.SIZE_BUDGET_KBIT <= 10 * 8000 * 0.9, "reels: a longer voiced video gets fewer bits a second, never more than 9 MB")
+check(reels.end_image("feed", github_address, note=reels.VOICE_NOTE).tobytes() != reels.end_image("feed", github_address).tobytes(),
+      "reels: the end card of a voiced video says the voice is an AI one")
+
+silent_demo = visuals.demo_args("ffmpeg", Path("raw.webm"), 1.5, 12.0, Path("demo.mp4"))
+voiced_demo = visuals.demo_args("ffmpeg", Path("raw.webm"), 1.5, 4.0, Path("demo.mp4"), Path("voice.wav"), 9.5)
+check(any("anullsrc" in part for part in silent_demo) and "-shortest" in silent_demo and "-af" not in silent_demo
+      and silent_demo[silent_demo.index("-t") + 1] == str(visuals.DEMO_MAX_SECONDS),
+      "visuals: the silent plain recording is encoded exactly as before")
+check("voice.wav" in voiced_demo and voiced_demo[voiced_demo.index("-af") + 1] == f"{voiceover.AUDIO_FILTER},apad"
+      and "tpad=stop_mode=clone" in voiced_demo[voiced_demo.index("-vf") + 1]
+      and float(voiced_demo[voiced_demo.index("-t") + 1]) == 9.5 and "-shortest" not in voiced_demo,
+      "visuals: a narrated plain recording lasts until the voice is done, the last frame held")
+
 # autopilot: styled video first, the plain recording when that fails, screenshots always; the hook opens the post
 logging.disable(logging.CRITICAL)
 try:
@@ -1520,6 +1718,18 @@ try:
     check(plain_recorder.call_args[0][0] == roundup_address and plain_recorder.call_args[0][1].name == "roundup_demo.mp4"
           and roundup_address in plain_recorder.call_args[0][2],
           "autopilot: without styled formats a roundup still gets the plain recording of its built page")
+
+    # The voice goes to whichever recording is made; no voice means the same calls as before, with nothing to say
+    with mock.patch("autopilot.voiceover.load", return_value=broken_voice):
+        _, _, styled_recorder, _ = media_for(styled_config)
+        _, _, _, plain_recorder = media_for({"github_user": "juw12", "video_formats": []})
+    check(styled_recorder.call_args[0][2] is broken_voice and callable(plain_recorder.call_args[0][3]),
+          "autopilot: the voice is handed to the styled video, and to the plain recording as its narrator")
+    with mock.patch("autopilot.voiceover.load", return_value=None):
+        _, _, styled_recorder, _ = media_for(styled_config)
+        _, _, _, plain_recorder = media_for({"github_user": "juw12", "video_formats": []})
+    check(styled_recorder.call_args[0][2] is None and plain_recorder.call_args[0][3] is None,
+          "autopilot: without a voice both recordings are made silent")
 
     # A site-less project: the video tours a page about it, so no line may promise a look at the product working
     described = copy.deepcopy(reel_facts)

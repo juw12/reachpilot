@@ -66,7 +66,8 @@ feature bullets, and puts links in the first comment.
 A plain screen recording gets scrolled past. So the recording is taken again at phone size, placed in a phone
 frame and cut into a 15 to 18 second vertical video built the way short videos that hold attention are built:
 a hook in the first 3 seconds, big captions (most people watch muted), a progress bar, and an end card that
-says "Star it on GitHub" with the repo address.
+says "Star it on GitHub" with the repo address. With the voice installed, a natural voice reads the captions
+aloud (see [Voice-over](#voice-over)).
 
 | Format | Opens with | Then |
 |---|---|---|
@@ -89,6 +90,30 @@ says "Star it on GitHub" with the repo address.
 - A project with too little to say, or a failed render, falls back to the plain recording, and from there to
   screenshots.
 
+#### Voice-over
+
+Every video can carry a spoken voice: a neural voice (Kokoro) that runs on your own PC. No account, no cloud,
+no cost, and nothing leaves the machine.
+
+- **It reads the captions, nothing else.** The voice says exactly what the video shows; it never adds a word.
+  Web addresses stay on screen and are not read out.
+- **The captions stay**, because most people still watch muted. Each caption now stays up for as long as its
+  line takes to say, so a voiced video is as long as its script takes to read. The speedrun stays
+  15 seconds: its lines are read a little faster when they have to be, never faster than 1.3x.
+- **The end card says "AI voice-over"** in small print, so nobody takes the voice for a person.
+- **It never blocks a post.** When the voice is not installed, is switched off, or fails on a video, that
+  video is made silent, exactly as before, and the log says why.
+
+The voice is optional and not part of `requirements.txt`. To switch it on:
+
+```
+pip install kokoro-onnx
+```
+
+then put `kokoro-v1.0.onnx` and `voices-v1.0.bin` (from the
+[kokoro-onnx releases](https://github.com/thewh1teagle/kokoro-onnx/releases)) in a `models` folder next to
+`autopilot.py`, or name their folder in `"voice_models"`.
+
 Settings in `config.json`:
 
 | Key | Default | What it does |
@@ -97,6 +122,9 @@ Settings in `config.json`:
 | `video_formats` | all five | the formats in rotation; `[]` keeps the plain recording |
 | `video_hook_in_post` | `true` | `false` leaves the post's first line alone |
 | `video_hooks` | `{}` | your own hooks per project, for example `{"my-repo": ["Blackout tonight? Open {name}."]}` |
+| `voice_over` | `true` | `false` keeps every video silent |
+| `video_voice` | a calm male blend | one Kokoro voice name, for example `"af_heart"`, or a blend such as `{"am_michael": 0.7, "am_fenrir": 0.3}` |
+| `voice_models` | `models` | the folder that holds the two voice model files |
 | `picture_every` | `5` | one post in this many leads with pictures instead of a video; `0` means never |
 | `watch_pages` | `true` | `false` publishes no watch page |
 
@@ -343,6 +371,7 @@ and Markdown are still written. `python patent_desk.py show` prints the desk.
 | `github_source.py` | README and commit facts |
 | `visuals.py` | screenshots and the demo video recording (Edge, headless) |
 | `reels.py` | the short videos: formats, captions from the repo's own words, rendering (ffmpeg) |
+| `voiceover.py` | the voice-over: captions read aloud by a local neural voice (optional) |
 | `linkedin_api.py` | OAuth, images, video, posts, comments |
 | `channels.py` | Bluesky, Mastodon, Dev.to, Telegram, Discord: per-platform cutting, publishing, retries |
 | `growth.py` | daily: profiles, pinned intro, follow-back, follower counts |

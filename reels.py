@@ -14,12 +14,17 @@ the hooks that say you are watching the product run (USE_HOOKS) are left out.
 Every video is rendered in two cuts: "feed" (4:5, for LinkedIn, Bluesky, Mastodon, Telegram, Discord) and
 "tall" (9:16, for X and Threads). choose_format rotates the formats and learns which one earns visitors and stars.
 
+With a voice (voiceover.py) the captions are also read aloud: narrate() gives every caption the time its line
+takes to say, so a voiced video is as long as its script (the speedrun keeps its 15 seconds and is read faster
+instead). The captions stay, because most people watch without sound; the end card says the voice is an AI one.
+
 Honest by construction: every caption is cut from the repo's own tagline, description and README bullets (short()
 only ever shortens). No invented users, quotes, numbers or results; the hooks make you curious, they never lie.
 """
 from __future__ import annotations
 
 import hashlib
+import logging
 import math
 import random
 import re
@@ -33,7 +38,10 @@ from PIL import Image, ImageDraw, ImageFont
 import analytics
 import composer
 import visuals
+import voiceover
 from github_source import CREATE_NO_WINDOW, RepoFacts
+
+log = logging.getLogger("autopilot")
 
 FORMATS = ("hook", "pov", "question", "listicle", "speedrun")
 CUTS = {"feed": (1080, 1350), "tall": (1080, 1920)}  # channels.VIDEO_CUTS mirrors this; selftest keeps them in step
@@ -41,6 +49,9 @@ SECONDS = 18
 SPEEDRUN_SECONDS = 15
 HOOK_SECONDS = 3.2  # the hook stays up this long; most viewers decide to stay or scroll within the first three seconds
 END_SECONDS = 2.8
+SHORTEST_ROW = 1.6  # a caption stays up at least this long, however quickly its line is said
+VOICE_NOTE = "AI voice-over"  # on the end card of a voiced video
+SIZE_BUDGET_KBIT = 72000  # sound and picture together: 9 MB, under Discord's 10 MB
 MIN_SPEED = 0.8  # a short tour is slowed down at most this much; the last frame holds for the rest
 CAPTION_CHARS = 84
 SPEEDRUN_CAPTION_CHARS = 60
@@ -231,12 +242,24 @@ class Plan:
     hook: str
     post_line: str  # goes on top of the post text; "" when there is nothing safe to add
     beats: list[str]
-    seconds: int
+    seconds: float
     pages: dict = field(default_factory=dict)  # {address: html} the recording browser answers itself (showcase.py)
     end: str = STAR_IT  # the title of the end card
+    lengths: list[float] = field(default_factory=list)  # seconds for the hook, each caption and the end card (narrate)
 
     def timeline(self) -> list[tuple[str, str, float, float]]:
-        """(kind, text, start, end): the hook, the captions sharing the middle, then the end card."""
+        """(kind, text, start, end): the hook, the captions sharing the middle, then the end card.
+
+        A voiced video (lengths set by narrate) gives each of them the time its line takes to say.
+        """
+        if self.lengths:
+            kinds = ["hook"] + ["beat"] * len(self.beats) + ["end"]
+            rows, start = [], 0.0
+            for kind, text, length in zip(kinds, [self.hook, *self.beats, self.github], self.lengths):
+                rows.append((kind, text, start, start + length))
+                start += length
+            rows[-1] = (*rows[-1][:3], float(self.seconds))
+            return rows
         middle = self.seconds - HOOK_SECONDS - END_SECONDS
         step = middle / len(self.beats)
         rows = [("hook", self.hook, 0.0, HOOK_SECONDS)]
@@ -312,6 +335,70 @@ def plan_roundup(subjects: list[RepoFacts], user: str, url: str, pages: dict | N
         ROUNDUP, ROUNDUP, url, f"github.com/{user}", f"{len(subjects)} projects I built", "",
         beats[:ROUNDUP_PROJECTS], SECONDS, pages or {}, "See them all on GitHub",
     )
+
+
+# ------------------------------------------------------------------ the voice (voiceover.py reads the captions)
+
+def spoken(plan_: Plan) -> list[str]:
+    """What the voice says while the hook, each caption and the end card are up: the same words, made speakable."""
+    return [voiceover.speakable(line) for line in (plan_.hook, *plan_.beats, plan_.end)]
+
+
+def narrate(plan_: Plan, say, track: Path) -> Path:
+    """Read the video aloud into track and time the plan to the voice (sets plan_.lengths and plan_.seconds).
+
+    Each caption stays up for as long as its line takes plus a breath. The speedrun promises its length on screen,
+    so there the lines are read faster until they fit and the time left over is shared out.
+    Raises, leaving the plan as it was, when the voice fails or the speedrun cannot be said in time.
+    """
+    lines = spoken(plan_)
+
+    def row_lengths(clips: list[bytes]) -> list[float]:
+        return [max(SHORTEST_ROW, voiceover.seconds(clip) + voiceover.BREATH) for clip in clips]
+
+    clips = voiceover.read(lines, say)
+    lengths = row_lengths(clips)
+    if plan_.format == "speedrun":
+        over = sum(lengths) - plan_.seconds
+        if over > 0:
+            said = sum(voiceover.seconds(clip) for clip in clips)
+            clips = voiceover.read(lines, say, room=said - over)
+            lengths = row_lengths(clips)
+        spare = plan_.seconds - sum(lengths)
+        if spare < 0:
+            raise ValueError(f"the captions cannot be said in {plan_.seconds} seconds")
+        for_end = min(spare, max(0.0, END_SECONDS - lengths[-1]))
+        share = (spare - for_end) / (len(lengths) - 1)
+        lengths = [length + share for length in lengths[:-1]] + [lengths[-1] + for_end]
+        total = float(plan_.seconds)
+    else:
+        lengths[-1] = max(lengths[-1], END_SECONDS)
+        total = round(sum(lengths), 2)
+    starts = [sum(lengths[:index]) for index in range(len(lengths))]
+    voiceover.write_track(clips, starts, total, track)
+    plan_.lengths, plan_.seconds = lengths, total
+    return track
+
+
+def plain_narrator(subjects: list[RepoFacts], say):
+    """For the plain recording, which has no captions: narrate(track) -> seconds of speech written, 0.0 when none.
+
+    One project: its name, what it is, where to star it. Several: how many there are and where to find them.
+    """
+    if len(subjects) == 1:
+        facts = subjects[0]
+        lines = [f"This is {facts.display_name}.", what_it_is(facts), f"{STAR_IT}."]
+    else:
+        lines = [f"{len(subjects)} projects I built.", "See them all on GitHub."]
+
+    def narrate_plain(track: Path) -> float:
+        try:
+            return voiceover.narration(lines, say, track)
+        except Exception as error:
+            log.warning("Voice-over failed (%s); this video stays silent", error)
+            return 0.0
+
+    return narrate_plain
 
 
 # ------------------------------------------------------------------ which format next (rotation that learns)
@@ -432,8 +519,8 @@ def frame_image(cut: str, repo: str, github: str) -> Image.Image:
     return canvas
 
 
-def end_image(cut: str, github: str, title: str = STAR_IT) -> Image.Image:
-    """The last seconds: the recording dims and the one thing to do next is spelled out."""
+def end_image(cut: str, github: str, title: str = STAR_IT, note: str = "") -> Image.Image:
+    """The last seconds: the recording dims and the one thing to do next is spelled out. note: small print below."""
     width, height = CUTS[cut]
     image = Image.new("RGBA", (width, height), (8, 10, 18, 205))
     draw = ImageDraw.Draw(image)
@@ -459,18 +546,28 @@ def end_image(cut: str, github: str, title: str = STAR_IT) -> Image.Image:
         radius=(size + 44) // 2, fill="#ffffff",
     )
     draw.text((centre_x - link_width / 2, centre_y + 70 + 16), github, font=link_font, fill=INK)
+    if note:
+        note_font = _font("segoeui.ttf", 28)
+        draw.text(((width - note_font.getlength(note)) / 2, centre_y + 70 + size + 44 + 48), note, font=note_font, fill="#d1d5db")
     return image
 
 
 # ------------------------------------------------------------------ rendering (one ffmpeg run per cut)
 
-def ffmpeg_args(ffmpeg: str, raw: Path, lead_in: float, speed: float, cut: str, seconds: int, frame: Path,
-                overlays: list[tuple[Path, int, int, float, float]], bar: Path, output: Path) -> list[str]:
-    """The ffmpeg command for one cut. overlays: (png, x, y, from second, to second)."""
+def ffmpeg_args(ffmpeg: str, raw: Path, lead_in: float, speed: float, cut: str, seconds: float, frame: Path,
+                overlays: list[tuple[Path, int, int, float, float]], bar: Path, output: Path,
+                track: Path | None = None) -> list[str]:
+    """The ffmpeg command for one cut. overlays: (png, x, y, from second, to second). track: the voice, else silence."""
     width, height = CUTS[cut]
     screen_left, screen_top, screen_width, screen_height = LAYOUTS[cut]["screen"]
-    command = [ffmpeg, "-y", "-loglevel", "error", "-ss", f"{lead_in:.2f}", "-i", str(raw),
-               "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100", "-i", str(frame)]
+    if track:
+        sound = ["-i", str(track)]
+        sound_out = ["-af", voiceover.AUDIO_FILTER, "-c:a", "aac", "-b:a", voiceover.AUDIO_BITRATE, "-ac", "2", "-ar", "44100"]
+    else:
+        sound = ["-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100"]
+        sound_out = ["-c:a", "aac", "-b:a", "48k"]
+    picture_rate = min(3500, int(SIZE_BUDGET_KBIT / seconds) - 96)  # a longer video gets fewer bits a second, not more megabytes
+    command = [ffmpeg, "-y", "-loglevel", "error", "-ss", f"{lead_in:.2f}", "-i", str(raw), *sound, "-i", str(frame)]
     for picture, *_ in overlays:
         command += ["-i", str(picture)]
     command += ["-i", str(bar)]
@@ -487,14 +584,15 @@ def ffmpeg_args(ffmpeg: str, raw: Path, lead_in: float, speed: float, cut: str, 
     steps.append("[bar]format=yuv420p[v]")
     command += [
         "-filter_complex", ";".join(steps), "-map", "[v]", "-map", "1:a",
-        "-c:v", "libx264", "-preset", "veryfast", "-crf", "25", "-maxrate", "3500k", "-bufsize", "7000k",  # under Discord's 10 MB
-        "-c:a", "aac", "-b:a", "48k", "-t", str(seconds), "-movflags", "+faststart", str(output),
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "25", "-maxrate", f"{picture_rate}k", "-bufsize", f"{2 * picture_rate}k",
+        *sound_out, "-t", str(seconds), "-movflags", "+faststart", str(output),
     ]
     return command
 
 
-def render(plan_: Plan, cut: str, raw: Path, lead_in: float, speed: float, work: Path, output: Path) -> Path:
-    """Draw this cut's overlays and encode it. Raises when the encoding fails or comes out empty."""
+def render(plan_: Plan, cut: str, raw: Path, lead_in: float, speed: float, work: Path, output: Path,
+           track: Path | None = None) -> Path:
+    """Draw this cut's overlays and encode it, with the voice when there is a track. Raises when the encoding fails or comes out empty."""
     width, _ = CUTS[cut]
     frame = work / f"{cut}_frame.png"
     frame_image(cut, plan_.repo, plan_.github).save(frame)
@@ -502,7 +600,7 @@ def render(plan_: Plan, cut: str, raw: Path, lead_in: float, speed: float, work:
     for index, (kind, text, start, end) in enumerate(plan_.timeline()):
         picture = work / f"{cut}_{index}.png"
         if kind == "end":
-            image, (x, y) = end_image(cut, text, plan_.end), (0, 0)
+            image, (x, y) = end_image(cut, text, plan_.end, VOICE_NOTE if track else ""), (0, 0)
         else:
             style = (plan_.format if plan_.format in ("pov", "question") else "hook") if kind == "hook" else "beat"
             image, (x, y) = caption_image(text, cut, style)
@@ -511,7 +609,7 @@ def render(plan_: Plan, cut: str, raw: Path, lead_in: float, speed: float, work:
     bar = work / f"{cut}_bar.png"
     Image.new("RGBA", (width, 10), YELLOW).save(bar)
     subprocess.run(
-        ffmpeg_args(visuals._ffmpeg(), raw, lead_in, speed, cut, plan_.seconds, frame, overlays, bar, output),
+        ffmpeg_args(visuals._ffmpeg(), raw, lead_in, speed, cut, plan_.seconds, frame, overlays, bar, output, track),
         check=True, capture_output=True, timeout=400, creationflags=CREATE_NO_WINDOW,
     )
     if output.stat().st_size < visuals.DEMO_MIN_BYTES:
@@ -519,16 +617,25 @@ def render(plan_: Plan, cut: str, raw: Path, lead_in: float, speed: float, work:
     return output
 
 
-def record(plan_: Plan, out_dir: Path) -> list[Path]:
-    """Record the page once and render every cut: [<repo>_demo_<format>_feed.mp4, ..._tall.mp4]. All or nothing."""
+def record(plan_: Plan, out_dir: Path, say=None) -> list[Path]:
+    """Record the page once and render every cut: [<repo>_demo_<format>_feed.mp4, ..._tall.mp4]. All or nothing.
+
+    say (voiceover.load) reads the captions aloud; a voice that fails costs the sound, never the video.
+    """
     out_dir.mkdir(parents=True, exist_ok=True)
     outputs = [out_dir / f"{plan_.repo}_demo_{plan_.format}_{cut}.mp4" for cut in CUTS]
     try:
         with tempfile.TemporaryDirectory(prefix="reachpilot_reel_") as folder:
+            track = None
+            if say:
+                try:
+                    track = narrate(plan_, say, Path(folder) / "voice.wav")
+                except Exception as error:
+                    log.warning("Voice-over failed (%s); this video stays silent", error)
             raw, lead_in, tour_seconds = visuals.record_raw(plan_.url, Path(folder), phone=True, served=plan_.pages)
             speed = max(MIN_SPEED, tour_seconds / plan_.seconds)
             for cut, output in zip(CUTS, outputs):
-                render(plan_, cut, raw, lead_in, speed, Path(folder), output)
+                render(plan_, cut, raw, lead_in, speed, Path(folder), output, track)
     except Exception:
         for output in outputs:
             output.unlink(missing_ok=True)
