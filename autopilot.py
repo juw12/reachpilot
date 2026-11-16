@@ -57,6 +57,7 @@ import visuals  # noqa: E402
 import voiceover  # noqa: E402
 
 CONFIG_PATH = ROOT / "config.json"
+LOCAL_CONFIG_PATH = ROOT / "config.local.json"
 SECRETS_PATH = ROOT / "secrets.json"
 TOKEN_PATH = ROOT / "token.json"
 DB_PATH = ROOT / "state.db"
@@ -87,7 +88,18 @@ def setup_logging() -> None:
 
 
 def load_config() -> dict:
-    return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+    """config.json, plus the repositories excluded in the git-ignored config.local.json.
+
+    A repository whose name must stay out of this public repository (a private one, say) is excluded there:
+    {"exclude_repos": ["name"]}. Nothing else is read from that file; a file that is not valid JSON stops
+    the run, like config.json, so an exclusion is never dropped silently.
+    """
+    config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+    if LOCAL_CONFIG_PATH.exists():
+        local = json.loads(LOCAL_CONFIG_PATH.read_text(encoding="utf-8-sig"))
+        extra = [name for name in local.get("exclude_repos", []) if isinstance(name, str)]
+        config["exclude_repos"] = list(config.get("exclude_repos", [])) + extra
+    return config
 
 
 def connect_db() -> sqlite3.Connection:

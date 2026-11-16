@@ -1,6 +1,8 @@
 # Secrets and personal state: never commit
 token.json
 secrets.json
+# Repositories excluded by name without the name being committed (autopilot.load_config)
+config.local.json
 state.db
 state.db-*
 *.log

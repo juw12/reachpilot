@@ -242,6 +242,10 @@ python selfupdate.py install         # optional: task \ReachPilot\Updates keeps 
 
 In `config.json`, `"mode": "auto"` posts by itself; set `"mode": "review"` to hold each draft until you run `approve`.
 
+A repository whose name should not appear in this repository (a private one, for example) is excluded in a
+git-ignored `config.local.json` instead of `config.json`: `{"exclude_repos": ["its-name"]}`. Only that list is
+read from the file.
+
 ### Create the LinkedIn app (once, about 5 minutes)
 
 ReachPilot posts as you through your own free LinkedIn developer app; nobody else's server is involved.

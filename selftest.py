@@ -168,6 +168,38 @@ check("go/dawn-falcon/" in out_ok and "go/watt-reserve/" in out_ok,
       f"track_links: a successful sync still rewrites the new link and writes the cache ({out_ok!r})")
 autopilot.SECRETS_PATH = original_pages
 
+# config.local.json: a repository is excluded by name without the name being committed to this repository
+original_config_paths = (autopilot.CONFIG_PATH, autopilot.LOCAL_CONFIG_PATH)
+local_home = Path(tempfile.mkdtemp())
+autopilot.CONFIG_PATH = local_home / "config.json"
+autopilot.LOCAL_CONFIG_PATH = local_home / "config.local.json"
+try:
+    autopilot.CONFIG_PATH.write_text(json.dumps({"mode": "review", "exclude_repos": ["shown"]}), encoding="utf-8")
+    check(autopilot.load_config() == {"mode": "review", "exclude_repos": ["shown"]},
+          "config: without config.local.json the settings are exactly those of config.json")
+    # Notepad saves UTF-8 with a byte order mark; other keys and non-text entries in the local file are ignored
+    autopilot.LOCAL_CONFIG_PATH.write_text(
+        "\ufeff" + json.dumps({"exclude_repos": ["Hidden", 7], "mode": "auto"}), encoding="utf-8")
+    merged_config = autopilot.load_config()
+    check(merged_config == {"mode": "review", "exclude_repos": ["shown", "Hidden"]},
+          f"config: config.local.json adds excluded repos and changes nothing else ({merged_config})")
+    listed = [{"name": "hidden"}, {"name": "shown"}, {"name": "kept"}, {"name": "secret", "private": True}]
+    with mock.patch("github_source.gh_api", return_value=listed):
+        eligible = [repo["name"] for repo in gh.list_public_repos("someone", merged_config["exclude_repos"])]
+    check(eligible == ["kept"],
+          f"config: a repo excluded in config.local.json is never eligible, and neither is a private one ({eligible})")
+    autopilot.LOCAL_CONFIG_PATH.write_text("{not json", encoding="utf-8")
+    try:
+        autopilot.load_config()
+        broken_local_stops = False
+    except ValueError:
+        broken_local_stops = True
+    check(broken_local_stops, "config: a broken config.local.json stops the run instead of dropping the exclusions")
+finally:
+    autopilot.CONFIG_PATH, autopilot.LOCAL_CONFIG_PATH = original_config_paths
+ignored_files = (Path(__file__).parent / ".gitignore").read_text(encoding="utf-8").split()
+check("config.local.json" in ignored_files, "config: config.local.json is git-ignored, so its names are never committed")
+
 # refresh_try_links (daily path) must also tolerate a failed go-page sync and not blow the cache
 daily_db = sqlite3.connect(":memory:")
 daily_db.executescript(
