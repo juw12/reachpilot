@@ -951,6 +951,29 @@ def show() -> None:
             print(f"           {row.get('detail', '')}")
 
 
+def leave_low_priority() -> bool:
+    """Put this run back at normal priority when Windows started it lower. True when it had to.
+
+    On a PC at 100 % CPU a below-normal run did not get through its first imports in 8 minutes (16 Nov 2026, 12:00,
+    although the task asks for normal priority); back at normal it finished within a second. A run takes seconds,
+    so this costs the foreground next to nothing.
+    """
+    if sys.platform != "win32":
+        return False
+    try:
+        import ctypes
+        kernel = ctypes.windll.kernel32
+        kernel.GetCurrentProcess.restype = ctypes.c_void_p
+        kernel.GetPriorityClass.argtypes = [ctypes.c_void_p]
+        kernel.SetPriorityClass.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+        this_process = kernel.GetCurrentProcess()
+        if kernel.GetPriorityClass(this_process) not in (0x40, 0x4000):  # idle, below normal
+            return False
+        return bool(kernel.SetPriorityClass(this_process, 0x20))  # normal
+    except Exception:
+        return False
+
+
 if __name__ == "__main__":
     arguments = sys.argv[1:]
     if arguments == ["install"]:
@@ -958,6 +981,7 @@ if __name__ == "__main__":
     elif arguments == ["show"]:
         show()
     elif arguments in ([], ["--force"]):
+        leave_low_priority()
         try:
             outcome = run(force=bool(arguments))
         except Exception as error:  # the task must leave a trace, never a silent crash

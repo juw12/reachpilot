@@ -3066,5 +3066,55 @@ check("data/launch_auto/" in auto_ignored and "launch_auto.log" in auto_ignored 
 check(("launch" in hub.TASKS) == (hub.ROOT / "data" / "launch_auto").exists(),
       "hub launch auto: the hourly task is listed only where it is installed")
 
+# A busy PC that cannot answer in time is not a missing task
+busy_run = hub.subprocess.run
+try:
+    def no_answer(*args, **kwargs):
+        raise subprocess.TimeoutExpired("schtasks", 10)
+    hub.subprocess.run = no_answer
+    hub._cache.pop("tasks", None)
+    busy_tasks = hub.task_status()
+    check(busy_tasks and all(task == {"name": task["name"], "installed": False, "unknown": True} for task in busy_tasks.values()),
+          "hub tasks: no answer from Task Scheduler is recorded as unknown, not as a missing task")
+    busy_todo = [item["title"] for item in hub.todo_items(None, {"installed": False}, {"installed": False}, busy_tasks)]
+    check(not any("is missing" in title for title in busy_todo)
+          and busy_todo.count(f"Could not check {len(busy_tasks)} scheduled tasks") == 1,
+          "hub tasks: a busy PC gives one 'could not check' line and no false 'is missing' alarm")
+    hub.subprocess.run = lambda *args, **kwargs: subprocess.CompletedProcess(args, 1, "", "ERROR: The system cannot find the file specified.")
+    hub._cache.pop("tasks", None)
+    gone_tasks = hub.task_status()
+    gone_todo = [item["title"] for item in hub.todo_items(None, {"installed": False}, {"installed": False}, gone_tasks)]
+    check(all(task["installed"] is False and task["unknown"] is False for task in gone_tasks.values())
+          and sum("is missing" in title for title in gone_todo) == len(gone_tasks)
+          and not any(title.startswith("Could not check") for title in gone_todo),
+          "hub tasks: a task that Task Scheduler says is not there is still reported as missing")
+finally:
+    hub.subprocess.run = busy_run
+    hub._cache.pop("tasks", None)
+
+# A run that Windows started at low priority puts itself back at normal
+if sys.platform == "win32":
+    import ctypes
+    priority_kernel = ctypes.windll.kernel32
+    priority_kernel.GetCurrentProcess.restype = ctypes.c_void_p
+    priority_kernel.GetPriorityClass.argtypes = [ctypes.c_void_p]
+    priority_kernel.SetPriorityClass.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+    this_test = priority_kernel.GetCurrentProcess()
+    priority_before = priority_kernel.GetPriorityClass(this_test)
+    try:
+        priority_kernel.SetPriorityClass(this_test, 0x4000)
+        raised = launch_auto.leave_low_priority()
+        check(raised and priority_kernel.GetPriorityClass(this_test) == 0x20,
+              "launch auto: a run started below normal priority puts itself back at normal")
+        check(launch_auto.leave_low_priority() is False and priority_kernel.GetPriorityClass(this_test) == 0x20,
+              "launch auto: a run that is already at normal priority is left alone")
+    finally:
+        priority_kernel.SetPriorityClass(this_test, priority_before)
+else:
+    check(launch_auto.leave_low_priority() is False, "launch auto: priority is left alone outside Windows")
+auto_main = auto_source.decode("utf-8").split('if __name__ == "__main__":')[1]
+check(auto_main.index("leave_low_priority()") < auto_main.index("run(force="),
+      "launch auto: the hourly run fixes its priority before it starts working")
+
 print("\nALL PASSED" if not failures else f"\n{len(failures)} FAILED")
 sys.exit(1 if failures else 0)

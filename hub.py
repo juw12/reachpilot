@@ -104,10 +104,12 @@ def task_status() -> dict:
                     capture_output=True, text=True, timeout=10, creationflags=NO_WINDOW,
                 ).stdout
                 rows = list(csv.DictReader(output.splitlines()))
+                unknown = False
             except Exception:
-                rows = []
+                # No answer (a busy PC makes schtasks miss the 10 seconds) is not the same as "not installed".
+                rows, unknown = [], True
             if not rows:
-                result[key] = {"name": name, "installed": False}
+                result[key] = {"name": name, "installed": False, "unknown": unknown}
                 continue
             row = rows[0]
             last_result = row.get("Last Result", "").strip()
@@ -1334,8 +1336,13 @@ def todo_items(linkedin: dict | None, jobs: dict, email: dict, tasks: dict, podc
         if task.get("installed") and not task.get("ok") and task.get("last_result") not in ("", None):
             add(2, "System", f"'{task['name']}' last run reported an error (code {task['last_result']})",
                 "Check the module's log; it will retry on its next run.")
-        if not task.get("installed"):
+        if not task.get("installed") and not task.get("unknown"):
             add(2, "System", f"Scheduled task '{task['name']}' is missing", "That automation won't run on its own until it's re-installed.")
+    unchecked = sum(1 for task in tasks.values() if task.get("unknown"))
+    if unchecked:
+        add(3, "System", f"Could not check {unchecked} scheduled task{'s' if unchecked != 1 else ''}",
+            "This PC was too busy to answer within 10 seconds. That says nothing about whether they are installed; "
+            "the next refresh asks again.")
 
     return sorted(items, key=lambda item: item["priority"])
 
