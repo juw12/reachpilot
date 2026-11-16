@@ -351,8 +351,12 @@ not decided to publish, licence or skip, and shows them in a second Overview car
 - **needs an invention disclosure**: the run creates `data/patents/dossiers/NAME/dossier.json` and a `BRIEF.md`
   that says what to write down. You, or an agent you point at the brief, fill it in.
 - **strengthening**: the dossier is scored out of 100 on eight checks: problem stated, mechanism in steps, a
-  measured effect with its source, a worked example, passing tests, a figure, drafted claims, and the closest prior
-  art with the difference. The card names the next missing one.
+  result with its source, a worked example, passing tests, a figure, drafted claims, and the closest prior
+  art with the difference. The card names the next missing one. "Passing tests" means the newest run of every
+  test workflow on the default branch is green; a Pages build, a release or a manual job is not a test. Only a
+  repository with no test workflow can count a local run instead, written down as command, date, passed and
+  failed, and a failed run on GitHub always wins. Each result says whether it was measured, simulated or
+  computed, and the specification prints that word in its heading.
 - **ready to file**: all eight pass. The run has built a provisional package in the dossier folder: the
   specification as PDF, HTML and Markdown, the cover sheet fields, a filing checklist and notes for an attorney.
 - **filed**: you record the filing date and application number on the card, and the desk counts down the 12

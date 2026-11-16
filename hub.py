@@ -1417,8 +1417,9 @@ def help_sections(tasks: dict, podcast: dict | None = None, launch: dict | None 
                     "the day a public repo was created; open while a repo is private) and names the realistic route: attorney, "
                     "defensive publication, licence or nothing. Reports new projects and repos that turned public. "
                     "Then the patent desk follows every candidate: it creates a dossier folder, scores the dossier against "
-                    "eight checks (problem, mechanism, measured effect, example, tests, figure, claims, prior art), reads the "
-                    "repository's last CI run, and once the dossier has content builds a draft US provisional package: the "
+                    "eight checks (problem, mechanism, a result with its source, example, tests, figure, claims, prior art), "
+                    "reads the test runs on the repository's default branch (a Pages build or a release does not count as a "
+                    "test), and once the dossier has content builds a draft US provisional package: the "
                     "specification as PDF, the cover sheet fields, a filing checklist and notes for the attorney. After a "
                     "filing it counts the 12 months to the non-provisional or PCT application. "
                     "Results stay on this PC (data/patents, git-ignored).",

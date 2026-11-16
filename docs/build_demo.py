@@ -261,11 +261,10 @@ HINGE_DOSSIER = {
     ],
     "variants": ["A stack of two wave springs.", "A moulded spring in place of a printed one."],
     "effects": [{"result": "Torque drift within about 4 percent after 20,000 cycles, against 18 percent for the stock hinge.",
-                 "source": "results/cycle_log.csv, made by python fixture.py --cycles 20000"}],
+                 "source": "results/cycle_log.csv, made by python fixture.py --cycles 20000", "kind": "measured"}],
     "example": {"steps": ["Mount the hinge in the fixture.", "Run 500 cycles and fit the compliance.",
                           "Read the preload from the table and fit the matching spring."],
                 "output": "Preload 1.8 N for a 0.25 Nm hinge."},
-    "tests_evidence": "python -m pytest, 2026-11-01, 42 passed",
     "figures": [{"title": "Section through the hinge", "file": "figure1.svg"}],
     "claims": [
         "A friction hinge comprising a shaft, a split bearing around the shaft, and a wave spring that preloads the split bearing.",
@@ -312,9 +311,8 @@ SEAL_DOSSIER = {
         "The segments are ranked by the leak rate their masking removes.",
     ],
     "effects": [{"result": "The leaking segment was named correctly in 38 of 40 enclosures, against a dye test.",
-                 "source": "results/segments.csv, made by python rig.py --batch"}],
+                 "source": "results/segments.csv, made by python rig.py --batch", "kind": "measured"}],
     "example": {"steps": ["Clamp the enclosure.", "Run the eight masking states."], "output": "Segment 5, 0.8 Pa/s."},
-    "tests_evidence": "python -m pytest, 2026-10-01, 31 passed",
     "figures": [{"title": "Manifold and segments", "file": "figure1.svg"}],
     "claims": [
         "A method of locating a leak, comprising masking gasket segments in turn and fitting a decay model to each pressure curve.",
