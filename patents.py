@@ -1,6 +1,6 @@
 """Patent screen: which of my GitHub projects are worth showing to a patent attorney, and until when.
 
-A weekly first pass over every repository I own (public and private). For each one it reads the description
+A daily first pass over every repository I own (public and private). For each one it reads the description
 and the README and answers three separate questions:
 
     score    does the text describe a technical mechanism (not just an app), with evidence quoted from the README
@@ -12,10 +12,13 @@ prior art, and it does not know what you showed people outside GitHub. Its job i
 technical slips past a deadline unread. Results stay on this PC (data/patents/, git-ignored) because they
 name private repositories.
 
-    python patents.py                     scan once (what the scheduled task does)
-    python patents.py install             create / refresh the weekly task \\ReachPilot\\Patent screen
+    python patents.py                     scan once, then refresh the patent desk (what the scheduled task does)
+    python patents.py install             create / refresh the daily task \\ReachPilot\\Patent screen
     python patents.py decide NAME WHAT    record your decision: file | publish | licence | skip | clear
     python patents.py show                print the ranked result of the last scan
+
+The projects it rates as candidates are followed by the patent desk (patent_desk.py): readiness, the filing
+package and the dates after a filing.
 """
 
 from __future__ import annotations
@@ -495,16 +498,16 @@ def log(result: str) -> None:
 
 
 def install_task() -> None:
-    """Every Monday 09:00, hidden (pythonw), catching up if the PC was off."""
+    """Every day 09:00, hidden (pythonw), catching up if the PC was off."""
     pythonw = Path(sys.executable).with_name("pythonw.exe")
     runner = pythonw if pythonw.exists() else Path(sys.executable)
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     script = f"""
 $action = New-ScheduledTaskAction -Execute '{runner}' -Argument '"{Path(__file__).resolve()}"' -WorkingDirectory '{CODE_DIR}'
-$weekly = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Monday -At 09:00
+$daily = New-ScheduledTaskTrigger -Daily -At 09:00
 $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 30) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
-Register-ScheduledTask -TaskPath '{TASK_PATH}' -TaskName '{TASK_NAME}' -Action $action -Trigger $weekly -Settings $settings `
-    -Description 'Weekly patent screen of my GitHub projects: score, filing deadline, route. A screen, not legal advice.' -Force | Out-Null
+Register-ScheduledTask -TaskPath '{TASK_PATH}' -TaskName '{TASK_NAME}' -Action $action -Trigger $daily -Settings $settings `
+    -Description 'Daily patent screen and patent desk for my GitHub projects: score, readiness, filing package, dates. Files nothing; not legal advice.' -Force | Out-Null
 Get-ScheduledTask -TaskPath '{TASK_PATH}' -TaskName '{TASK_NAME}' | Select-Object TaskName, State
 """
     print(subprocess.run(["powershell", "-NoProfile", "-Command", script], capture_output=True, text=True).stdout.strip())
@@ -532,7 +535,15 @@ if __name__ == "__main__":
         except Exception as error:  # a scheduled run must leave a line in the log, not a silent crash
             outcome = f"failed: {type(error).__name__}: {error}"
         log(outcome)
+        try:
+            import patent_desk
+
+            desk = patent_desk.refresh()["message"]
+        except Exception as error:
+            desk = f"Patent desk failed: {type(error).__name__}: {error}"
+        log(desk)
         if sys.stdout:
             print(outcome)
+            print(desk)
     else:
         print(__doc__)

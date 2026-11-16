@@ -44,8 +44,8 @@ blue on blue-soft 6.1:1, red/amber/green on their soft fills 5.8 / 5.3 / 5.0:1.
 - Motion: none beyond hover colour. Nothing animates on load.
 - Phone (<= 760px): tabs stay on one row (primary tabs + "More"), touch targets >= 44px.
 - Between 761px and about 1100px the tabs wrap to a second row; they never run under the clock.
-- A table whose cells hold sentences (the Patent screen) does not scroll sideways on a phone: at <= 760px each
-  row becomes a block with the column name above each value. Its rule sits next to the phone rules in
+- A table whose cells hold sentences (the Patent screen and the Patent desk) does not scroll sideways on a phone:
+  at <= 760px each row becomes a block with the column name above each value. Its rule sits next to the phone rules in
   `dashboard.html`; change both breakpoints together.
 
 ## Voice

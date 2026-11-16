@@ -2054,7 +2054,352 @@ check(not patent_source.startswith(b"\xef\xbb\xbf") and "\u00c3" not in patent_s
 check("data/patents/" in (Path(__file__).parent / ".gitignore").read_text(encoding="utf-8").split(),
       "patents: scan results are git-ignored")
 check(("patents" in hub.TASKS) == (hub.ROOT / "data" / "patents").exists(),
-      "hub patents: the weekly task is listed only where the screen is installed")
+      "hub patents: the daily task is listed only where the screen is installed")
+
+# patent desk (patent_desk.py): readiness, stages, the dates after a filing, history, the package, the daily run.
+# Offline, made-up projects, no PDF (Edge is not on the CI runner) and no folder is opened.
+import patent_desk  # noqa: E402
+
+full_dossier = {
+    "title": "Friction hinge with a printed torque limiter",
+    "field": "Hinges with a set holding torque.",
+    "problem": ("A friction hinge loses its holding torque as the bearing wears, and the usual fix is a metal spring "
+                "washer that has to be chosen per batch and cannot be printed with the part."),
+    "mechanism": ["Print a wave spring in the hinge knuckle.", "Split the bearing so the spring can close it.",
+                  "Measure the torque curve of the assembled hinge.",
+                  "Fit the spring compliance to that curve and set the preload."],
+    "variants": ["A moulded spring with a rate < 2 N/mm instead of a printed one."],
+    "effects": [{"result": "Holding torque within about 4 percent over the test.", "source": "bench/torque.csv"},
+                {"result": "Feels smoother."}],
+    "example": {"steps": ["Print the knuckle.", "Assemble and measure."], "output": "torque 0.42 N m"},
+    "figures": [{"title": "Section through the knuckle", "file": "fig1.svg"}, {"title": "Not drawn yet", "file": "fig9.svg"}],
+    "claims": [
+        "A hinge comprising a split bearing and a printed wave spring that preloads it.",
+        "The hinge of claim 1, wherein the spring is printed in one piece with the knuckle.",
+        "The hinge of claim 1, wherein the preload is set from a measured torque curve.",
+        "The hinge according to any one of claims 1 to 3, wherein the bearing is split along its axis.",
+    ],
+    "prior_art": [
+        {"reference": "Spring washer hinge", "url": "https://example.test/a", "difference": "A separate metal washer."},
+        {"reference": "Detent hinge", "difference": "Holds at fixed angles only."},
+        {"reference": "Clutch hinge", "difference": "A wrapped band, not a split bearing."},
+        {"reference": "Listed without a difference"},
+    ],
+    "abstract": "A hinge whose split bearing is preloaded by a printed wave spring.",
+    "inventors": [{"given": "Ada", "family": "Example", "residence": "Springfield, Nowhere"}],
+    "questions": ["Is the fitted preload a method claim or a product claim?"],
+}
+partial_dossier = {"problem": full_dossier["problem"], "mechanism": full_dossier["mechanism"]}
+
+
+def desk_points(checks):
+    return sum(entry["points"] for entry in checks if entry["ok"])
+
+
+def desk_found(checks, key):
+    return next(entry for entry in checks if entry["key"] == key)
+
+
+ready_checks = patent_desk.readiness(full_dossier, {"state": "success"}, lambda file: file == "fig1.svg")
+check(len(ready_checks) == 8 and sum(entry["points"] for entry in ready_checks) == 100 and desk_points(ready_checks) == 100,
+      "patent desk: eight checks, 100 points, a complete dossier passes them all")
+check([desk_found(ready_checks, key)["found"] for key in ("effect", "figures", "claims", "prior_art")]
+      == ["1 with a source, 1 without", "1 of 2 listed file(s) found", "1 independent, 3 dependent", "3 with a stated difference"],
+      "patent desk: each check says what it found (a result without a source and a figure that is not on disk do not count)")
+check(desk_points(patent_desk.readiness(None)) == 0 and desk_points(patent_desk.readiness("damaged", "damaged")) == 0
+      and all(entry["fix"] for entry in patent_desk.readiness(None)),
+      "patent desk: no dossier scores 0 and every open check says what to do")
+check(desk_points(patent_desk.readiness(patent_desk.skeleton({"name": "x"}), {"state": "success"})) == 10,
+      "patent desk: an empty dossier with green CI scores 10, tests only")
+check(desk_found(patent_desk.readiness({"tests_evidence": "pytest, 2026-11-10, 41 passed"}, {"state": "failure"}), "tests")["ok"]
+      and not desk_found(patent_desk.readiness({}, {"state": "failure"}), "tests")["ok"]
+      and not desk_found(patent_desk.readiness({}, {"state": "none"}), "tests")["ok"],
+      "patent desk: tests count with green CI or a recorded local run, not with red CI or none")
+check(not desk_found(patent_desk.readiness({"problem": "x" * 119}), "problem")["ok"]
+      and desk_found(patent_desk.readiness({"problem": "x" * 120}), "problem")["ok"]
+      and not desk_found(patent_desk.readiness({"mechanism": ["a", "b", "c", ""]}), "mechanism")["ok"]
+      and not desk_found(patent_desk.readiness({"claims": full_dossier["claims"][:3]}), "claims")["ok"]
+      and not desk_found(patent_desk.readiness({"prior_art": full_dossier["prior_art"][:2]}), "prior_art")["ok"]
+      and not desk_found(patent_desk.readiness({"effects": [{"result": "Faster."}]}), "effect")["ok"],
+      "patent desk: thresholds (120 characters, 4 steps, 1 + 3 claims, 3 prior-art entries, a sourced result)")
+check(patent_desk.split_claims(full_dossier["claims"]) == (full_dossier["claims"][:1], full_dossier["claims"][1:])
+      and patent_desk.split_claims("damaged") == ([], []), "patent desk: dependent claims are the ones that refer to a claim")
+
+desk_notes = {**patent_notes, "tile-game": {**patent_notes["tile-game"], "filed": {"date": "2026-01-10", "number": "63/123,456"}}}
+desk_rows = patents.view(patent_scan, desk_notes, patent_today)
+desk_dossiers = {"hinge-lab": full_dossier, "pocket-rig": partial_dossier, "work-rig": full_dossier, "old-rig": full_dossier}
+desk_facts = {
+    "hinge-lab": {"ci": {"state": "success"}, "package": {"built": "2026-11-13", "pdf": True, "draft": False}},
+    "pocket-rig": {"ci": {"state": "failure"}},
+    "leaky": "damaged",
+}
+
+
+def desk_figure(name, file):
+    return (name, file) in (("hinge-lab", "fig1.svg"), ("pocket-rig", "fig1.svg"))
+
+
+desk = patent_desk.build(desk_rows, desk_notes, desk_dossiers, desk_facts, patent_today, None, desk_figure)
+on_desk = {item["name"]: item for item in desk["projects"]}
+check([(item["name"], item["stage"], item["score"]) for item in desk["projects"]] == [
+    ("hinge-lab", "ready", 100), ("tile-game", "filed", 0), ("pocket-rig", "strengthen", 25),
+    ("gear-rig", "disclosure", 0), ("leaky", "disclosure", 0), ("work-rig", "ownership", 80),
+], f"patent desk: one stage per project, ready first ({[(item['name'], item['stage'], item['score']) for item in desk['projects']]})")
+check(desk["total"] == 6 and desk["counts"] == {"filed": 1, "closed": 0, "ownership": 1, "disclosure": 2, "strengthen": 1, "ready": 1}
+      and "old-rig" not in on_desk and "borrowed" not in on_desk,
+      "patent desk: follows candidates only; a decided project and a fork are not on it")
+check(on_desk["hinge-lab"]["deadline"] is None and on_desk["hinge-lab"]["package"] == {"built": "2026-11-13", "pdf": True, "draft": False}
+      and on_desk["pocket-rig"]["package"] is None and on_desk["pocket-rig"]["ci"] == "failure" and on_desk["leaky"]["ci"] == "unknown",
+      "patent desk: a private project has no date; package and CI state come from the last run")
+check(on_desk["pocket-rig"]["next_step"].startswith("Add one measured result")
+      and on_desk["pocket-rig"]["deadline"] == {"label": "12-month date of the public repository", "date": "2026-12-09", "days_left": 25}
+      and (on_desk["pocket-rig"]["passed"], on_desk["pocket-rig"]["total"]) == (2, 8),
+      "patent desk: a half-written dossier names its first gap and keeps the public repository's date")
+check(on_desk["tile-game"]["filed"] == {"date": "2026-01-10", "number": "63/123,456"}
+      and on_desk["tile-game"]["deadline"] == {"label": "non-provisional or PCT application due", "date": "2027-01-10", "days_left": 57}
+      and "cannot be extended" in on_desk["tile-game"]["next_step"],
+      f"patent desk: a recorded filing starts the 12 months for the next application ({on_desk['tile-game']['deadline']})")
+check(on_desk["work-rig"]["employer"] and not on_desk["work-rig"]["ownership_cleared"]
+      and "employment agreement" in on_desk["work-rig"]["next_step"] and on_desk["gear-rig"]["stage_label"] == "needs an invention disclosure",
+      "patent desk: a project made at work waits on ownership however complete its dossier is")
+
+cleared_notes = {**desk_notes, "work-rig": {"owner": "employer?", "ownership_cleared": "2026-11-14"}}
+cleared = patent_desk.build(patents.view(patent_scan, cleared_notes, patent_today), cleared_notes, desk_dossiers, {}, patent_today)
+cleared_rig = next(item for item in cleared["projects"] if item["name"] == "work-rig")
+check(cleared_rig["stage"] == "strengthen" and cleared_rig["score"] == 80 and cleared_rig["ownership_cleared"]
+      and cleared_rig["next_step"].startswith("Get the repository's CI run green"),
+      "patent desk: once ownership is cleared the same dossier is scored and its first gap named")
+closed_notes = {"old-rig": {"rating": "maybe"}}
+closed = patent_desk.build(patents.view(patent_scan, closed_notes, patent_today), closed_notes, desk_dossiers, {}, patent_today)
+closed_rig = next(item for item in closed["projects"] if item["name"] == "old-rig")
+check(closed_rig["stage"] == "closed" and closed_rig["deadline"] is None and "nothing to file" in closed_rig["next_step"]
+      and closed["projects"][-1]["name"] == "old-rig",
+      "patent desk: public for over 12 months means window closed, whatever the dossier says")
+late_notes = {"hinge-lab": {"filed": {"date": "2025-10-01", "number": "63/000,001"}}, "pocket-rig": {"filed": {"date": "soon"}}}
+late = patent_desk.build(patents.view(patent_scan, late_notes, patent_today), late_notes, desk_dossiers, {}, patent_today)
+late_lab = next(item for item in late["projects"] if item["name"] == "hinge-lab")
+check(late_lab["stage"] == "filed" and late_lab["deadline"]["date"] == "2026-10-01" and late_lab["deadline"]["days_left"] == -44
+      and "ended on 2026-10-01" in late_lab["next_step"]
+      and next(item for item in late["projects"] if item["name"] == "pocket-rig")["filed"] is None,
+      "patent desk: a missed 12 months is said plainly; a filing without a real date is ignored")
+check(patent_desk.build([], None, None, None, patent_today) == {
+    "projects": [], "counts": {stage: 0 for stage in patent_desk.STAGES}, "total": 0, "history": [], "note": patent_desk.NOTE}
+      and patent_desk.build(desk_rows, "damaged", "damaged", "damaged", patent_today)["total"] == 6
+      and "not legal advice" in patent_desk.NOTE and "files nothing" in patent_desk.NOTE and patent_desk.FOLLOW_UP_MONTHS == 12,
+      "patent desk: an empty or damaged input gives an empty desk; the note says it files nothing")
+
+desk_before = [{"name": "hinge-lab", "stage": "strengthen", "score": 75}, {"name": "pocket-rig", "stage": "strengthen", "score": 25},
+               {"name": "gone", "stage": "disclosure", "score": 0}, "damaged"]
+desk_moves = patent_desk.changes(desk_before, desk["projects"], patent_today)
+check([(move["name"], move["text"]) for move in desk_moves if move["name"] in ("hinge-lab", "pocket-rig", "gone", "work-rig")] == [
+    ("hinge-lab", "strengthening -> ready to file."), ("hinge-lab", "Readiness 75 -> 100 of 100."),
+    ("work-rig", "On the desk: waiting on ownership, readiness 80 of 100."),
+    ("gone", "Left the desk (decided, or no longer rated as a candidate)."),
+] and len(desk_moves) == 7 and {move["date"] for move in desk_moves} == {"2026-11-14"},
+    "patent desk: history records a stage that moved, a readiness that moved, a project that joined and one that left")
+check(patent_desk.changes(desk["projects"], desk["projects"], patent_today) == [], "patent desk: nothing moved, nothing recorded")
+long_history = [{"date": "2026-11-01", "name": "x", "text": str(number)} for number in range(70)] + ["damaged"]
+kept_history = patent_desk.build([], None, None, None, patent_today, long_history)["history"]
+check(len(kept_history) == patent_desk.HISTORY_LIMIT == 60 and kept_history[0]["text"] == "10" and kept_history[-1]["text"] == "69",
+      "patent desk: history keeps the last 60 entries")
+
+desk_card = hub.patents_summary(patent_scan, desk_notes, patent_today, {
+    "dossiers": desk_dossiers, "facts": desk_facts, "history": desk_moves, "figure_exists": desk_figure,
+    "refreshed_at": "2026-11-14 09:01"})
+check(desk_card["desk"]["projects"] == desk["projects"] and desk_card["desk"]["refreshed_at"] == "2026-11-14 09:01"
+      and desk_card["desk"]["history"] == desk_moves and json.loads(json.dumps(desk_card))["desk"]["total"] == 6,
+      "hub patent desk: the card carries the desk and it can be sent to the page as JSON")
+check(patent_card["desk"] is None and hub.patents_summary(None, None, patent_today, {})["desk"] is None
+      and hub.patent_desk_todo(None) == [] and hub.patent_desk_todo({"projects": []}) == [],
+      "hub patent desk: no desk, no desk card and no desk to-dos")
+desk_items = hub.patent_desk_todo(desk_card["desk"])
+check([(item["priority"], item["title"]) for item in desk_items] == [
+    (2, "hinge-lab: the provisional package is ready to file"),
+    (2, "tile-game: 57 days left for the non-provisional or PCT application"),
+    (2, "work-rig: who owns it?"),
+    (3, "3 patent candidates not ready to file yet"),
+], f"hub patent desk: to-dos ({[(item['priority'], item['title']) for item in desk_items]})")
+check(desk_items[0]["action"] == "patents:open:hinge-lab" and desk_items[0]["action_label"] == "Open the folder"
+      and "files nothing" in desk_items[0]["detail"] and desk_items[1]["action"] is None
+      and "pocket-rig (25/100): Add one measured result" in desk_items[3]["detail"]
+      and all(item["module"] == "Patents" for item in desk_items)
+      and hub.patents_todo(desk_card)[-4:] == desk_items,
+      "hub patent desk: the ready to-do opens the folder; the gaps to-do names each project's next step")
+urgent_notes = {"hinge-lab": {"filed": {"date": "2025-12-01", "number": "63/000,002"}},
+                "leaky": {"filed": {"date": "2025-10-01", "number": "63/000,003"}},
+                "gear-rig": {"filed": {"date": "2026-11-01", "number": "63/000,004"}}}
+urgent = patent_desk.build(patents.view(patent_scan, urgent_notes, patent_today), urgent_notes,
+                           {"pocket-rig": full_dossier}, {"pocket-rig": {"ci": {"state": "success"}}}, patent_today, None, desk_figure)
+urgent_items = hub.patent_desk_todo(urgent)
+check([(item["priority"], item["title"]) for item in urgent_items][:3] == [
+    (1, "pocket-rig: the provisional package is ready to file"),
+    (1, "hinge-lab: 17 days left for the non-provisional or PCT application"),
+    (1, "leaky: the 12 months have ended for the non-provisional or PCT application"),
+] and "2026-12-09" in urgent_items[0]["detail"] and "gear-rig" not in json.dumps(urgent_items),
+    f"hub patent desk: urgent inside 30 days; a filing with months left raises nothing ({[(item['priority'], item['title']) for item in urgent_items]})")
+
+for bad_name in ("..", ".", "", "a/b", "a b", "a\\b", "x" * 101):
+    try:
+        patent_desk.folder(bad_name)
+        check(False, f"patent desk: not a folder name ({bad_name[:12]!r})")
+    except ValueError:
+        check(True, f"patent desk: not a folder name ({bad_name[:12]!r})")
+
+desk_home = Path(tempfile.mkdtemp(prefix="rp-desk-"))
+desk_real = (patents.DATA_DIR, patents.SCAN_FILE, patents.OVERRIDES_FILE, patents.LOG_FILE)
+try:
+    patents.DATA_DIR = desk_home / "patents"
+    patents.SCAN_FILE = patents.DATA_DIR / "scan.json"
+    patents.OVERRIDES_FILE = patents.DATA_DIR / "overrides.json"
+    patents.LOG_FILE = desk_home / "patents.log"
+    check(patent_desk.refresh(patent_today, fetch_ci=None, pdf=False) == {"ok": False, "message": "Patent desk: no scan yet, nothing to follow."}
+          and not patent_desk.desk_file().exists(), "patent desk: no scan, nothing written")
+
+    patents.DATA_DIR.mkdir(parents=True)
+    patents.SCAN_FILE.write_text(json.dumps(patent_scan), encoding="utf-8")
+    patents.OVERRIDES_FILE.write_text(json.dumps(desk_notes), encoding="utf-8")
+    for name, dossier in (("hinge-lab", full_dossier), ("pocket-rig", partial_dossier)):
+        patent_desk.folder(name).mkdir(parents=True)
+        (patent_desk.folder(name) / "dossier.json").write_text(json.dumps(dossier), encoding="utf-8")
+    (patent_desk.folder("hinge-lab") / "fig1.svg").write_text("<svg xmlns='http://www.w3.org/2000/svg'/>", encoding="utf-8")
+    asked_ci = []
+
+    def fake_ci(full_name):
+        asked_ci.append(full_name)
+        return {"someone/hinge-lab": {"state": "success", "checked": "2026-11-14"},
+                "someone/pocket-rig": {"state": "failure", "checked": "2026-11-14"}}.get(full_name)
+
+    first_run = patent_desk.refresh(patent_today, fetch_ci=fake_ci, pdf=False)
+    check(first_run == {"ok": True, "message": (
+        "Patent desk: 6 project(s): 1 ready to file, 1 filed, 1 strengthening, 2 need a disclosure, 1 waiting on ownership; "
+        "4 new dossier(s), 2 package(s) rebuilt, 0 change(s).")}, f"patent desk: the daily run reports what it did ({first_run['message']})")
+    check(sorted(asked_ci) == sorted(f"someone/{name}" for name in on_desk),
+          "patent desk: the CI state is asked once per project on the desk, by its full name")
+    stored_desk = json.loads(patent_desk.desk_file().read_text(encoding="utf-8"))
+    check(stored_desk["version"] == 1 and stored_desk["history"] == [] and stored_desk["refreshed_at"]
+          and [entry["name"] for entry in stored_desk["projects"]] == [item["name"] for item in desk["projects"]]
+          and set(stored_desk["facts"]) == set(on_desk) and stored_desk["facts"]["hinge-lab"]["ci"]["state"] == "success"
+          and stored_desk["facts"]["hinge-lab"]["package"]["draft"] is False and stored_desk["facts"]["hinge-lab"]["package"]["pdf"] is False
+          and stored_desk["facts"]["pocket-rig"]["package"]["draft"] is True and "package" not in stored_desk["facts"]["gear-rig"],
+          "patent desk: desk.json keeps stage, readiness, CI state and what was built; the first run records no changes")
+
+    package = patent_desk.folder("hinge-lab") / "provisional"
+    check(sorted(path.name for path in package.iterdir())
+          == ["attorney_notes.md", "cover_sheet.md", "filing_checklist.md", "specification.html", "specification.md"],
+          "patent desk: the package is a specification (Markdown and HTML), cover sheet fields, a checklist and attorney notes")
+    specification_text = (package / "specification.md").read_text(encoding="utf-8")
+    check(all(piece in specification_text for piece in (
+        "# Friction hinge with a printed torque limiter", "35 U.S.C. 111(b)", "## Detailed description",
+        "4. Fit the spring compliance to that curve and set the preload.", "## Variations", "## Worked example", "torque 0.42 N m",
+        "(source: bench/torque.csv)", "## Example claims", "![FIG. 1: Section through the knuckle](../fig1.svg)", "Not legal advice"))
+          and "DRAFT, NOT READY" not in specification_text and "Spring washer hinge" not in specification_text,
+          "patent desk: the specification is written from the dossier and leaves the prior art out")
+    specification_page = (package / "specification.html").read_text(encoding="utf-8")
+    check("rate &lt; 2 N/mm" in specification_page and '<img src="../fig1.svg" alt="FIG. 1">' in specification_page
+          and specification_page.startswith("<!doctype html>"), "patent desk: the printable page escapes the dossier's text")
+    attorney_text = (package / "attorney_notes.md").read_text(encoding="utf-8")
+    check(all(piece in attorney_text for piece in (
+        "Readiness on the patent desk: 100 of 100 (8 of 8 checks).", "- Spring washer hinge <https://example.test/a>",
+        "Difference: A separate metal washer.", "Is the fitted preload a method claim or a product claim?",
+        "not from a professional patent search")), "patent desk: the attorney notes carry the prior art, the open questions and the limits")
+    cover_text = (package / "cover_sheet.md").read_text(encoding="utf-8")
+    check(all(piece in cover_text for piece in ("PTO/SB/16", "Given name: Ada", "Family name: Example", "Drawings: 2 sheet(s)",
+                                                "325 USD (large entity), 130 USD (small entity), 65 USD (micro entity)", "________")),
+          "patent desk: the cover sheet lists the form's fields and leaves yours blank")
+    draft_folder = patent_desk.folder("pocket-rig") / "provisional"
+    check("This repository is private" in (package / "filing_checklist.md").read_text(encoding="utf-8")
+          and "cannot be extended" in (package / "filing_checklist.md").read_text(encoding="utf-8")
+          and "is 2026-12-09" in (draft_folder / "filing_checklist.md").read_text(encoding="utf-8")
+          and "DRAFT, NOT READY TO FILE" in (draft_folder / "specification.md").read_text(encoding="utf-8")
+          and "- Given name: ________" in (draft_folder / "cover_sheet.md").read_text(encoding="utf-8"),
+          "patent desk: a package with open checks is marked as a draft; the checklist gives the date of a public repository")
+
+    starter = json.loads((patent_desk.folder("gear-rig") / "dossier.json").read_text(encoding="utf-8"))
+    check(starter["problem"] == "" and starter["claims"] == [] and starter["hints"] and all(isinstance(hint, str) for hint in starter["hints"])
+          and "No invented numbers" in (patent_desk.folder("gear-rig") / "BRIEF.md").read_text(encoding="utf-8")
+          and not (patent_desk.folder("gear-rig") / "provisional").exists()
+          and not patent_desk.folder("old-rig").exists() and not patent_desk.folder("borrowed").exists(),
+          "patent desk: a new candidate gets an empty dossier with the quoted sentences and a brief; no package until something is written")
+    second_run = patent_desk.refresh(patent_today, fetch_ci=fake_ci, pdf=False)
+    check(second_run["message"].endswith("0 new dossier(s), 0 package(s) rebuilt, 0 change(s)."),
+          f"patent desk: a second run with nothing new rebuilds nothing ({second_run['message']})")
+    written = {**starter, "problem": full_dossier["problem"]}
+    (patent_desk.folder("gear-rig") / "dossier.json").write_text(json.dumps(written), encoding="utf-8")
+    third_run = patent_desk.refresh(patent_today, fetch_ci=fake_ci, pdf=False)
+    check(third_run["message"].endswith("0 new dossier(s), 1 package(s) rebuilt, 2 change(s).")
+          and json.loads((patent_desk.folder("gear-rig") / "dossier.json").read_text(encoding="utf-8")) == written
+          and [entry["text"] for entry in json.loads(patent_desk.desk_file().read_text(encoding="utf-8"))["history"]]
+          == ["needs an invention disclosure -> strengthening.", "Readiness 0 -> 10 of 100."],
+          f"patent desk: what you write is never overwritten, and the next run records the move ({third_run['message']})")
+    quiet_run = patent_desk.refresh(patent_today, fetch_ci=None, pdf=False)
+    check(quiet_run["ok"] and json.loads(patent_desk.desk_file().read_text(encoding="utf-8"))["facts"]["hinge-lab"]["ci"]["state"] == "success",
+          "patent desk: when GitHub does not answer, the last known CI state is kept")
+
+    live_desk = hub.patents_section(patent_today)["desk"]
+    live_names = {item["name"]: item for item in live_desk["projects"]}
+    check(live_desk["total"] == 6 and live_desk["refreshed_at"] and len(live_desk["history"]) == 2
+          and live_names["hinge-lab"]["stage"] == "ready" and live_names["hinge-lab"]["package"]["draft"] is False
+          and live_names["gear-rig"]["stage"] == "strengthen" and live_names["gear-rig"]["score"] == 10,
+          "hub patent desk: the card reads dossiers, figures and the last run from disk")
+    check(patent_desk.figure_on_disk("hinge-lab", "fig1.svg") and not patent_desk.figure_on_disk("hinge-lab", "fig9.svg")
+          and not patent_desk.figure_on_disk("hinge-lab", "provisional")
+          and not patent_desk.figure_on_disk("hinge-lab", "../pocket-rig/dossier.json")
+          and not patent_desk.figure_on_disk("hinge-lab", "../../scan.json") and not patent_desk.figure_on_disk("..", "scan.json"),
+          "patent desk: a figure counts only as a file inside its own dossier folder")
+
+    notes_before = patents.load_overrides()
+    check(hub.run_action("patents:ownership:work-rig:cleared") == "work-rig: marked as yours. The desk drafts for it from the next run."
+          and patents.load_overrides()["work-rig"]["owner"] == "employer?" and patents.load_overrides()["work-rig"]["ownership_cleared"]
+          and {item["name"]: item["stage"] for item in hub.patents_section(patent_today)["desk"]["projects"]}["work-rig"] == "disclosure",
+          "hub patent desk: Ownership cleared is recorded next to the existing notes and moves the project on")
+    check(hub.run_action("patents:ownership:work-rig:unsure").startswith("work-rig: ownership open again")
+          and patents.load_overrides() == notes_before, "hub patent desk: ownership can be opened again")
+    check(hub.run_action("patents:filed:hinge-lab:2020-01-15:63/987,654")
+          == "hinge-lab: filing recorded. The non-provisional or PCT application is due by 2021-01-15; that date cannot be extended."
+          and patents.load_overrides()["hinge-lab"]["filed"] == {"date": "2020-01-15", "number": "63/987,654"}
+          and patents.load_overrides()["hinge-lab"]["decision"] == "file"
+          and {item["name"]: item["stage"] for item in hub.patents_section(patent_today)["desk"]["projects"]}["hinge-lab"] == "filed",
+          "hub patent desk: Record filing saves the date and the application number")
+    check(hub.run_action("patents:unfiled:hinge-lab") == "hinge-lab: recorded filing removed."
+          and "filed" not in patents.load_overrides()["hinge-lab"], "hub patent desk: a recorded filing can be removed")
+    notes_before = patents.load_overrides()
+    for refused_filing in (("hinge-lab", "2026-11-15", "63/123,456"), ("hinge-lab", "14/11/2026", "63/123,456"),
+                           ("hinge-lab", "2026-02-30", "63/123,456"), ("hinge-lab", "2026-11-10", "abc"),
+                           ("hinge-lab", "2026-11-10", "63/123,456; x"), ("hinge-lab", "2026-11-10", "//////"),
+                           ("nowhere", "2026-11-10", "63/123,456"), ("../x", "2026-11-10", "63/123,456")):
+        try:
+            patent_desk.record_filing(*refused_filing, today=patent_today)
+            check(False, f"patent desk: filing refused {refused_filing}")
+        except ValueError:
+            check(True, f"patent desk: filing refused {refused_filing}")
+    for refused in ("patents:filed:hinge-lab:2020-01-15", "patents:filed:hinge-lab:2999-01-01:63/123,456",
+                    "patents:ownership:work-rig:maybe", "patents:ownership:nowhere:cleared", "patents:unfiled:hinge-lab:extra",
+                    "patents:unfiled:../x", "patents:open:..", "patents:open:nowhere", "patents:open:old-rig", "patents:open:hinge-lab:x",
+                    "patents:build:hinge-lab"):
+        try:
+            hub.run_action(refused)
+            check(False, f"hub patent desk: malformed action refused ({refused})")
+        except ValueError:
+            check(True, f"hub patent desk: malformed action refused ({refused})")
+    check(patents.load_overrides() == notes_before, "patent desk: a refused filing or action changes nothing")
+    with mock.patch.object(patent_desk.os, "startfile", create=True) as opened_folder:
+        check(hub.run_action("patents:open:hinge-lab") == "Opened the dossier folder of hinge-lab."
+              and opened_folder.call_args[0] == (patent_desk.folder("hinge-lab"),),
+              "hub patent desk: Open the dossier folder opens that project's folder and nothing else")
+finally:
+    patents.DATA_DIR, patents.SCAN_FILE, patents.OVERRIDES_FILE, patents.LOG_FILE = desk_real
+
+check(all(piece in patent_page for piece in ("function patentDeskCard", "function keepingState", "data-filed", "Patent desk",
+                                             "patents:ownership:", "patents:unfiled:", "patents:open:", "patents:filed:")),
+      "dashboard: the Patent desk card, its checklist, its filing form and its buttons are present")
+desk_source = (Path(__file__).parent / "patent_desk.py").read_bytes()
+check(not desk_source.startswith(b"\xef\xbb\xbf") and "\u00c3" not in desk_source.decode("utf-8")
+      and "\u00e2\u20ac" not in desk_source.decode("utf-8"), "patent_desk.py: clean UTF-8, no byte-order mark")
+check("New-ScheduledTaskTrigger -Daily -At 09:00" in patent_source.decode("utf-8") and "patent_desk.refresh()" in patent_source.decode("utf-8"),
+      "patents.py: the task runs every day and refreshes the desk after the screen")
+desk_help = json.dumps(hub.help_sections({}, None, None, patent_card)[-1])
+check("Every day 09:00" in desk_help and "files nothing" in desk_help and "Record filing" in desk_help,
+      "hub patent desk: the help entry says it runs daily and files nothing")
 
 # launch automations (launch_auto.py): the answer to a sent mail and one follow-up, invitations, the waiting proposal
 import launch_auto  # noqa: E402

@@ -217,15 +217,132 @@ A small CLI and dashboard that index test logs as they are written, so a failed 
 
 Lay tiles, grow a garden. Twelve levels, works offline.
 """, day(-60)),
+    patent_project(
+        "seal-rig", "Leak-test rig that finds the leaking gasket segment from the pressure decay curve.",
+        """# seal-rig
+
+A bench rig that pressurises an enclosure and fits the decay curve per gasket segment.
+
+## How it works
+
+Each segment is masked in turn by a valve manifold. The solver fits a two-term decay model to every curve and
+ranks the segments by leak rate.
+
+## Results
+
+Measured on 40 enclosures: the rig named the leaking segment in 38, against a dye test as reference.
+""", day(-150), private=True, licence=""),
     patent_project("awesome-mechanisms", "A curated list of mechanism references.", "", day(-400), fork=True),
 ]
 PATENT_NOTES = {
+    "seal-rig": {"rating": "candidate", "reviewed": day(-40), "decision": "file",
+                 "filed": {"date": day(-30), "number": "63/000,000"},
+                 "verdict": "A measuring method with a physical rig and numbers behind it."},
     "gear-calc": {"rating": "maybe", "reviewed": day(-3),
                   "verdict": "The stack maths is textbook. Only the binding count might be new; look for earlier work first."},
     "weather-kit": {"decision": "publish", "reviewed": day(-3),
                     "verdict": "Public for almost two years, so it is prior art already."},
     "lab-notes": {"owner": "employer?", "rating": "low", "reviewed": day(-3),
                   "verdict": "A search index over log files: nothing a patent would cover."},
+}
+
+
+HINGE_DOSSIER = {
+    "title": "Friction hinge with a printed wave-spring preload and method of setting the preload",
+    "field": "Friction hinges for lids and displays.",
+    "problem": "A friction hinge loses torque as its bearing wears, so a lid that held its angle when new drops "
+               "after a few thousand cycles. Re-tightening by hand is not possible in a sealed product.",
+    "mechanism": [
+        "A split bearing clamps the hinge shaft.",
+        "A printed wave spring presses the two halves of the bearing together.",
+        "A fixture with a torque sensor logs the torque of every cycle.",
+        "A solver fits the spring compliance to the logged torque curve.",
+        "An interpolation table turns the fitted compliance into the preload that keeps the torque flat.",
+    ],
+    "variants": ["A stack of two wave springs.", "A moulded spring in place of a printed one."],
+    "effects": [{"result": "Torque drift within about 4 percent after 20,000 cycles, against 18 percent for the stock hinge.",
+                 "source": "results/cycle_log.csv, made by python fixture.py --cycles 20000"}],
+    "example": {"steps": ["Mount the hinge in the fixture.", "Run 500 cycles and fit the compliance.",
+                          "Read the preload from the table and fit the matching spring."],
+                "output": "Preload 1.8 N for a 0.25 Nm hinge."},
+    "tests_evidence": "python -m pytest, 2026-11-01, 42 passed",
+    "figures": [{"title": "Section through the hinge", "file": "figure1.svg"}],
+    "claims": [
+        "A friction hinge comprising a shaft, a split bearing around the shaft, and a wave spring that preloads the split bearing.",
+        "The hinge of claim 1, wherein the wave spring is printed in one piece with a bearing half.",
+        "The hinge of claim 1, wherein the preload is chosen from a table of fitted spring compliance.",
+        "The hinge of claim 3, wherein the compliance is fitted to a torque curve logged over at least 500 cycles.",
+    ],
+    "prior_art": [
+        {"reference": "Clip-type friction hinge (made-up reference A)", "url": "",
+         "difference": "Preload comes from the clip itself and cannot be set after moulding."},
+        {"reference": "Disc-spring torque hinge (made-up reference B)", "url": "",
+         "difference": "Uses steel disc springs and a nut; no fitted compliance, no printed spring."},
+        {"reference": "Adjustable laptop hinge (made-up reference C)", "url": "",
+         "difference": "Adjusted by hand with a screw; nothing is measured."},
+    ],
+    "abstract": "A friction hinge whose split bearing is preloaded by a printed wave spring chosen from a fitted compliance table.",
+    "inventors": [],
+}
+POCKET_DOSSIER = {
+    "title": "Sketch constraint solving through a signed-distance field",
+    "problem": "A browser sketcher that re-solves every constraint with a Newton solver stalls on large sketches, "
+               "so dragging a point lags behind the pointer.",
+    "mechanism": [
+        "Each sketch entity is turned into a signed-distance field.",
+        "Constraints are evaluated on the field instead of on the entity equations.",
+        "Marching squares traces the outlines.",
+        "A parser reads the dimension expressions.",
+    ],
+    "effects": [{"result": "A sketch with 200 constraints re-solves in 12 ms.", "source": "bench/solve.js"}],
+    "example": {"steps": ["Open the 200-constraint sample.", "Drag one corner."], "output": "12 ms per solve."},
+    "figures": [],
+    "claims": [],
+    "prior_art": [{"reference": "Newton-based sketch solver (made-up reference D)", "url": "",
+                   "difference": "Solves the entity equations directly."}],
+}
+SEAL_DOSSIER = {
+    "title": "Method of locating a leaking gasket segment from pressure decay curves",
+    "problem": "A pressure decay test says that an enclosure leaks but not where. Finding the segment takes a dye "
+               "test, which is slow and marks the part.",
+    "mechanism": [
+        "The enclosure is pressurised through one port.",
+        "A valve manifold masks one gasket segment at a time.",
+        "A two-term decay model is fitted to the pressure curve of every masking state.",
+        "The segments are ranked by the leak rate their masking removes.",
+    ],
+    "effects": [{"result": "The leaking segment was named correctly in 38 of 40 enclosures, against a dye test.",
+                 "source": "results/segments.csv, made by python rig.py --batch"}],
+    "example": {"steps": ["Clamp the enclosure.", "Run the eight masking states."], "output": "Segment 5, 0.8 Pa/s."},
+    "tests_evidence": "python -m pytest, 2026-10-01, 31 passed",
+    "figures": [{"title": "Manifold and segments", "file": "figure1.svg"}],
+    "claims": [
+        "A method of locating a leak, comprising masking gasket segments in turn and fitting a decay model to each pressure curve.",
+        "The method of claim 1, wherein the decay model has two exponential terms.",
+        "The method of claim 1, wherein the segments are ranked by fitted leak rate.",
+        "The method of claim 2, wherein the masking is done by a valve manifold.",
+    ],
+    "prior_art": [
+        {"reference": "Pressure decay leak tester (made-up reference E)", "url": "", "difference": "Gives one leak rate for the whole part."},
+        {"reference": "Tracer gas sniffer (made-up reference F)", "url": "", "difference": "Needs a tracer gas and a moving probe."},
+        {"reference": "Dye penetrant test (made-up reference G)", "url": "", "difference": "Manual and marks the part."},
+    ],
+}
+PATENT_DESK = {
+    "dossiers": {"hinge-lab": HINGE_DOSSIER, "pocket-cad": POCKET_DOSSIER, "seal-rig": SEAL_DOSSIER},
+    "facts": {
+        "hinge-lab": {"ci": {"state": "success"}, "package": {"built": f"{day(-1)} 09:00", "pdf": True, "draft": False}},
+        "pocket-cad": {"ci": {"state": "success"}, "package": {"built": f"{day(-2)} 09:00", "pdf": True, "draft": True}},
+        "gear-calc": {"ci": {"state": "none"}},
+        "seal-rig": {"ci": {"state": "success"}, "package": {"built": f"{day(-31)} 09:00", "pdf": True, "draft": False}},
+    },
+    "history": [
+        {"date": day(-30), "name": "seal-rig", "text": "ready to file -> filed."},
+        {"date": day(-6), "name": "pocket-cad", "text": "Readiness 35 -> 60 of 100."},
+        {"date": day(-1), "name": "hinge-lab", "text": "strengthening -> ready to file."},
+    ],
+    "figure_exists": lambda name, file: name in ("hinge-lab", "seal-rig"),
+    "refreshed_at": f"{TODAY} 09:00",
 }
 
 
@@ -237,7 +354,7 @@ def patent_demo() -> dict:
         "scanned_at": f"{day(-5)} 09:00", "includes_private": True, "repos": entries,
         "changes": patents.changes_since(last_week, entries),
     }
-    return hub.patents_summary(scan, PATENT_NOTES, TODAY)
+    return hub.patents_summary(scan, PATENT_NOTES, TODAY, PATENT_DESK)
 
 
 PATENTS = patent_demo()
@@ -281,7 +398,7 @@ DEMO = {
             "jobs": task("Job search", "Sat 7 Nov · 07:30", "Sat 7 Nov · 12:30"),
             "email": task("Email applications", "Sat 7 Nov · 09:00", "Sat 7 Nov · 10:00"),
             "bigtech": task("Big Tech watch", "Sat 7 Nov · 08:00", "Sat 7 Nov · 12:00"),
-            "patents": task("Patent screen", "Mon 2 Nov · 09:00", "Mon 9 Nov · 09:00"),
+            "patents": task("Patent screen", "Sat 7 Nov · 09:00", "Sun 8 Nov · 09:00"),
         },
         "patents": PATENTS,
         "todo": [
@@ -372,6 +489,10 @@ SHIM = """<script>
       try { name = JSON.parse(options.body || "{}").name || ""; } catch (error) { name = ""; }
       const fallback = name.startsWith("patents:decide:")
         ? "Demo: on your PC this records your decision for that project, and its to-do item goes away."
+        : name.startsWith("patents:open:")
+        ? "Demo: on your PC this opens that project's dossier folder."
+        : name.startsWith("patents:")
+        ? "Demo: on your PC this is saved in your patent notes and the desk card updates."
         : "Demo: on your PC this button runs that task right away.";
       return json({ message: REPLIES[name] || fallback });
     }
