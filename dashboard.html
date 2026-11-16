@@ -171,6 +171,25 @@
   .patents .why q { display: block; color: var(--muted); font-size: 13px; quotes: "\201C" "\201D"; }
   .patents .why .hint { max-width: 80ch; }
   .patents .why .actions { margin-top: 10px; }
+  /* Patent desk card: same table rules; five columns, a checklist and a small filing form per project. */
+  .patents table.desk th:nth-child(1) { width: 22%; }
+  .patents table.desk th:nth-child(2) { width: 17%; }
+  .patents table.desk th:nth-child(3) { width: 13%; }
+  .patents table.desk th:nth-child(4) { width: 30%; }
+  .patents table.desk th:nth-child(5) { width: 18%; }
+  .patents td.ready b { display: block; font: 400 22px/1.2 var(--serif); }
+  .patents ul.checks { list-style: none; margin: 8px 0; padding: 0; max-width: 80ch; }
+  .patents ul.checks li { display: grid; grid-template-columns: 52px 1fr; gap: 2px 10px; margin-bottom: 8px; }
+  .patents ul.checks .hint { grid-column: 2; margin: 0; }
+  .patents .filing { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: flex-end; margin-top: 10px; }
+  .patents .filing label { display: grid; gap: 2px; color: var(--muted); font-size: 12px; font-weight: 600; }
+  .patents .filing input { font: inherit; min-height: 38px; padding: 6px 8px; border: 1px solid var(--muted); border-radius: 2px;
+    background: var(--card); color: var(--ink); max-width: 100%; }
+  .patents .filing input:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
+  @media (max-width: 760px) {
+    .patents .filing input { min-height: 44px; }
+    .patents td.ready b { display: inline; margin-right: 8px; }
+  }
   @media (max-width: 760px) {
     .patents .scroll table { min-width: 0; }
     .patents .scroll thead { display: none; }
@@ -618,6 +637,18 @@ document.addEventListener("click", (event) => {
     if (/^https:\/\/\S+$/.test(answer)) act(ask.dataset.ask + answer, ask);
     else if (answer) toast("That needs a link that starts with https://");
   }
+  const filed = event.target.closest("[data-filed]");
+  if (filed) {
+    const form = filed.closest(".filing");
+    const day = form.querySelector("input[type=date]").value;
+    const number = form.querySelector("input[type=text]").value.trim().replace(/\s+/g, " ");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) toast("Pick the date the application was filed.");
+    else if (!/^[0-9\/, ]{6,14}$/.test(number) || !/\d/.test(number)) toast("The application number looks like 63/123,456.");
+    else {
+      form.querySelectorAll("input").forEach((input) => { input.value = ""; });
+      act(`patents:filed:${filed.dataset.filed}:${day}:${number}`, filed);
+    }
+  }
   const jump = event.target.closest("[data-goto]");
   if (jump) showTab(jump.dataset.goto);
   const copy = event.target.closest("[data-copy]");
@@ -766,7 +797,7 @@ function patentCard(p) {
     return `<div class="card module patents" style="margin-bottom:18px">
       <h3><span>Patent screen</span>${scanNow}</h3>
       <div class="big">No scan yet</div>
-      <p class="hint">The weekly task reads every repository you own and lists the ones worth showing to a patent attorney.</p>
+      <p class="hint">The daily task reads every repository you own and lists the ones worth showing to a patent attorney.</p>
       <p class="hint">${esc(p.disclaimer)}</p>
     </div>`;
   }
@@ -803,7 +834,7 @@ function patentCard(p) {
       ${r.decision ? actionButton(`patents:decide:${r.name}:clear`, "Clear", true) : ""}
     </div>`;
   };
-  const why = (r) => `<details class="why"><summary>Why, and decide</summary>
+  const why = (r) => `<details class="why" data-keep="why:${esc(r.name)}"><summary>Why, and decide</summary>
       ${r.signals.length ? `<ul>${r.signals.map((s) => `<li><b>${esc(s.label)}</b> · ${plural(s.points, "point")}${s.words.length ? ` · ${esc(s.words.join(", "))}` : ""}
         ${s.evidence ? `<q>${esc(s.evidence)}</q>` : ""}</li>`).join("")}</ul>` : `<p class="hint">The keywords found nothing; the rating comes from the close read.</p>`}
       <p class="hint">${esc(r.licence_text)}</p>
@@ -850,7 +881,97 @@ function patentCard(p) {
   </div>`;
 }
 
+function patentDeskCard(p) {
+  const desk = p && p.installed && p.has_scan ? p.desk : null;
+  if (!desk) return "";
+  const plural = (n, word) => `${num(n)} ${word}${n === 1 ? "" : "s"}`;
+  const c = desk.counts;
+  const headline = desk.total
+    ? [
+        c.ready ? `${num(c.ready)} ready to file` : "",
+        c.filed ? `${num(c.filed)} filed` : "",
+        c.strengthen ? `${num(c.strengthen)} strengthening` : "",
+        c.disclosure ? `${plural(c.disclosure, "disclosure")} to write` : "",
+        c.ownership ? `${num(c.ownership)} waiting on ownership` : "",
+        c.closed ? `${num(c.closed)} closed` : "",
+      ].filter(Boolean).join(" · ")
+    : "No candidates to follow";
+  const tones = { ready: "good", filed: "", strengthen: "warn", disclosure: "warn", ownership: "warn", closed: "grey" };
+  const dateCell = (item) => {
+    const d = item.deadline;
+    if (!d) return item.private ? `<span class="badge good">private: no date running</span>` : `<span class="badge grey">no date</span>`;
+    const tone = d.days_left <= 30 ? "bad" : d.days_left <= 90 ? "warn" : "";
+    const left = d.days_left < 0 ? `${plural(-d.days_left, "day")} past` : `${plural(d.days_left, "day")} left`;
+    return `<span class="badge ${tone}">${left}</span><div class="hint">${esc(d.date)}: ${esc(d.label)}</div>`;
+  };
+  const packageLine = (item) => {
+    if (item.filed) return `<p class="hint">Filed ${esc(item.filed.date)}${item.filed.number ? `, application ${esc(item.filed.number)}` : ""}.</p>`;
+    if (!item.package) return `<p class="hint">No filing package yet: it is built once the dossier has content.</p>`;
+    return `<p class="hint">Filing package built ${esc(item.package.built)}${item.package.draft ? ", marked as a draft" : ""}: specification (${item.package.pdf ? "PDF, HTML and Markdown" : "HTML and Markdown; the PDF did not print"}), cover sheet fields, filing checklist, notes for the attorney. It is in the provisional folder.</p>`;
+  };
+  const filingForm = (item) => item.filed
+    ? `<div class="actions">${actionButton(`patents:unfiled:${item.name}`, "Clear filing", true)}</div>`
+    : ["ready", "strengthen", "disclosure"].includes(item.stage)
+      ? `<div class="filing">
+          <label>Filing date <input type="date" data-keep="filed-date:${esc(item.name)}" max="${new Date().toLocaleDateString("en-CA")}"></label>
+          <label>Application number <input type="text" inputmode="numeric" maxlength="14" placeholder="63/123,456" data-keep="filed-number:${esc(item.name)}"></label>
+          <button class="btn ghost" data-filed="${esc(item.name)}">Record filing</button>
+        </div>`
+      : "";
+  const ownership = (item) => item.employer
+    ? actionButton(`patents:ownership:${item.name}:${item.ownership_cleared ? "unsure" : "cleared"}`,
+        item.ownership_cleared ? "Ownership unsure again" : "Ownership cleared: it is mine", !item.ownership_cleared ? false : true)
+    : "";
+  const detail = (item) => `<details class="why" data-keep="desk:${esc(item.name)}"><summary>Checklist, package and filing</summary>
+      <ul class="checks">${item.checks.map((check) => `<li>
+        <span class="badge ${check.ok ? "good" : "warn"}">${check.ok ? "done" : "open"}</span>
+        <span><b>${esc(check.label)}</b> · ${plural(check.points, "point")} · ${esc(check.found)}</span>
+        ${check.ok ? "" : `<span class="hint">${esc(check.fix)}</span>`}</li>`).join("")}</ul>
+      ${packageLine(item)}
+      <div class="actions">${actionButton(`patents:open:${item.name}`, "Open the dossier folder", true)}${ownership(item)}</div>
+      ${filingForm(item)}
+    </details>`;
+  const rows = desk.projects.map((item) => `<tr class="project">
+      <td><b>${link(item.url, item.name)}</b>${item.private ? ` <span class="badge grey">private</span>` : ""}${item.employer ? ` <span class="badge ${item.ownership_cleared ? "good" : "warn"}">${item.ownership_cleared ? "ownership cleared" : "employer?"}</span>` : ""}</td>
+      <td data-label="Stage"><span class="badge ${tones[item.stage] || "grey"}">${esc(item.stage_label)}</span></td>
+      <td class="ready" data-label="Readiness"><b>${num(item.score)}</b><span class="hint">of 100 · ${num(item.passed)} of ${num(item.total)} checks</span></td>
+      <td data-label="Next step">${esc(item.next_step)}</td>
+      <td data-label="Date">${dateCell(item)}</td>
+    </tr>
+    <tr class="why-row"><td colspan="5">${detail(item)}</td></tr>`).join("");
+  const moved = desk.history.slice(-8).reverse();
+  return `<div class="card module patents" style="margin-bottom:18px">
+    <h3><span>Patent desk</span></h3>
+    <div class="big">${headline}</div>
+    <div class="hint">${desk.total ? `${plural(desk.total, "candidate")} followed every day` : "The desk follows projects the screen rates as worth an attorney look or maybe"}${desk.refreshed_at ? ` · refreshed ${esc(desk.refreshed_at)}` : " · not refreshed yet: press Scan now"}</div>
+    ${moved.length ? `<div class="hint" style="margin-top:8px">Since the last runs</div>
+      <ul class="plain">${moved.map((entry) => `<li>${esc(entry.date)} · <b>${esc(entry.name)}</b>: ${esc(entry.text)}</li>`).join("")}</ul>` : ""}
+    ${rows ? `<div class="scroll" tabindex="0" role="region" aria-label="Patent candidates and what each still needs" style="margin-top:8px"><table class="desk">
+      <thead><tr><th>Project</th><th>Stage</th><th>Readiness</th><th>Next step</th><th>Date</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>` : ""}
+    <p class="hint">${esc(desk.note)}</p>
+  </div>`;
+}
+
+// The page reloads its data every minute. Opened sections and half-typed fields in Overview survive that,
+// and nothing is redrawn under a field that has the keyboard.
+function keepingState(root, render) {
+  const active = document.activeElement;
+  if (active && active.tagName === "INPUT" && root.contains(active)) return;
+  const open = [...root.querySelectorAll("details[data-keep][open]")].map((element) => element.dataset.keep);
+  const typed = {};
+  root.querySelectorAll("input[data-keep]").forEach((input) => { if (input.value) typed[input.dataset.keep] = input.value; });
+  render();
+  root.querySelectorAll("details[data-keep]").forEach((element) => { element.open = open.includes(element.dataset.keep); });
+  root.querySelectorAll("input[data-keep]").forEach((input) => { if (typed[input.dataset.keep]) input.value = typed[input.dataset.keep]; });
+}
+
 function renderOverview(d) {
+  keepingState(document.getElementById("overview"), () => drawOverview(d));
+}
+
+function drawOverview(d) {
   const o = d.overview, h = d.hub, jobs = h.jobs, email = h.email;
   const next = o.next_post;
   const todo = openTodos(h.todo);
@@ -863,6 +984,7 @@ function renderOverview(d) {
     </div>` : `<div class="card" style="margin-bottom:18px"><h3>Nothing needs you right now</h3><p class="hint">Everything is running on its own.</p></div>`}
     ${launchCards(h.launch)}
     ${patentCard(h.patents)}
+    ${patentDeskCard(h.patents)}
     ${runStrip(h.tasks)}
     <div class="card" style="margin-bottom:18px">
       <h3>Per day, every automation <span class="hint">· today, average of the last 7 days, best day and the daily limit</span></h3>

@@ -12,8 +12,9 @@ Other platforms (Bluesky, Mastodon, Dev.to, Telegram, Discord) are part of the p
 Launch tests (launch_section) are read from a project's public summary.json, plus private steps from
 launch_private.json (git-ignored) when that file exists. Where launch_auto.py is installed its rows join them:
 steps this PC does by itself (watch for an answer, one follow-up, approved invitations, daily proposal checks).
-The patent screen (patents_section) reads the last weekly scan written by patents.py into data/patents/
-(git-ignored); it shows only where that folder exists.
+The patent screen (patents_section) reads the last daily scan written by patents.py into data/patents/
+(git-ignored); it shows only where that folder exists. The patent desk (patent_desk.py) follows the screen's
+candidates from there: readiness, the filing package, and the dates before and after a filing.
 
 This file only reads their files, builds the "what I need from you" list, and runs a short whitelist of actions.
 Every reader is defensive: a missing or half-written file shows as "not set up" instead of breaking the dashboard.
@@ -1077,14 +1078,22 @@ def patents_section(today: date | None = None) -> dict:
 
     if not patents.DATA_DIR.exists():
         return {"installed": False}
-    return patents_summary(patents._load(patents.SCAN_FILE, None), patents.load_overrides(), today)
+    import patent_desk
+
+    desk = {**patent_desk.load_inputs(), "figure_exists": patent_desk.figure_on_disk}
+    return patents_summary(patents._load(patents.SCAN_FILE, None), patents.load_overrides(), today, desk)
 
 
-def patents_summary(scan, overrides, today: date | None = None) -> dict:
-    """What the Patent screen card shows, from a scan and my notes. Reads no files: the public demo feeds it made-up projects."""
+def patents_summary(scan, overrides, today: date | None = None, desk: dict | None = None) -> dict:
+    """What the Patent screen and Patent desk cards show, from a scan, my notes and the dossiers.
+
+    Reads no files: the public demo feeds it made-up projects. desk carries dossiers, facts, history,
+    figure_exists and refreshed_at; without it there is no desk card.
+    """
     import patents
 
     empty = {
+        "desk": None,
         "installed": True, "has_scan": False, "scanned_at": "", "includes_private": False, "total": 0,
         "counts": {"look": 0, "maybe": 0, "unlikely": 0, "forks": 0, "undecided": 0, "exposed": 0},
         "next_deadline": None, "candidates": [], "others": [], "changes": [], "disclaimer": PATENTS_DISCLAIMER,
@@ -1105,8 +1114,16 @@ def patents_summary(scan, overrides, today: date | None = None) -> dict:
         for change in scan.get("changes") or []
         if isinstance(change, dict) and change.get("repo") in names
     ]
+    followed = None
+    if isinstance(desk, dict):
+        import patent_desk
+
+        followed = patent_desk.build(rows, overrides, desk.get("dossiers"), desk.get("facts"), today,
+                                     desk.get("history"), desk.get("figure_exists"))
+        followed["refreshed_at"] = str(desk.get("refreshed_at") or "")
     return {
         **empty,
+        "desk": followed,
         "has_scan": True,
         "scanned_at": str(scan.get("scanned_at") or ""),
         "includes_private": bool(scan.get("includes_private")),
@@ -1173,15 +1190,70 @@ def patents_todo(section: dict | None) -> list[dict]:
             "detail": f"{shown}. Read the evidence on the Patent screen card in Overview, then choose file, publish, licence only or skip.",
             "action": None, "action_label": None, "links": [],
         })
+    return items + patent_desk_todo(section.get("desk"))
+
+
+def patent_desk_todo(desk: dict | None) -> list[dict]:
+    """What the patent desk needs from me: a package to file, a date after a filing, an ownership question, gaps to fill."""
+    import patents
+
+    if not isinstance(desk, dict):
+        return []
+    items = []
+
+    def add(priority, title, detail, name=None):
+        items.append({
+            "priority": priority, "module": "Patents", "title": title, "detail": detail,
+            "action": f"patents:open:{name}" if name else None,
+            "action_label": "Open the folder" if name else None, "links": [],
+        })
+
+    def days_of(item):
+        return (item.get("deadline") or {}).get("days_left")
+
+    gaps = []
+    for item in desk.get("projects") or []:
+        days = days_of(item)
+        if item["stage"] == "ready":
+            close = days is not None and days <= patents.URGENT_DAYS
+            dated = f" The 12-month date of the public repository is {item['deadline']['date']}." if item.get("deadline") else ""
+            add(1 if close else 2, f"{item['name']}: the provisional package is ready to file",
+                f"All {item['total']} checks pass. {item['next_step']}{dated} ReachPilot files nothing.", item["name"])
+        elif item["stage"] == "filed" and days is not None and days <= patents.SOON_DAYS:
+            left = f"{days} day{'' if days == 1 else 's'} left" if days >= 0 else "the 12 months have ended"
+            add(1 if days <= patents.URGENT_DAYS else 2,
+                f"{item['name']}: {left} for the non-provisional or PCT application", item["next_step"])
+        elif item["stage"] == "ownership":
+            add(2, f"{item['name']}: who owns it?",
+                f"{item['next_step']} Then press Ownership cleared on the Patent desk card.")
+        elif item["stage"] in ("strengthen", "disclosure"):
+            gaps.append(item)
+    if gaps:
+        shown = " ".join(f"{item['name']} ({item['score']}/100): {item['next_step']}" for item in gaps[:4])
+        more = f" And {len(gaps) - 4} more." if len(gaps) > 4 else ""
+        add(3, f"{len(gaps)} patent candidate{'' if len(gaps) == 1 else 's'} not ready to file yet",
+            f"{shown}{more} The dossier folders are on the Patent desk card in Overview.")
     return items
 
 
 def patents_action(name: str) -> str:
+    import patent_desk
     import patents
 
     parts = name.split(":")
-    if len(parts) == 4 and parts[1] == "decide" and re.fullmatch(r"[A-Za-z0-9._-]{1,100}", parts[2]):
-        return patents.decide(parts[2], parts[3])
+    if len(parts) < 3 or not patent_desk.NAME.fullmatch(parts[2]):
+        raise ValueError(f"Unknown action: {name}")
+    verb, project, rest = parts[1], parts[2], parts[3:]
+    if verb == "decide" and len(rest) == 1:
+        return patents.decide(project, rest[0])
+    if verb == "ownership" and len(rest) == 1:
+        return patent_desk.set_ownership(project, rest[0])
+    if verb == "filed" and len(rest) == 2:
+        return patent_desk.record_filing(project, rest[0], rest[1])
+    if verb == "unfiled" and not rest:
+        return patent_desk.clear_filing(project)
+    if verb == "open" and not rest:
+        return patent_desk.open_folder(project)
     raise ValueError(f"Unknown action: {name}")
 
 
@@ -1331,15 +1403,24 @@ def help_sections(tasks: dict, podcast: dict | None = None, launch: dict | None 
     if patents and patents.get("installed"):
         entries.append({
             "module": "Patents",
-            "runs": "Every Monday 09:00, or when you press Scan now. " + when("patents", ""),
+            "runs": "Every day 09:00, or when you press Scan now. " + when("patents", ""),
             "auto": "Reads the description and README of every repository you own, public and private. Scores how much technical "
                     "mechanism the text describes and quotes the sentence it found, works out the filing date (12 months from "
                     "the day a public repo was created; open while a repo is private) and names the realistic route: attorney, "
                     "defensive publication, licence or nothing. Reports new projects and repos that turned public. "
+                    "Then the patent desk follows every candidate: it creates a dossier folder, scores the dossier against "
+                    "eight checks (problem, mechanism, measured effect, example, tests, figure, claims, prior art), reads the "
+                    "repository's last CI run, and once the dossier has content builds a draft US provisional package: the "
+                    "specification as PDF, the cover sheet fields, a filing checklist and notes for the attorney. After a "
+                    "filing it counts the 12 months to the non-provisional or PCT application. "
                     "Results stay on this PC (data/patents, git-ignored).",
             "you": "Read the candidates on the Overview card and record a decision on each: file, publish, licence only or skip. "
-                   "It is a keyword screen, not legal advice: it does not search prior art and cannot judge novelty. "
-                   "See a patent attorney before filing, and before publishing anything you want to protect.",
+                   "On the Patent desk card: clear the ownership question, fill the gaps the checklist names (you or an agent "
+                   "write the dossier; the desk checks it and says what is missing), then file the package yourself or through "
+                   "an attorney and press Record filing. ReachPilot files nothing: a filing needs your identity check, your "
+                   "name as inventor and your payment. "
+                   "It is a keyword screen and a draft, not legal advice: it does not search patent databases and cannot judge "
+                   "novelty. See a patent attorney before filing, and before publishing anything you want to protect.",
         })
     return entries
 

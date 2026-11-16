@@ -298,7 +298,7 @@ Settings live under `auto` in `launch_private.json`; contact lists, mail texts, 
 `data/launch_auto/` (both git-ignored). A send that may not have gone out is not retried, so nobody gets a mail
 twice. `python launch_auto.py show` prints what each row is doing.
 
-**Patent screen.** `python patents.py install` adds a weekly task (`\ReachPilot\Patent screen`, Mondays 09:00) and a
+**Patent screen.** `python patents.py install` adds a daily task (`\ReachPilot\Patent screen`, every day 09:00) and a
 card on the Overview. Each run reads the description and README of every repository you own, private ones included
 when `gh` is signed in, and answers three questions per project:
 
@@ -313,6 +313,26 @@ only or skip. It is a keyword screen, not legal advice: it does not search prior
 not know what you showed people outside GitHub. Results stay on this PC in `data/patents/` (git-ignored) because they
 name private repositories. Your own notes in `data/patents/overrides.json` are never overwritten by a scan.
 `python patents.py show` prints the ranked list; the public demo shows the card with made-up projects.
+
+**Patent desk.** The same daily run follows every project rated "worth an attorney look" or "maybe" that you have
+not decided to publish, licence or skip, and shows them in a second Overview card with one stage each:
+
+- **needs an invention disclosure**: the run creates `data/patents/dossiers/NAME/dossier.json` and a `BRIEF.md`
+  that says what to write down. You, or an agent you point at the brief, fill it in.
+- **strengthening**: the dossier is scored out of 100 on eight checks: problem stated, mechanism in steps, a
+  measured effect with its source, a worked example, passing tests, a figure, drafted claims, and the closest prior
+  art with the difference. The card names the next missing one.
+- **ready to file**: all eight pass. The run has built a provisional package in the dossier folder: the
+  specification as PDF, HTML and Markdown, the cover sheet fields, a filing checklist and notes for an attorney.
+- **filed**: you record the filing date and application number on the card, and the desk counts down the 12
+  months to the non-provisional or PCT application.
+- **waiting on ownership**: a project that touches your employer's field stays here until you mark it cleared.
+
+Stage changes are kept as a short history, and a ready package, a closing window and the 12-month date become
+to-dos. ReachPilot files nothing: a filing needs your identity check at the patent office, your name as inventor
+and your payment. The readiness number counts what is written down; it cannot judge novelty, so have an attorney
+read a draft before it is filed. The PDF is printed with Microsoft Edge when it is installed; without it the HTML
+and Markdown are still written. `python patent_desk.py show` prints the desk.
 
 ## Files
 
@@ -332,7 +352,8 @@ name private repositories. Your own notes in `data/patents/overrides.json` are n
 | `creators.py` | the thank-you for creators who covered a project |
 | `dashboard.py` + `dashboard.html` | local dashboard (restarts itself onto new code) |
 | `hub.py` | dashboard modules, to-do list and whitelisted actions |
-| `patents.py` | weekly patent screen of your GitHub projects: score, filing date, next step |
+| `patents.py` | daily patent screen of your GitHub projects: score, filing date, next step |
+| `patent_desk.py` | daily patent desk: readiness checklist per candidate, provisional draft package, filing follow-up |
 | `launch_auto.py` | hourly launch automations: an answer and one follow-up, invitations after approval, daily checks of a waiting document |
 | `selfupdate.py` | fast-forward updater used by the dashboard and the Updates task |
 | `selftest.py` | tests (run in CI) |
