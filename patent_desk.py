@@ -522,7 +522,7 @@ def to_html(blocks: list[tuple]) -> str:
             f"<style>{style}</style></head><body>\n" + "\n".join(parts) + "\n</body></html>\n")
 
 
-def cover_sheet(name: str, dossier: dict) -> str:
+def cover_sheet(name: str, dossier: dict, pages: int | None = None) -> str:
     title = (_text(dossier.get("title")) or name)[:500]
     figures = [figure for figure in _items(dossier.get("figures")) if isinstance(figure, dict) and _text(figure.get("file"))]
     inventors = [inventor for inventor in _items(dossier.get("inventors")) if isinstance(inventor, dict)]
@@ -542,7 +542,8 @@ def cover_sheet(name: str, dossier: dict) -> str:
         "", "## Title of the invention (500 characters at most)", "", title, "",
         "## Correspondence address", "", "________ (or your USPTO customer number)", "",
         "## Enclosed application parts", "",
-        "- Specification: count the pages of specification.pdf: ____ pages",
+        (f"- Specification: specification.pdf has {pages} page(s) in total, drawing sheets included" if pages else
+         "- Specification: count the pages of specification.pdf: ____ pages"),
         f"- Drawings: {len(figures)} sheet(s)" if figures else "- Drawings: none listed in the dossier",
         "- Application Data Sheet (37 CFR 1.76): optional", "",
         "## Entity status and fee", "",
@@ -615,6 +616,21 @@ def print_pdf(source: Path, target: Path, timeout: int = 90) -> bool:
     return target.exists() and target.stat().st_size > 1000
 
 
+def pdf_pages(path: Path) -> int | None:
+    """How many pages a PDF has, read from its page tree. None when the file cannot be read, or when the page
+    objects and the count in the page tree disagree (then the number is left for you to fill in)."""
+    try:
+        data = Path(path).read_bytes()
+    except OSError:
+        return None
+    if not data.startswith(b"%PDF"):
+        return None
+    pages = len(re.findall(rb"/Type\s*/Page(?![A-Za-z])", data))
+    stated = {int(count) for count in re.findall(rb"/Type\s*/Pages\b[^>]*?/Count\s+(\d+)", data)}
+    stated |= {int(count) for count in re.findall(rb"/Count\s+(\d+)[^>]*?/Type\s*/Pages\b", data)}
+    return pages if pages and stated == {pages} else None
+
+
 def build_package(name: str, dossier: dict, item: dict | None = None, row: dict | None = None, pdf: bool = True) -> dict:
     """Write the package into dossiers/NAME/provisional/. Returns what was built."""
     ready = bool(item and item["stage"] == "ready")
@@ -623,10 +639,11 @@ def build_package(name: str, dossier: dict, item: dict | None = None, row: dict 
     blocks = specification(name, dossier, ready)
     (target / "specification.md").write_text(to_markdown(blocks), encoding="utf-8")
     (target / "specification.html").write_text(to_html(blocks), encoding="utf-8")
-    (target / "cover_sheet.md").write_text(cover_sheet(name, dossier), encoding="utf-8")
     (target / "filing_checklist.md").write_text(checklist(name, row), encoding="utf-8")
     (target / "attorney_notes.md").write_text(attorney_notes(name, dossier, item), encoding="utf-8")
     made = pdf and print_pdf(target / "specification.html", target / "specification.pdf")
+    pages = pdf_pages(target / "specification.pdf") if made else None
+    (target / "cover_sheet.md").write_text(cover_sheet(name, dossier, pages), encoding="utf-8")
     return {"built": date.today().isoformat(), "pdf": bool(made), "draft": not ready}
 
 

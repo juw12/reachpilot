@@ -2750,6 +2750,21 @@ try:
     check(all(piece in cover_text for piece in ("PTO/SB/16", "Given name: Ada", "Family name: Example", "Drawings: 2 sheet(s)",
                                                 "325 USD (large entity), 130 USD (small entity), 65 USD (micro entity)", "________")),
           "patent desk: the cover sheet lists the form's fields and leaves yours blank")
+    with tempfile.TemporaryDirectory() as pages_folder:
+        two_pages = Path(pages_folder) / "two.pdf"
+        two_pages.write_bytes(b"%PDF-1.4\n1 0 obj<</Type /Pages /Count 2 /Kids [2 0 R 3 0 R]>>endobj\n"
+                              b"2 0 obj<</Type /Page /Parent 1 0 R>>endobj\n3 0 obj<</Type/Page /Parent 1 0 R>>endobj\n%%EOF\n")
+        mismatch = Path(pages_folder) / "mismatch.pdf"
+        mismatch.write_bytes(two_pages.read_bytes().replace(b"/Count 2", b"/Count 3"))
+        not_a_pdf = Path(pages_folder) / "text.pdf"
+        not_a_pdf.write_bytes(b"/Type /Page /Type /Pages /Count 1")
+        check(patent_desk.pdf_pages(two_pages) == 2 and patent_desk.pdf_pages(mismatch) is None
+              and patent_desk.pdf_pages(not_a_pdf) is None and patent_desk.pdf_pages(Path(pages_folder) / "missing.pdf") is None,
+              "patent desk: the page count comes from the PDF itself, and is left out when the file does not agree with itself")
+    counted_sheet = patent_desk.cover_sheet("hinge-lab", patent_desk.load_dossier("hinge-lab"), 5)
+    check("specification.pdf has 5 page(s) in total, drawing sheets included" in counted_sheet and "____ pages" not in counted_sheet
+          and "Drawings: 2 sheet(s)" in counted_sheet and "count the pages of specification.pdf: ____ pages" in cover_text,
+          "patent desk: the cover sheet states the page count of the printed specification, and asks you to count when no PDF was printed")
     draft_folder = patent_desk.folder("pocket-rig") / "provisional"
     check("This repository is private" in (package / "filing_checklist.md").read_text(encoding="utf-8")
           and "cannot be extended" in (package / "filing_checklist.md").read_text(encoding="utf-8")
