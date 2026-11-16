@@ -927,14 +927,15 @@ def action(name: str, now: datetime | None = None) -> str:
 # ------------------------------------------------------------------ scheduled task and command line
 
 def install_task() -> None:
-    """Every hour, hidden (pythonw), catching up if the PC was off."""
+    """Every hour, hidden (pythonw), catching up if the PC was off. Priority 4 is the normal one: a task gets a low
+    one unless told otherwise, and on a busy PC a low-priority run did not finish in six minutes (normal: 26 s)."""
     pythonw = Path(sys.executable).with_name("pythonw.exe")
     runner = pythonw if pythonw.exists() else Path(sys.executable)
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     script = f"""
 $action = New-ScheduledTaskAction -Execute '{runner}' -Argument '"{Path(__file__).resolve()}"' -WorkingDirectory '{CODE_DIR}'
 $hourly = New-ScheduledTaskTrigger -Once -At (Get-Date).Date -RepetitionInterval (New-TimeSpan -Hours 1)
-$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 30) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+$settings = New-ScheduledTaskSettingsSet -Priority 4 -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 30) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
 Register-ScheduledTask -TaskPath '{TASK_PATH}' -TaskName '{TASK_NAME}' -Action $action -Trigger $hourly -Settings $settings `
     -Description 'Launch tests: watch for the answer to a sent mail, send approved invitations at the start time, keep the proposal checked.' -Force | Out-Null
 Get-ScheduledTask -TaskPath '{TASK_PATH}' -TaskName '{TASK_NAME}' | Select-Object TaskName, State

@@ -3058,6 +3058,8 @@ check('class="hint step-detail"' in auto_page
 auto_source = (Path(__file__).parent / "launch_auto.py").read_bytes()
 check(not auto_source.startswith(b"\xef\xbb\xbf") and "\u00c3" not in auto_source.decode("utf-8")
       and "\u00e2\u20ac" not in auto_source.decode("utf-8"), "launch_auto.py: clean UTF-8, no byte-order mark")
+check(b"New-ScheduledTaskSettingsSet -Priority 4 " in auto_source,
+      "launch auto: the hourly task is installed at normal priority, so it finishes on a busy PC")
 auto_ignored = (Path(__file__).parent / ".gitignore").read_text(encoding="utf-8").split()
 check("data/launch_auto/" in auto_ignored and "launch_auto.log" in auto_ignored and "launch_private.json" in auto_ignored,
       "launch auto: contacts, answers, state and the log are git-ignored")
