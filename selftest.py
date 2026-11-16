@@ -1933,6 +1933,109 @@ with tempfile.TemporaryDirectory() as voice_dir:
         check(voiceover.model_folder({"voice_models": str(model_dir)}) == model_dir, 'voiceover: "voice_models" names the folder with both files')
 check(shipped_config.get("voice_over") is True, "voiceover: the shipped config has the voice switched on")
 
+# The film (reels.FILM) and its music (soundtrack.py): the product in use, nobody speaking, a piece written to the
+# video. The notes are plain Python and are checked everywhere; playing them needs numpy, checked where it is installed.
+import soundtrack  # noqa: E402
+
+film_plan = reels.plan(reel_facts, reels.FILM, random.Random(3))
+check(film_plan.hook == film_plan.post_line == "Meet Watt Reserve." and film_plan.seconds == reels.SECONDS
+      and film_plan.beats and all(len(beat) <= reels.SPEEDRUN_CAPTION_CHARS for beat in film_plan.beats),
+      f"reels: the film opens on the project's name and says little ({film_plan.beats})")
+film_end = reels.SECONDS - reels.END_SECONDS
+film_piece = soundtrack.score(reels.SECONDS, film_end, "watt-reserve")
+other_pieces = {tuple(soundtrack.score(reels.SECONDS, film_end, name)) for name in ("earlystar", "kilat", "cairn", "reachpilot")}
+check(film_piece == soundtrack.score(reels.SECONDS, film_end, "watt-reserve") and len(other_pieces | {tuple(film_piece)}) > 2,
+      "soundtrack: a project always gets the same piece, and not every project the same one")
+film_pitches = [note.pitch for note in film_piece if note.voice not in ("kick", "hat")]
+check(any(all((pitch - key) % 12 in soundtrack.MAJOR for pitch in film_pitches) for key in soundtrack.KEYS)
+      and all(note.voice in soundtrack.LEVELS and note.length > 0 and -1 <= note.pan <= 1 for note in film_piece),
+      "soundtrack: every note is in the piece's key and played by a voice that exists")
+film_bars, film_bar = soundtrack.bar_seconds(film_end)
+last_chord = [note for note in film_piece if note.voice == "mallet" and note.start >= film_end - 1e-9]
+check(abs(film_bars * film_bar - film_end) < 1e-9 and abs(film_bar - soundtrack.BAR_SECONDS) < 0.5
+      and all(0 <= note.start < reels.SECONDS for note in film_piece)
+      and max(note.start for note in film_piece if note.voice == "pad" and note.start < film_end - 1e-9) == (film_bars - 1) * film_bar
+      and min(note.start for note in film_piece if note.voice in ("kick", "hat")) >= soundtrack.PULSE_FROM_BAR * film_bar
+      and len(last_chord) == len(soundtrack.LAST_CHORD) and min(note.start for note in last_chord) == film_end,
+      f"soundtrack: the bars end where the end card starts, the pulse waits for the first caption, the last chord lands on the card ({film_bars} bars of {film_bar:.2f} s)")
+try:
+    soundtrack.score(reels.SECONDS, reels.SECONDS, "watt-reserve")
+    card_refused = False
+except ValueError:
+    card_refused = True
+check(card_refused, "soundtrack: an end card outside the video is refused")
+
+film_command = reels.ffmpeg_args("ffmpeg", Path("raw.webm"), 1.5, 1.1, "tall", 18, Path("frame.png"), timed_overlays,
+                                 Path("bar.png"), Path("out.mp4"), Path("music.wav"), music=True, fade=reels.FILM_FADE)
+film_filters = film_command[film_command.index("-filter_complex") + 1]
+voiced_command = reels.ffmpeg_args("ffmpeg", Path("raw.webm"), 1.5, 1.1, "tall", 18, Path("frame.png"), timed_overlays,
+                                   Path("bar.png"), Path("out.mp4"), Path("voice.wav"))
+check(film_command[film_command.index("-af") + 1] == soundtrack.AUDIO_FILTER
+      and film_command[film_command.index("-b:a") + 1] == soundtrack.AUDIO_BITRATE
+      and film_command.count("-i") == len(timed_overlays) + 4 and film_command.count("-loop") == len(timed_overlays)
+      and "fade=t=in:st=3.20" in film_filters and "fade=t=in:st=0.00" not in film_filters
+      and film_filters.count("fade=t=in") == film_filters.count("fade=t=out") == len(timed_overlays) - 1
+      and film_command[film_command.index("-t") + 1] == "18",
+      "reels: the film is encoded with its music, its captions fade, the first is there from the first frame and the end card stays")
+check(voiced_command[voiced_command.index("-af") + 1] == voiceover.AUDIO_FILTER and "-loop" not in voiced_command
+      and "fade=" not in voiced_command[voiced_command.index("-filter_complex") + 1],
+      "reels: the other formats are encoded as before: the voice's own filter, captions that cut")
+film_picture, _ = reels.caption_image("Meet Watt Reserve.", "tall", "film_hook")
+boxed_picture, _ = reels.caption_image("Meet Watt Reserve.", "tall", "hook")
+check(film_picture.getpixel((0, film_picture.height // 2))[3] == 0 and boxed_picture.getpixel((0, boxed_picture.height // 2))[3] == 255
+      and reels.frame_image("tall", "watt-reserve", github_address, film=True).getpixel((2, 2))[:3] == (0, 0, 0),
+      "reels: the film's words stand straight on a near-black backdrop, without a box")
+
+
+def filmed(video_format=reels.FILM, music=True, write=None):
+    filmed_plan = reels.plan(reel_facts, video_format, random.Random(3))
+    with tempfile.TemporaryDirectory() as film_dir, \
+         mock.patch("reels.visuals.record_raw", return_value=(Path("raw.webm"), 1.0, 12.0)), \
+         mock.patch("reels.render") as renderer, \
+         mock.patch("reels.soundtrack.write", **(write or {"side_effect": lambda seconds, end_at, seed, path: path})) as writer:
+        said = []
+        voice = fake_voice()
+        reels.record(filmed_plan, Path(film_dir) / "out", lambda text, speed=1.0: said.append(text) or voice(text, speed), music=music)
+    return filmed_plan, [call[0][7] for call in renderer.call_args_list], writer, said
+
+
+logging.disable(logging.CRITICAL)
+try:
+    filmed_plan, tracks, writer, said = filmed()
+    check([track.name for track in tracks] == ["music.wav", "music.wav"] and said == [] and filmed_plan.lengths == []
+          and writer.call_args[0][:3] == (reels.SECONDS, film_end, "watt-reserve"),
+          "reels: the film is never read aloud; both cuts get the project's own piece, written to the video's length")
+    _, tracks, writer, _ = filmed(write={"side_effect": RuntimeError("numpy is not installed")})
+    check(tracks == [None, None] and writer.called, "reels: when the music fails the film is still made, silent")
+    _, tracks, writer, _ = filmed(music=False)
+    check(tracks == [None, None] and not writer.called, 'reels: "video_music": false keeps the film silent')
+    _, tracks, writer, said = filmed("hook")
+    check([track.name for track in tracks] == ["voice.wav", "voice.wav"] and not writer.called and said,
+          "reels: the other formats keep their voice and get no music")
+    with mock.patch.object(soundtrack, "available", return_value=False):
+        try:
+            soundtrack.write(reels.SECONDS, film_end, "watt-reserve", Path("never_written.wav"))
+            music_refused = False
+        except RuntimeError:
+            music_refused = True
+    check(music_refused and not Path("never_written.wav").exists(), "soundtrack: without numpy no music is written, so the film goes out silent")
+finally:
+    logging.disable(logging.NOTSET)
+check("film" in shipped_config["video_formats"] and shipped_config.get("video_music") is True,
+      "reels: the shipped config has the film in rotation and its music switched on")
+if soundtrack.available():  # playing the notes; a short piece, the same code path as a full one
+    import numpy  # noqa: E402
+
+    with tempfile.TemporaryDirectory() as music_dir:
+        with wave.open(str(soundtrack.write(8.0, 5.2, "watt-reserve", Path(music_dir) / "music.wav")), "rb") as music_file:
+            music_shape = (music_file.getnchannels(), music_file.getsampwidth(), music_file.getframerate(), music_file.getnframes())
+            music = numpy.frombuffer(music_file.readframes(music_file.getnframes()), "<i2").reshape(-1, 2) / 32767
+    music_loud = float(numpy.sqrt(numpy.mean(music[soundtrack.SAMPLE_RATE: 5 * soundtrack.SAMPLE_RATE] ** 2)))
+    check(music_shape == (2, 2, soundtrack.SAMPLE_RATE, 8 * soundtrack.SAMPLE_RATE)
+          and float(numpy.abs(music).max()) <= soundtrack.PEAK + 0.001 and 0.05 < music_loud < 0.25
+          and float(numpy.abs(music[-2205:]).max()) < 0.01 and float(numpy.abs(music[:, 0] - music[:, 1]).max()) > 0.01,
+          f"soundtrack: the piece is as long as its video, in stereo, never over its peak, and fades to nothing ({music_loud:.3f} rms)")
+
 voiced_command = reels.ffmpeg_args("ffmpeg", Path("raw.webm"), 1.5, 1.1, "feed", 21.4, Path("frame.png"), timed_overlays,
                                    Path("bar.png"), Path("out.mp4"), Path("voice.wav"))
 silent_command = reels.ffmpeg_args("ffmpeg", Path("raw.webm"), 1.5, 1.1, "feed", 18, Path("frame.png"), timed_overlays,

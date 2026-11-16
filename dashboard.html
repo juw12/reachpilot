@@ -405,7 +405,7 @@ function kpi(label, value, note = "") {
   return `<div class="card kpi"><div class="label">${esc(label)}</div><div class="value${size}">${value}</div><div class="note">${note}</div></div>`;
 }
 
-const REEL_FORMATS = { hook: "hook", pov: "POV", question: "question", listicle: "3 things", speedrun: "speedrun", roundup: "roundup" };
+const REEL_FORMATS = { hook: "hook", pov: "POV", question: "question", listicle: "3 things", speedrun: "speedrun", film: "product film", roundup: "roundup" };
 
 function postCard(entry, index) {
   const [kindLabel, kindClass] = KIND[entry.kind] || [entry.kind, ""];

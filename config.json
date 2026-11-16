@@ -30,11 +30,13 @@
     "pov",
     "question",
     "listicle",
-    "speedrun"
+    "speedrun",
+    "film"
   ],
   "video_hook_in_post": true,
   "video_hooks": {},
   "voice_over": true,
+  "video_music": true,
   "picture_every": 5,
   "watch_pages": true,
   "linkedin_api_version": "202609",

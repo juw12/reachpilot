@@ -1,11 +1,12 @@
 """Short vertical videos built on the demo recording: a hook in the first seconds, captions, a 'star it' end card.
 
-Five formats for one project, all a real page being used inside a phone frame (visuals.record_raw, phone view):
+Six formats for one project, all a real page being used inside a phone frame (visuals.record_raw, phone view):
   hook      a line that stops the scroll, then what the project is
   pov       "POV: you just found ...", the first-person style of user-made clips
   question  a viewer's question ("ok but does it actually work?") answered by the recording
   listicle  "3 things about <project>", one caption per feature
   speedrun  "<project> in 15 seconds", the whole tour at speed
+  film      "Meet <project>.", the product in use the way a product film shows it: dark, quiet, set to music
 and one for several projects (plan_roundup): "<n> projects I built", a caption per project.
 
 The page is the project's own site when it has one; otherwise a page about the project (showcase.py), and then
@@ -17,6 +18,9 @@ Every video is rendered in two cuts: "feed" (4:5, for LinkedIn, Bluesky, Mastodo
 With a voice (voiceover.py) the captions are also read aloud: narrate() gives every caption the time its line
 takes to say, so a voiced video is as long as its script (the speedrun keeps its 15 seconds and is read faster
 instead). The captions stay, because most people watch without sound; the end card says the voice is an AI one.
+
+The film is the one video nobody reads aloud: it has music instead, written and played here (soundtrack.py),
+and plain white captions that fade in and out over a near-black backdrop.
 
 Honest by construction: every caption is cut from the repo's own tagline, description and README bullets (short()
 only ever shortens). No invented users, quotes, numbers or results; the hooks make you curious, they never lie.
@@ -37,13 +41,15 @@ from PIL import Image, ImageDraw, ImageFont
 
 import analytics
 import composer
+import soundtrack
 import visuals
 import voiceover
 from github_source import CREATE_NO_WINDOW, RepoFacts
 
 log = logging.getLogger("autopilot")
 
-FORMATS = ("hook", "pov", "question", "listicle", "speedrun")
+FILM = "film"  # music and no voice; drawn with its own, quieter look
+FORMATS = ("hook", "pov", "question", "listicle", "speedrun", FILM)
 CUTS = {"feed": (1080, 1350), "tall": (1080, 1920)}  # channels.VIDEO_CUTS mirrors this; selftest keeps them in step
 SECONDS = 18
 SPEEDRUN_SECONDS = 15
@@ -55,9 +61,10 @@ SIZE_BUDGET_KBIT = 72000  # sound and picture together: 9 MB, under Discord's 10
 MIN_SPEED = 0.8  # a short tour is slowed down at most this much; the last frame holds for the rest
 CAPTION_CHARS = 84
 SPEEDRUN_CAPTION_CHARS = 60
+FILM_FADE = 0.45  # seconds a film caption takes to come and go
 ANGLE_BOOST = 1.25
 ANGLE_FIT = {
-    "launch": ("hook", "pov"),
+    "launch": ("hook", "pov", FILM),
     "deep_dive": ("listicle", "speedrun"),
     "feedback": ("question",),
     "behind_the_build": ("speedrun", "hook"),
@@ -103,7 +110,13 @@ STYLES = {
     "pov": {"box": (17, 17, 17, 225), "text": "#ffffff", "size": 78, "font": "seguibl.ttf", "label": ""},
     "question": {"box": "#ffffff", "text": INK, "size": 72, "font": "segoeuib.ttf", "label": "QUESTION"},
     "beat": {"box": "#ffffff", "text": INK, "size": 62, "font": "segoeuib.ttf", "label": ""},
+    # the film: words straight on the backdrop, no box
+    "film_hook": {"box": None, "text": "#ffffff", "size": 96, "font": "seguisb.ttf", "label": ""},
+    "film_beat": {"box": None, "text": "#f5f5f7", "size": 58, "font": "segoeui.ttf", "label": ""},
 }
+FILM_BACKDROP = ("#000000", "#1d1d1f")  # near black, a little lighter towards one corner
+FILM_PHONE = "#2c2c2e"  # the phone outline, just visible against it
+FILM_LABEL = "#86868b"
 SMALLEST_FONT = 24
 MIN_WORDS = 5  # a README line shorter than this is a label or a fragment ("In a headless browser"), not a caption
 # README lines that are not captions: a label before a colon, table rows, paths, env vars, links.
@@ -278,7 +291,7 @@ def plan(facts: RepoFacts, video_format: str, rng: random.Random, own_hooks: lis
     """
     name = facts.display_name
     github = facts.html_url.split("//", 1)[-1].rstrip("/")
-    limit = SPEEDRUN_CAPTION_CHARS if video_format == "speedrun" else CAPTION_CHARS
+    limit = SPEEDRUN_CAPTION_CHARS if video_format in ("speedrun", FILM) else CAPTION_CHARS  # a film says little
     intro = what_it_is(facts, limit)
     features = feature_lines(facts, limit)
     pitch = [line for line in pitch_lines(facts, limit) if line in features][:2]
@@ -311,6 +324,8 @@ def plan(facts: RepoFacts, video_format: str, rng: random.Random, own_hooks: lis
     elif video_format == "speedrun":
         hook, post_line = f"{name} in {SPEEDRUN_SECONDS} seconds", f"{name}, start to finish."
         seconds = SPEEDRUN_SECONDS
+    elif video_format == FILM:
+        hook = post_line = f"Meet {name}."
     else:
         raise ValueError(f"unknown video format {video_format!r}")
 
@@ -485,7 +500,8 @@ def caption_image(text: str, cut: str, style: str) -> tuple[Image.Image, tuple[i
     box_width, box_height = min(box_width, zone_width), min(box_height, zone_height)
     image = Image.new("RGBA", (box_width, box_height), (0, 0, 0, 0))
     draw = ImageDraw.Draw(image)
-    draw.rounded_rectangle((0, 0, box_width - 1, box_height - 1), radius=28, fill=look["box"])
+    if look["box"]:
+        draw.rounded_rectangle((0, 0, box_width - 1, box_height - 1), radius=28, fill=look["box"])
     if look["label"]:
         draw.text((pad_x, pad_y - 4), look["label"], font=_font("segoeuib.ttf", 26), fill="#6b7280")
     for index, line in enumerate(lines):
@@ -494,22 +510,30 @@ def caption_image(text: str, cut: str, style: str) -> tuple[Image.Image, tuple[i
     return image, (left + (zone_width - box_width) // 2, top + (zone_height - box_height) // 2)
 
 
-def frame_image(cut: str, repo: str, github: str) -> Image.Image:
-    """The backdrop: the project's colours, a phone outline with a see-through screen, and the repo address under it."""
+def frame_image(cut: str, repo: str, github: str, film: bool = False) -> Image.Image:
+    """The backdrop: the project's colours, a phone outline with a see-through screen, and the repo address under it.
+
+    film: the same for every project instead, near black, with the address in grey.
+    """
     width, height = CUTS[cut]
     layout = LAYOUTS[cut]
     screen_left, screen_top, screen_width, screen_height = layout["screen"]
     bezel = layout["bezel"]
     dark, light = visuals.PALETTES[int(hashlib.md5(repo.encode()).hexdigest(), 16) % len(visuals.PALETTES)]
+    if film:
+        dark, light = FILM_BACKDROP
     gradient = Image.linear_gradient("L").resize((width, height)).rotate(-30)
     canvas = Image.composite(Image.new("RGB", (width, height), light), Image.new("RGB", (width, height), dark), gradient)
     draw = ImageDraw.Draw(canvas)
     draw.rounded_rectangle(
         (screen_left - bezel, screen_top - bezel, screen_left + screen_width + bezel, screen_top + screen_height + bezel),
-        radius=30 + bezel, fill="#0b0b0f",
+        radius=30 + bezel, fill=FILM_PHONE if film else "#0b0b0f",
     )
-    font = _font("segoeuib.ttf", 32)
-    draw.text(((width - font.getlength(github)) / 2, layout["label_y"] - 20), github, font=font, fill="#ffffff")
+    font = _font("segoeui.ttf" if film else "segoeuib.ttf", 32)
+    draw.text(
+        ((width - font.getlength(github)) / 2, layout["label_y"] - 20), github, font=font,
+        fill=FILM_LABEL if film else "#ffffff",
+    )
     scale = 3  # the screen's rounded corners are drawn large and scaled down, so their edge is smooth
     hole = Image.new("L", (width * scale, height * scale), 255)
     ImageDraw.Draw(hole).rounded_rectangle(
@@ -558,20 +582,28 @@ def end_image(cut: str, github: str, title: str = STAR_IT, note: str = "") -> Im
 
 def ffmpeg_args(ffmpeg: str, raw: Path, lead_in: float, speed: float, cut: str, seconds: float, frame: Path,
                 overlays: list[tuple[Path, int, int, float, float]], bar: Path, output: Path,
-                track: Path | None = None) -> list[str]:
-    """The ffmpeg command for one cut. overlays: (png, x, y, from second, to second). track: the voice, else silence."""
+                track: Path | None = None, music: bool = False, fade: float = 0.0) -> list[str]:
+    """The ffmpeg command for one cut. overlays: (png, x, y, from second, to second).
+
+    track: the sound, else silence; music says it is the film's soundtrack and not a voice.
+    fade: seconds each overlay takes to come and go (0 cuts). The first is there from the first frame, which is
+    the thumbnail, and the last stays to the end.
+    """
     width, height = CUTS[cut]
     screen_left, screen_top, screen_width, screen_height = LAYOUTS[cut]["screen"]
+    sound_kbit = 96
     if track:
+        source = soundtrack if music else voiceover
         sound = ["-i", str(track)]
-        sound_out = ["-af", voiceover.AUDIO_FILTER, "-c:a", "aac", "-b:a", voiceover.AUDIO_BITRATE, "-ac", "2", "-ar", "44100"]
+        sound_out = ["-af", source.AUDIO_FILTER, "-c:a", "aac", "-b:a", source.AUDIO_BITRATE, "-ac", "2", "-ar", "44100"]
+        sound_kbit = max(sound_kbit, int(source.AUDIO_BITRATE.rstrip("k")))
     else:
         sound = ["-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100"]
         sound_out = ["-c:a", "aac", "-b:a", "48k"]
-    picture_rate = min(3500, int(SIZE_BUDGET_KBIT / seconds) - 96)  # a longer video gets fewer bits a second, not more megabytes
+    picture_rate = min(3500, int(SIZE_BUDGET_KBIT / seconds) - sound_kbit)  # a longer video gets fewer bits a second, not more megabytes
     command = [ffmpeg, "-y", "-loglevel", "error", "-ss", f"{lead_in:.2f}", "-i", str(raw), *sound, "-i", str(frame)]
     for picture, *_ in overlays:
-        command += ["-i", str(picture)]
+        command += ["-loop", "1", "-framerate", "30", "-i", str(picture)] if fade else ["-i", str(picture)]
     command += ["-i", str(bar)]
     steps = [
         f"[0:v]setpts=PTS/{speed:.3f},fps=30,scale={screen_width}:{screen_height}:flags=lanczos,"
@@ -580,7 +612,16 @@ def ffmpeg_args(ffmpeg: str, raw: Path, lead_in: float, speed: float, cut: str, 
         "[base][2:v]overlay=0:0[v0]",
     ]
     for index, (_, x, y, start, end) in enumerate(overlays):
-        steps.append(f"[v{index}][{index + 3}:v]overlay={x}:{y}:enable='between(t,{start:.2f},{end:.2f})'[v{index + 1}]")
+        picture = f"[{index + 3}:v]"
+        if fade:
+            fades = ["format=rgba"]
+            if index:
+                fades.append(f"fade=t=in:st={start:.2f}:d={fade}:alpha=1")
+            if index < len(overlays) - 1:
+                fades.append(f"fade=t=out:st={end - fade:.2f}:d={fade}:alpha=1")
+            steps.append(f"{picture}{','.join(fades)}[c{index}]")
+            picture = f"[c{index}]"
+        steps.append(f"[v{index}]{picture}overlay={x}:{y}:enable='between(t,{start:.2f},{end:.2f})'[v{index + 1}]")
     last = len(overlays)
     steps.append(f"[v{last}][{last + 3}:v]overlay=x='-w+w*t/{seconds}':y=0[bar]")  # a bar that fills as the video plays
     steps.append("[bar]format=yuv420p[v]")
@@ -594,24 +635,33 @@ def ffmpeg_args(ffmpeg: str, raw: Path, lead_in: float, speed: float, cut: str, 
 
 def render(plan_: Plan, cut: str, raw: Path, lead_in: float, speed: float, work: Path, output: Path,
            track: Path | None = None) -> Path:
-    """Draw this cut's overlays and encode it, with the voice when there is a track. Raises when the encoding fails or comes out empty."""
+    """Draw this cut's overlays and encode it, with the track (the voice; for the film, its music) when there is one.
+
+    Raises when the encoding fails or comes out empty.
+    """
     width, _ = CUTS[cut]
+    film = plan_.format == FILM
     frame = work / f"{cut}_frame.png"
-    frame_image(cut, plan_.repo, plan_.github).save(frame)
+    frame_image(cut, plan_.repo, plan_.github, film).save(frame)
     overlays = []
     for index, (kind, text, start, end) in enumerate(plan_.timeline()):
         picture = work / f"{cut}_{index}.png"
         if kind == "end":
-            image, (x, y) = end_image(cut, text, plan_.end, VOICE_NOTE if track else ""), (0, 0)
+            image, (x, y) = end_image(cut, text, plan_.end, VOICE_NOTE if track and not film else ""), (0, 0)
+        elif film:
+            image, (x, y) = caption_image(text, cut, f"film_{kind}")
         else:
             style = (plan_.format if plan_.format in ("pov", "question") else "hook") if kind == "hook" else "beat"
             image, (x, y) = caption_image(text, cut, style)
         image.save(picture)
         overlays.append((picture, x, y, start, end))
     bar = work / f"{cut}_bar.png"
-    Image.new("RGBA", (width, 10), YELLOW).save(bar)
+    Image.new("RGBA", (width, 6 if film else 10), "#ffffff" if film else YELLOW).save(bar)
     subprocess.run(
-        ffmpeg_args(visuals._ffmpeg(), raw, lead_in, speed, cut, plan_.seconds, frame, overlays, bar, output, track),
+        ffmpeg_args(
+            visuals._ffmpeg(), raw, lead_in, speed, cut, plan_.seconds, frame, overlays, bar, output, track,
+            music=film, fade=FILM_FADE if film else 0.0,
+        ),
         check=True, capture_output=True, timeout=400, creationflags=CREATE_NO_WINDOW,
     )
     if output.stat().st_size < visuals.DEMO_MIN_BYTES:
@@ -619,17 +669,26 @@ def render(plan_: Plan, cut: str, raw: Path, lead_in: float, speed: float, work:
     return output
 
 
-def record(plan_: Plan, out_dir: Path, say=None) -> list[Path]:
+def record(plan_: Plan, out_dir: Path, say=None, music: bool = True) -> list[Path]:
     """Record the page once and render every cut: [<repo>_demo_<format>_feed.mp4, ..._tall.mp4]. All or nothing.
 
     say (voiceover.load) reads the captions aloud; a voice that fails or is too slow costs the sound, never the video.
+    The film is never read aloud: it gets its music (soundtrack.py) unless music is False, on the same terms.
     """
     out_dir.mkdir(parents=True, exist_ok=True)
     outputs = [out_dir / f"{plan_.repo}_demo_{plan_.format}_{cut}.mp4" for cut in CUTS]
     try:
         with tempfile.TemporaryDirectory(prefix="reachpilot_reel_") as folder:
             track = None
-            if say:
+            if plan_.format == FILM:
+                if music:
+                    try:
+                        track = soundtrack.write(
+                            plan_.seconds, plan_.seconds - END_SECONDS, plan_.repo, Path(folder) / "music.wav",
+                        )
+                    except Exception as error:
+                        log.warning("Soundtrack failed (%s); this video stays silent", error)
+            elif say:
                 try:
                     track = narrate(plan_, say, Path(folder) / "voice.wav")
                 except Exception as error:

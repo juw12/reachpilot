@@ -76,6 +76,7 @@ aloud (see [Voice-over](#voice-over)).
 | **Question** | what a viewer would ask: "what does it even do?", "is it really free?", "where's the code?" | the answer, then the demo |
 | **3 things** | "3 things about <project>" | three features from the README, numbered 1, 2, 3 |
 | **Speedrun** | "<project> in 15 seconds" | fast cuts, short captions |
+| **Film** | "Meet <project>." | the product in use on a near-black backdrop, a few plain white lines that fade, music instead of a voice |
 
 - **Which format** is chosen per post: never the format of the previous video, never the one this project had
   last time, a nudge for the format that suits the post's angle (a feedback post leans towards the question,
@@ -107,6 +108,8 @@ no cost, and nothing leaves the machine.
   The scheduled run also puts itself at normal priority (Task Scheduler starts it lower), so that on a busy
   PC the voice takes about a minute and a half instead of twenty.
 
+The film is never read aloud; it has [music](#music) instead.
+
 The voice is optional and not part of `requirements.txt`. To switch it on:
 
 ```
@@ -117,15 +120,30 @@ then put `kokoro-v1.0.onnx` and `voices-v1.0.bin` (from the
 [kokoro-onnx releases](https://github.com/thewh1teagle/kokoro-onnx/releases)) in a `models` folder next to
 `autopilot.py`, or name their folder in `"voice_models"`.
 
+#### Music
+
+The film has no voice. It plays a short calm piece instead: soft mallet notes over a warm pad, a quiet pulse
+that comes in with the first caption, and a last chord that lands on the end card and rings out.
+
+- **Made on your PC, by `soundtrack.py`.** Nothing is downloaded and nothing is licensed, so there is no fee,
+  no attribution and nothing a platform can mute or claim.
+- **Each project has its own tune**: its key, chords and pattern come from its name, so a project sounds the
+  same from one video to the next and different from the others.
+- **Written to the video**: the bars end exactly where the end card starts.
+- **It never blocks a post.** Playing the notes needs `numpy` (in `requirements.txt`); without it, or when
+  it fails, the film goes out silent and the log says why.
+- It is synthesized, not a studio recording. Listen to one film before you decide to keep it.
+
 Settings in `config.json`:
 
 | Key | Default | What it does |
 |---|---|---|
 | `demo_video` | `true` | `false` records no video at all |
-| `video_formats` | all five | the formats in rotation; `[]` keeps the plain recording |
+| `video_formats` | all six | the formats in rotation; `[]` keeps the plain recording |
 | `video_hook_in_post` | `true` | `false` leaves the post's first line alone |
 | `video_hooks` | `{}` | your own hooks per project, for example `{"my-repo": ["Blackout tonight? Open {name}."]}` |
 | `voice_over` | `true` | `false` keeps every video silent |
+| `video_music` | `true` | `false` keeps the film silent |
 | `video_voice` | a calm male blend | one Kokoro voice name, for example `"af_heart"`, or a blend such as `{"am_michael": 0.7, "am_fenrir": 0.3}` |
 | `voice_models` | `models` | the folder that holds the two voice model files |
 | `picture_every` | `5` | one post in this many leads with pictures instead of a video; `0` means never |
@@ -405,6 +423,7 @@ again on the next daily run. `python patent_desk.py show` prints the desk.
 | `visuals.py` | screenshots and the demo video recording (Edge, headless) |
 | `reels.py` | the short videos: formats, captions from the repo's own words, rendering (ffmpeg) |
 | `voiceover.py` | the voice-over: captions read aloud by a local neural voice (optional) |
+| `soundtrack.py` | the film's music: a short piece written and played on this PC |
 | `linkedin_api.py` | OAuth, images, video, posts, comments |
 | `channels.py` | Bluesky, Mastodon, Dev.to, Telegram, Discord: per-platform cutting, publishing, retries |
 | `growth.py` | daily: profiles, pinned intro, follow-back, follower counts |

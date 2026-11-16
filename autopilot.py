@@ -18,7 +18,8 @@ through a page built here from its README (showcase.py). A roundup gets one vide
 prepared seed posts get one in front of their pictures. The pictures stay as the fallback, and one post in every
 "picture_every" leads with them instead. Switch the videos off with "demo_video": false in config.json.
 The videos are read aloud by a voice that runs on this PC when it is installed (voiceover.py; "voice_over": false
-keeps them silent).
+keeps them silent). The product film is the exception: nobody speaks, it plays music written on this PC
+(soundtrack.py; "video_music": false keeps it silent).
 
 After a post about one project its video also gets a page of its own (showcase.publish_watch, "watch_pages"),
 and a creator who covered the project is thanked in the post (creators.py).
@@ -467,7 +468,7 @@ def styled_videos(config, choice, out_dir: Path, db=None, used=(), url: str = ""
             own_hooks = (config.get("video_hooks") or {}).get(facts.name)
             plan = reels.plan(facts, video_format, rng, own_hooks, url=url, shows_product=url == facts.homepage)
             plan.pages = served or {}
-        videos = reels.record(plan, out_dir, say)
+        videos = reels.record(plan, out_dir, say, music=config.get("video_music", True))
     except Exception as error:
         log.warning("Styled video failed (%s); trying the plain recording", error)
         return []

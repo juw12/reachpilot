@@ -5,3 +5,5 @@ playwright>=1.40
 imageio-ffmpeg>=0.4
 # Optional: the patent desk types a ready package's values into form PTO/SB/16. Without it no form is made.
 pypdf>=4.0
+# Optional: the product film's music is made with it. Without it the film goes out silent.
+numpy>=1.26
