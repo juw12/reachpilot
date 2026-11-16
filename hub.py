@@ -150,7 +150,9 @@ AUTO_APPLY_HEADER = re.compile(r"^Auto-apply (CRASHED )?(\d{4}-\d\d-\d\d \d\d:\d
 def auto_apply_view(folder: Path) -> dict | None:
     """What the scheduled auto-apply (modules/jobs/auto_apply.py) did, read from the two files it writes:
     logs/auto_apply.log (one block per run) and digest_apply_state.json (its queue from the Big tech mail).
-    Real runs only, newest first. None where it has never run, so the Jobs tab has no Auto-apply card there."""
+    Real runs only, newest first. None where it has never run, so the Jobs tab has no Auto-apply card there.
+    digest.done lists every job of the mail that is settled (applied, already applied, not applied and why),
+    whoever settled it: a scheduled run or an application made outside one. The log only knows the runs."""
     log = folder / "logs" / "auto_apply.log"
     try:
         with log.open("rb") as handle:
@@ -222,7 +224,7 @@ def auto_apply_view(folder: Path) -> dict | None:
             names.append(job)
     left = sorted(({"reason": reason, "jobs": names} for reason, names in reasons.items()), key=lambda item: -len(item["jobs"]))
 
-    digest = {"counts": {}, "queued": [], "needs_you": []}
+    digest = {"counts": {}, "queued": [], "needs_you": [], "done": []}
     try:
         state = json.loads((folder / "digest_apply_state.json").read_text(encoding="utf-8"))
         entries = [entry for entry in state.values() if isinstance(entry, dict)]
@@ -237,6 +239,14 @@ def auto_apply_view(folder: Path) -> dict | None:
         elif status == "needs_you":
             digest["needs_you"].append({"company": str(entry.get("company") or ""), "title": str(entry.get("title") or ""),
                                         "detail": str(entry.get("detail") or "")[:300], "url": entry.get("url") or ""})
+        elif status in ("applied", "already", "skipped"):
+            digest["done"].append({"company": str(entry.get("company") or ""), "title": str(entry.get("title") or ""),
+                                   "status": status, "detail": str(entry.get("detail") or "")[:300],
+                                   "date": str(entry.get("date") or ""), "url": entry.get("url") or ""})
+    settled_order = {"applied": 0, "already": 1, "skipped": 2}
+    digest["done"].sort(key=lambda job: (settled_order[job["status"]], job["company"], job["title"]))
+    digest["done"].sort(key=lambda job: job["date"], reverse=True)  # newest day first; within a day, applied first
+    digest["done"] = digest["done"][:60]
     digest["queued"] = sorted(({"company": company, "titles": titles} for company, titles in waiting.items()),
                               key=lambda item: (-len(item["titles"]), item["company"]))
     return {

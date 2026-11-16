@@ -2445,6 +2445,12 @@ with tempfile.TemporaryDirectory() as auto_apply_tmp:
         "d": {"company": "Northwind", "title": "Test Engineer", "status": "applied"},
         "e": {"company": "Contoso", "title": "Mechanical Engineer", "status": "needs_you",
               "detail": "Notice period", "url": "https://example.com/job/1"},
+        "f": {"company": "Umbrella", "title": "Quality Engineer", "status": "skipped", "date": "2030-01-02",
+              "detail": "the posting is closed", "url": "https://example.com/job/2"},
+        "g": {"company": "Umbrella", "title": "Hardware Engineer", "status": "applied", "date": "2030-01-02",
+              "detail": "submitted on the careers site", "url": "https://example.com/job/3"},
+        "h": {"company": "Hooli", "title": "Reliability Engineer", "status": "already", "date": "2030-01-01"},
+        "i": {"company": "Hooli", "title": "Process Engineer", "status": "later", "date": "2030-01-02"},
     }), encoding="utf-8")
     auto_view = hub.auto_apply_view(auto_apply_folder)
     crashed_run, finished_run = auto_view["runs"]
@@ -2465,17 +2471,27 @@ with tempfile.TemporaryDirectory() as auto_apply_tmp:
         {"reason": "title does not fit (graduate / staff level)", "jobs": ["Globex - Graduate Engineer", "Globex - Staff Engineer"]},
         {"reason": "needs a sign-in", "jobs": ["Initech - Design Engineer"]},
     ] and crashed_run["left"] == 3, f"hub auto-apply: jobs left for you, grouped by reason, each job once ({auto_view['left']})")
-    check(auto_view["digest"]["counts"] == {"queued": 3, "applied": 1, "needs_you": 1}
+    check(auto_view["digest"]["counts"] == {"queued": 3, "applied": 2, "needs_you": 1, "skipped": 1, "already": 1, "later": 1}
           and auto_view["digest"]["queued"] == [{"company": "Globex", "titles": ["Process Engineer", "Test Engineer"]},
                                                 {"company": "Initech", "titles": ["Design Engineer"]}]
           and auto_view["digest"]["needs_you"] == [{"company": "Contoso", "title": "Mechanical Engineer",
                                                     "detail": "Notice period", "url": "https://example.com/job/1"}],
           f"hub auto-apply: the queue by company and the jobs that need you ({auto_view['digest']})")
+    check([(job["date"], job["status"], job["company"], job["title"]) for job in auto_view["digest"]["done"]] == [
+        ("2030-01-02", "applied", "Umbrella", "Hardware Engineer"),
+        ("2030-01-02", "skipped", "Umbrella", "Quality Engineer"),
+        ("2030-01-01", "already", "Hooli", "Reliability Engineer"),
+        ("", "applied", "Northwind", "Test Engineer"),
+    ] and auto_view["digest"]["done"][1]["detail"] == "the posting is closed"
+          and auto_view["digest"]["done"][0]["url"] == "https://example.com/job/3",
+          "hub auto-apply: settled jobs of the mail come from the queue file, newest day first, applied first within a day, "
+          f"with the reason and the link; none of them is in the log of the runs ({auto_view['digest']['done']})")
     (auto_apply_folder / "digest_apply_state.json").write_text("{not json", encoding="utf-8")
     auto_apply_log.write_text("Auto-apply 2030-01-03 08:15\n  trying        100 Contoso - Mechanical Engineer (Shelbyville)\n",
                               encoding="utf-8")
     open_run = hub.auto_apply_view(auto_apply_folder)
-    check(open_run["runs"][0]["state"] == "running" and open_run["digest"] == {"counts": {}, "queued": [], "needs_you": []},
+    check(open_run["runs"][0]["state"] == "running"
+          and open_run["digest"] == {"counts": {}, "queued": [], "needs_you": [], "done": []},
           "hub auto-apply: no closing line and a fresh log means still running; a damaged queue file gives an empty queue")
     os.utime(auto_apply_log, (0, 0))
     check(hub.auto_apply_view(auto_apply_folder)["runs"][0]["state"] == "stopped",
@@ -2483,6 +2499,8 @@ with tempfile.TemporaryDirectory() as auto_apply_tmp:
 jobs_page = (Path(__file__).parent / "dashboard.html").read_text(encoding="utf-8")
 check("function autoApplyCard" in jobs_page and "autoApplyCard(j.auto_apply)" in jobs_page,
       "dashboard: the Jobs tab shows the Auto-apply card")
+check("digest.done" in jobs_page and "From the Big tech mail" in jobs_page,
+      "dashboard: the Auto-apply card lists the settled jobs of the Big tech mail (digest.done)")
 
 # patent desk (patent_desk.py): readiness, stages, the dates after a filing, history, the package, the daily run.
 # Offline, made-up projects, no PDF (Edge is not on the CI runner) and no folder is opened.
