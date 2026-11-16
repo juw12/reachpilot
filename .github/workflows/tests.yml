@@ -14,7 +14,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install requests openpyxl pillow
+      # pypdf lets the selftest type values into a small PDF form, as the patent desk does with form PTO/SB/16.
+      - run: pip install requests openpyxl pillow pypdf
       - run: python selftest.py
         env:
           CI: "1"
