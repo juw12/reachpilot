@@ -2440,6 +2440,7 @@ def auto_command(command, folder, timeout, replace=None):
     if replace:  # the judge: it writes its verdict to {out}
         auto_calls["judge"] += 1
         Path(replace["out"]).write_text(json.dumps({"council_score": auto_world["score"],
+                                                    "judges": {"one": {"total": 9.3}, "two": {"total": 8.9}, "three": {"error": "timed out"}},
                                                     "fixes": [{"fix": "Say who you are in the first line."}]}), encoding="utf-8")
         return True, "judged"
     return auto_world["checks_ok"], "1 passed" if auto_world["checks_ok"] else "pack.md: a link is missing"
@@ -2743,6 +2744,17 @@ try:
           and "1 of 1 checks pass, 2 of 2 cited links answer" in healthy["detail"] and "Judge: 9.10 on 2026-11-16" in healthy["detail"]
           and "Say who you are in the first line." in healthy["detail"],
           "launch auto proposal: checked once a day, with the judge's score and top suggestion")
+    check("Judge: 9.10 on 2026-11-16 at commit abc1234, 2 of 3 judges answered (best 9.10, 1 run)." in healthy["detail"]
+          and "The page changed after that score" not in healthy["detail"],
+          "launch auto proposal: the score names the commit it judged and how many judges answered")
+    moved_on = launch_auto.load_state("demo")
+    moved_on["proposal"]["commit"] = "def5678"
+    launch_auto.save_state("demo", moved_on)
+    check("at commit abc1234" in auto_row("auto-proposal", auto_at("2026-11-16T10:30"))["detail"]
+          and "The page changed after that score; the weekly run judges the new text." in auto_row("auto-proposal", auto_at("2026-11-16T10:30"))["detail"],
+          "launch auto proposal: a score for an older text is not shown as the score of the new one")
+    moved_on["proposal"]["commit"] = "abc1234"
+    launch_auto.save_state("demo", moved_on)
     launch_auto.run(force=True, now=auto_at("2026-11-16T11:00"))
     check(auto_calls == {"sync": 2, "judge": 1}, "launch auto proposal: 'Check again now' repeats the checks, not the weekly judge")
     auto_world["dead"] = {"https://example.test/law"}

@@ -676,6 +676,15 @@ def _check_links(folder: Path, files: list, strikes: dict) -> dict:
     return {"total": len(urls), "strikes": {url: count for url, count in counts.items() if count}}
 
 
+def _judges_answered(verdict: dict) -> str:
+    """"2 of 3" when one of three judges gave no score; "" when the verdict does not list its judges."""
+    judges = verdict.get("judges")
+    if not isinstance(judges, dict) or not judges:
+        return ""
+    answered = sum(1 for entry in judges.values() if isinstance(entry, dict) and "total" in entry)
+    return f"{answered} of {len(judges)}"
+
+
 def step_proposal(test_id: str, cfg: dict, state: dict, now: datetime, force: bool = False) -> str:
     proposal = state.setdefault("proposal", {})
     today = now.date().isoformat()
@@ -707,7 +716,7 @@ def step_proposal(test_id: str, cfg: dict, state: dict, now: datetime, force: bo
             proposal["judge_error"] = f"no score on {today}"
         else:
             proposal.pop("judge_error", None)
-            history.append({"date": today, "score": round(score, 2), "commit": commit})
+            history.append({"date": today, "score": round(score, 2), "commit": commit, "judges": _judges_answered(verdict)})
             del history[:-26]
             proposal["fixes"] = [str(entry.get("fix") if isinstance(entry, dict) else entry)[:240] for entry in (verdict.get("fixes") or [])[:3]]
     failed = [check["name"] for check in checks if not check["ok"]]
@@ -734,7 +743,11 @@ def proposal_rows(test_id: str, cfg: dict, state: dict, now: datetime) -> list[d
     if scores:
         best = max(entry["score"] for entry in scores)
         latest = scores[-1]
-        judged = f" Judge: {latest['score']:.2f} on {latest['date']} (best {best:.2f}, {len(scores)} run{'' if len(scores) == 1 else 's'})."
+        where = f" at commit {latest['commit']}" if latest.get("commit") else ""
+        who = f", {latest['judges']} judges answered" if latest.get("judges") else ""
+        judged = f" Judge: {latest['score']:.2f} on {latest['date']}{where}{who} (best {best:.2f}, {len(scores)} run{'' if len(scores) == 1 else 's'})."
+        if latest.get("commit") and proposal.get("commit") and latest["commit"] != proposal["commit"]:
+            judged += " The page changed after that score; the weekly run judges the new text."
         if latest["score"] < best - SCORE_DROP:
             problems.append(f"the judge's score fell from {best:.2f} to {latest['score']:.2f}")
     elif (cfg.get("judge") or {}).get("command"):
