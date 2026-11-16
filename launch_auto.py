@@ -443,7 +443,17 @@ def load_contacts(path: Path, target: int, country_code: str = "62") -> dict:
 
 
 def _personal(text: str, name: str) -> str:
+    if not name:  # "Hello {name}, ..." without a name reads "Hello, ..."
+        text = text.replace(" {name}", "")
     return text.replace("{name}", name or "").replace("  ", " ")
+
+
+def _share_links(cfg: dict) -> list[dict]:
+    """WhatsApp links that carry a text and no number: I choose the chats or the group myself, so nobody is on a list."""
+    texts = [("the invitation (you pick the chats)", cfg.get("message")), ("the 20:00 reminder", cfg.get("reminder")),
+             ("the day-7 note", cfg.get("day7"))]
+    return [{"label": f"WhatsApp: share {label}", "url": "https://wa.me/?text=" + urllib.parse.quote(_personal(str(text), "").strip())}
+            for label, text in texts if text and str(text).strip()]
 
 
 def _invite_digest(cfg: dict, emails: list[dict]) -> str:
@@ -565,10 +575,20 @@ def invite_rows(test_id: str, cfg: dict, state: dict, now: datetime) -> list[dic
     contacts_file = _path(test_id, cfg.get("contacts_file") or "contacts.csv")
     edit = {"name": f"launch:open_contacts:{test_id}", "label": "Open the contact list"}
     if not emails and not phones:
-        return [{**row, "title": f"Invitations: add the people to invite (up to {target})", "status": "yours",
+        share = _share_links(cfg) if cfg.get("message") else []
+        shared_row = {**row, "links": share + row["links"]}
+        if share and invites.get("shared_at"):
+            return [{**shared_row, "title": "Invitations: shared by you", "status": "done",
+                     "detail": f"Marked as shared {invites['shared_at']}. This PC sent nothing and nobody is on a list. "
+                               f"The links stay here for the reminder and the day-7 note; a contact list is optional.",
+                     "actions": [edit]}]
+        easy = (f" Or skip the list: a link below opens WhatsApp with the text ready, you pick the chats or a group and press send "
+                f"(from {when}, when the test starts), then tap \"I shared it\"." if share else "")
+        return [{**shared_row, "title": f"Invitations: share the link yourself, or list the people (up to {target})" if share
+                 else f"Invitations: add the people to invite (up to {target})", "status": "yours",
                  "detail": f"The list is empty, and nobody is invented. One line per person in {contacts_file}: name, e-mail and/or WhatsApp number. "
-                           f"E-mail invitations then go out by themselves on {when} after you approve a preview; WhatsApp ones become one-tap links.",
-                 "actions": [edit]}]
+                           f"E-mail invitations then go out by themselves on {when} after you approve a preview; WhatsApp ones become one-tap links.{easy}",
+                 "actions": [edit] + ([{"name": f"launch:shared:{test_id}", "label": "I shared it"}] if share else [])}]
     notes = f" {found['skipped']} line(s) skipped (double or no usable address)." if found["skipped"] else ""
     notes += f" {found['over']} over the limit of {target} left out." if found["over"] else ""
     rows = []
@@ -917,6 +937,10 @@ def action(name: str, now: datetime | None = None) -> str:
             )
         _open(contacts)
         return "Contact list opened. Save it when you are done; the next hourly run picks it up."
+    if verb == "shared" and invite_cfg:
+        invites["shared_at"] = _stamp(now)
+        save_state(test_id, state, only="invites")
+        return "Noted: you shared the invitation yourself."
     if verb == "wa_done" and invite_cfg:
         invites["whatsapp_done_at"] = _stamp(now)
         save_state(test_id, state, only="invites")

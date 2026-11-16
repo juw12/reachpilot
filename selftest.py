@@ -3120,6 +3120,21 @@ try:
           and "name,email,whatsapp" in (auto_home / "data" / "demo" / "contacts.csv").read_text(encoding="utf-8")
           and auto_row("auto-invites", auto_at("2026-11-16T09:01"))["status"] == "yours",
           "launch auto invites: the button makes an empty template (still nobody to invite)")
+    share_urls = [entry["url"] for entry in empty["links"]]
+    check(len(share_urls) == 3 and all(url.startswith("https://wa.me/?text=") for url in share_urls)
+          and urllib.parse.unquote(share_urls[0].split("text=", 1)[1]) == "Hello, one test tonight? https://example.test/app"
+          and empty["actions"][1] == {"name": "launch:shared:demo", "label": "I shared it"},
+          "launch auto invites: an empty list offers WhatsApp share links that carry the text and no phone number")
+    empty_card = hub._launch_view(launch_test, {"summary": launch_answer, "stale": False, "read_at": "now"}, now=launch_now,
+                                  auto_rows=launch_auto.rows("demo", auto_at("2026-11-16T09:00")))
+    empty_step = next(step for step in empty_card["needs_me"] if step["id"] == "auto-invites")
+    check([entry["label"] for entry in empty_step["links"]] == [entry["label"] for entry in empty["links"]] + ["Texts"],
+          "hub launch auto: a row with its own links also keeps the links of the step it replaces")
+    shared_row = None
+    if launch_auto.action("launch:shared:demo", auto_at("2026-11-28T10:30")) == "Noted: you shared the invitation yourself.":
+        shared_row = auto_row("auto-invites", auto_at("2026-11-28T11:00"))
+    check(shared_row is not None and shared_row["status"] == "done" and len(shared_row["links"]) == 3 and auto_posts == [],
+          "launch auto invites: sharing it myself closes the step, and this PC still sends to nobody")
     people_lines = ["# my list", "name,email,whatsapp", "Ani,,0812-3456-7890", "Budi,,+62 813 0000 1111"]
     people_lines += [f"Friend {index},friend{index}@example.test," for index in range(1, 34)]
     people_lines += ["Friend 1 again,FRIEND1@example.test,", "Nobody,,", "Broken,not-an-address,"]
@@ -3353,6 +3368,10 @@ tick_main = (Path(__file__).parent / "autopilot.py").read_text(encoding="utf-8")
 check(tick_main.index('if args.command == "tick":\n        if LOCK_PATH') < tick_main.index("launch_auto.leave_low_priority()")
       < tick_main.index("tick(config, db)"),
       "autopilot: the scheduled post run fixes its priority before it makes a video, a preview by hand does not")
+
+phone_main = (Path(__file__).parent / "phone_snapshot.py").read_text(encoding="utf-8").split('if __name__ == "__main__":')[1]
+check(phone_main.index("leave_low_priority()") < phone_main.index("build("),
+      "phone page: the build fixes its priority first, so Task Scheduler answers it on a busy PC")
 
 print("\nALL PASSED" if not failures else f"\n{len(failures)} FAILED")
 sys.exit(1 if failures else 0)

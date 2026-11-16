@@ -978,10 +978,11 @@ def _launch_view(test: dict, fetched: dict, private_steps=None, now: datetime | 
     public = _launch_steps(summary.get("needsMe"), False)
     automated = _launch_steps(auto_rows, True, trusted=True)
     replaced = {step["replaces"]: step for step in reversed(automated) if step["replaces"]}
-    for step in public:  # an automation that takes a public step over keeps that step's links
+    for step in public:  # an automation that takes a public step over keeps that step's links, after its own
         taker = replaced.get(step["id"])
-        if taker is not None and not taker["links"]:
-            taker["links"] = step["links"]
+        if taker is not None:
+            own = {entry["url"] for entry in taker["links"]}
+            taker["links"] = taker["links"] + [entry for entry in step["links"] if entry["url"] not in own]
     steps = [step for step in public if step["id"] not in replaced] + _launch_steps(private_steps, True) + automated
 
     def text(key: str) -> str:

@@ -74,4 +74,10 @@ def build(out: Path = OUT) -> Path:
 
 
 if __name__ == "__main__":
+    try:  # started at low priority on a busy PC, the build waits minutes and Task Scheduler does not answer in time
+        import launch_auto
+
+        launch_auto.leave_low_priority()
+    except Exception:
+        pass
     print(build(Path(sys.argv[1]) if len(sys.argv) > 1 else OUT))
