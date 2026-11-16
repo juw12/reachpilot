@@ -149,7 +149,22 @@ def save_state(test_id: str, state: dict, only: str | None = None) -> None:
 def _only_one(name: str, wait: float = 0.0):
     """True for the one holder of this lock on this PC, False for everyone else. The lock ends with its process,
     so a crashed run can never block the next one."""
-    import msvcrt
+    try:
+        import msvcrt
+
+        def take(handle):
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+
+        def give_back(handle):
+            msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+    except ImportError:  # not Windows (the tests on GitHub run on Linux): the same lock with the tool that exists there
+        import fcntl
+
+        def take(handle):
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+        def give_back(handle):
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     handle = open(DATA_DIR / f"{name}.lock", "a+b")
@@ -159,7 +174,7 @@ def _only_one(name: str, wait: float = 0.0):
         while not held:
             try:
                 handle.seek(0)
-                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                take(handle)
                 held = True
             except OSError:
                 if time.monotonic() >= deadline:
@@ -169,7 +184,7 @@ def _only_one(name: str, wait: float = 0.0):
     finally:
         if held:
             handle.seek(0)
-            msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            give_back(handle)
         handle.close()
 
 
