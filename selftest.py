@@ -2842,6 +2842,9 @@ finally:
 auto_page = (Path(__file__).parent / "dashboard.html").read_text(encoding="utf-8")
 check(all(piece in auto_page for piece in ('auto: "good"', "s.automation", "actionButton(a.name, a.label, true)", "run by this PC")),
       "dashboard: launch rows show 'automatic', their detail and their buttons")
+check('class="hint step-detail"' in auto_page
+      and "td .badge + .hint.step-detail { white-space: normal; overflow-wrap: anywhere; }" in auto_page,
+      "dashboard: an automation's detail wraps instead of running off the card")
 auto_source = (Path(__file__).parent / "launch_auto.py").read_bytes()
 check(not auto_source.startswith(b"\xef\xbb\xbf") and "\u00c3" not in auto_source.decode("utf-8")
       and "\u00e2\u20ac" not in auto_source.decode("utf-8"), "launch_auto.py: clean UTF-8, no byte-order mark")

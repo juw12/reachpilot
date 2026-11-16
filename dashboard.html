@@ -150,6 +150,7 @@
   .module .big { font-size: 24px; font-weight: 700; }
   .launch-links { display: flex; flex-wrap: wrap; gap: 0 16px; margin-top: 4px; }
   .launch-links + .hint, td .badge + .hint { white-space: nowrap; }
+  td .badge + .hint.step-detail { white-space: normal; overflow-wrap: anywhere; }
   /* Patent screen card: long text cells wrap, and each project becomes a stacked block on a phone.
      The stacked block uses the same 760px breakpoint as the phone rules above; change both together. */
   .patents .scroll td:first-child, .patents td .badge + .hint { white-space: normal; }
@@ -767,7 +768,7 @@ function launchCards(launch) {
       ? `<div class="launch-links">${s.actions.map((a) => actionButton(a.name, a.label, true)).join("")}</div>` : "");
     const steps = t.needs_me.map((s) => `<tr>
         <td>${esc(s.title)}${stepTag(s)}
-          ${s.automation && s.detail ? `<div class="hint">${esc(s.detail)}</div>` : ""}
+          ${s.automation && s.detail ? `<div class="hint step-detail">${esc(s.detail)}</div>` : ""}
           ${s.links.length ? linkRow(s.links) : ""}${stepButtons(s)}</td>
         <td><span class="badge ${stateBadge[s.status] || "grey"}">${esc(s.status_label)}</span>
           ${s.due ? `<div class="hint">by ${esc(s.due)}</div>` : ""}</td>
