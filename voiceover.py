@@ -18,6 +18,7 @@ from __future__ import annotations
 import importlib.util
 import logging
 import re
+import time
 import unicodedata
 import wave
 from functools import lru_cache
@@ -34,6 +35,9 @@ LEAD = 0.1  # a line starts this long after its caption appears
 BREATH = 0.4  # silence a spoken line needs around it (the lead included), so lines do not run into each other
 FASTEST = 1.3  # a line is never read faster than this; past it a voice sounds rushed
 SHORTEST_CLIP = 0.2  # a "spoken" line shorter than this is the voice failing, not speech
+# One video's lines take about 90 seconds to say on this PC when it is busy, and 20 minutes when the run is also
+# at low priority. A voice slower than this gives up, so the video goes out silent instead of the post going out late.
+PATIENCE = 240
 PEAK = 0.9
 AUDIO_BITRATE = "96k"
 # The clips come out near -19 LUFS; phones want it louder. The limiter keeps the raised peaks from clipping.
@@ -78,15 +82,23 @@ def seconds(clip: bytes) -> float:
     return len(clip) / (2 * SAMPLE_RATE)
 
 
-def read(lines: list[str], say, room: float | None = None) -> list[bytes]:
+def deadline() -> float:
+    """The moment (time.monotonic) by which a video that starts being read now has to be read."""
+    return time.monotonic() + PATIENCE
+
+
+def read(lines: list[str], say, room: float | None = None, until: float | None = None) -> list[bytes]:
     """Every line as a clip of speech (an empty line gives an empty clip).
 
     room is how many seconds all the speech together may take. When it takes longer the lines are read again,
     just fast enough to fit; ValueError when that would be faster than FASTEST or it still does not fit.
+    until (deadline()) is when the voice has to be done: TimeoutError when a line would start after it.
     """
     def clips_at(speed: float) -> list[bytes]:
         clips = []
         for line in lines:
+            if line and until is not None and time.monotonic() > until:
+                raise TimeoutError(f"the voice is too slow right now, not done after {PATIENCE} seconds")
             clip = say(line, speed) if line else b""
             if line and seconds(clip) < SHORTEST_CLIP:
                 raise ValueError(f"the voice gave no sound for {line!r}")
@@ -124,7 +136,7 @@ def write_track(clips: list[bytes], starts: list[float], total: float, path: Pat
 def narration(lines: list[str], say, path: Path) -> float:
     """Read the lines one after another into a WAV; returns its length in seconds. For a video without captions."""
     lines = [line for line in map(speakable, lines) if line]
-    clips = read(lines, say)
+    clips = read(lines, say, until=deadline())
     if not clips:
         raise ValueError("nothing to say")
     starts, total = [], 0.0

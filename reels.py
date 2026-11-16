@@ -349,20 +349,22 @@ def narrate(plan_: Plan, say, track: Path) -> Path:
 
     Each caption stays up for as long as its line takes plus a breath. The speedrun promises its length on screen,
     so there the lines are read faster until they fit and the time left over is shared out.
-    Raises, leaving the plan as it was, when the voice fails or the speedrun cannot be said in time.
+    Raises, leaving the plan as it was, when the voice fails, takes longer than voiceover.PATIENCE or the speedrun
+    cannot be said in time.
     """
     lines = spoken(plan_)
+    until = voiceover.deadline()
 
     def row_lengths(clips: list[bytes]) -> list[float]:
         return [max(SHORTEST_ROW, voiceover.seconds(clip) + voiceover.BREATH) for clip in clips]
 
-    clips = voiceover.read(lines, say)
+    clips = voiceover.read(lines, say, until=until)
     lengths = row_lengths(clips)
     if plan_.format == "speedrun":
         over = sum(lengths) - plan_.seconds
         if over > 0:
             said = sum(voiceover.seconds(clip) for clip in clips)
-            clips = voiceover.read(lines, say, room=said - over)
+            clips = voiceover.read(lines, say, room=said - over, until=until)
             lengths = row_lengths(clips)
         spare = plan_.seconds - sum(lengths)
         if spare < 0:
@@ -620,7 +622,7 @@ def render(plan_: Plan, cut: str, raw: Path, lead_in: float, speed: float, work:
 def record(plan_: Plan, out_dir: Path, say=None) -> list[Path]:
     """Record the page once and render every cut: [<repo>_demo_<format>_feed.mp4, ..._tall.mp4]. All or nothing.
 
-    say (voiceover.load) reads the captions aloud; a voice that fails costs the sound, never the video.
+    say (voiceover.load) reads the captions aloud; a voice that fails or is too slow costs the sound, never the video.
     """
     out_dir.mkdir(parents=True, exist_ok=True)
     outputs = [out_dir / f"{plan_.repo}_demo_{plan_.format}_{cut}.mp4" for cut in CUTS]

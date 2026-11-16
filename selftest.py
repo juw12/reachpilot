@@ -1547,6 +1547,14 @@ for label, refused_call in (
     except ValueError:
         refused = True
     check(refused, f"voiceover: speech {label}")
+late_lines = []
+try:
+    voiceover.read(read_lines, lambda text, speed=1.0: late_lines.append(text) or b"", until=voiceover.deadline() - voiceover.PATIENCE - 1)
+    gave_up = False
+except TimeoutError:
+    gave_up = True
+check(gave_up and not late_lines and voiceover.read(read_lines, fake_voice(), until=voiceover.deadline()) == read_clips,
+      "voiceover: a voice that is past its time limit stops before the next line, one within it reads as usual")
 
 with tempfile.TemporaryDirectory() as voice_dir:
     voice_dir = Path(voice_dir)
@@ -1604,6 +1612,9 @@ with tempfile.TemporaryDirectory() as voice_dir:
     try:
         check(reels.plain_narrator([reel_facts, star_facts], broken_voice)(voice_dir / "broken.wav") == 0.0,
               "reels: a voice that fails leaves the plain recording silent")
+        with mock.patch.object(voiceover, "PATIENCE", -1):
+            check(reels.plain_narrator([reel_facts], fake_voice())(voice_dir / "slow_plain.wav") == 0.0,
+                  "reels: a voice that is too slow leaves the plain recording silent")
 
         # record(): the voice is only ever an addition; when it fails the video is made without it
         def recorded_with(say):
@@ -1622,6 +1633,11 @@ with tempfile.TemporaryDirectory() as voice_dir:
         check(renderer.call_count == 2 and all(call[0][7] is None for call in renderer.call_args_list)
               and record_plan.lengths == [] and record_plan.seconds == reels.SECONDS,
               "reels: when the voice fails the video is still made, silent and on its usual timeline")
+        with mock.patch.object(voiceover, "PATIENCE", -1):
+            record_plan, renderer, _ = recorded_with(fake_voice())
+        check(renderer.call_count == 2 and all(call[0][7] is None for call in renderer.call_args_list)
+              and record_plan.lengths == [] and record_plan.seconds == reels.SECONDS,
+              "reels: when the voice is too slow the video is still made, silent and on its usual timeline")
         record_plan, renderer, _ = recorded_with(None)
         check(all(call[0][7] is None for call in renderer.call_args_list) and record_plan.seconds == reels.SECONDS,
               "reels: without a voice nothing about the video changes")
@@ -3115,6 +3131,10 @@ else:
 auto_main = auto_source.decode("utf-8").split('if __name__ == "__main__":')[1]
 check(auto_main.index("leave_low_priority()") < auto_main.index("run(force="),
       "launch auto: the hourly run fixes its priority before it starts working")
+tick_main = (Path(__file__).parent / "autopilot.py").read_text(encoding="utf-8").split("def main() -> None:")[1]
+check(tick_main.index('if args.command == "tick":\n        if LOCK_PATH') < tick_main.index("launch_auto.leave_low_priority()")
+      < tick_main.index("tick(config, db)"),
+      "autopilot: the scheduled post run fixes its priority before it makes a video, a preview by hand does not")
 
 print("\nALL PASSED" if not failures else f"\n{len(failures)} FAILED")
 sys.exit(1 if failures else 0)

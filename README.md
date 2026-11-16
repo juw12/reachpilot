@@ -102,7 +102,10 @@ no cost, and nothing leaves the machine.
   15 seconds: its lines are read a little faster when they have to be, never faster than 1.3x.
 - **The end card says "AI voice-over"** in small print, so nobody takes the voice for a person.
 - **It never blocks a post.** When the voice is not installed, is switched off, or fails on a video, that
-  video is made silent, exactly as before, and the log says why.
+  video is made silent, exactly as before, and the log says why. The same goes for a voice that is too
+  slow: on a busy PC it gets four minutes for a video, then the video goes out silent rather than late.
+  The scheduled run also puts itself at normal priority (Task Scheduler starts it lower), so that on a busy
+  PC the voice takes about a minute and a half instead of twenty.
 
 The voice is optional and not part of `requirements.txt`. To switch it on:
 

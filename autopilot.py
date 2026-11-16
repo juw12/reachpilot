@@ -1061,6 +1061,11 @@ def main() -> None:
         if LOCK_PATH.exists() and time.time() - LOCK_PATH.stat().st_mtime < 1800:
             return
         LOCK_PATH.write_text(str(os.getpid()))
+        # Task Scheduler starts the run below normal priority. On a busy PC that made the voice of one video take
+        # 20 minutes instead of 90 seconds, which is the whole time the task is given (16 Nov 2026).
+        import launch_auto
+
+        launch_auto.leave_low_priority()
     db = connect_db()
     try:
         if args.command == "init":
