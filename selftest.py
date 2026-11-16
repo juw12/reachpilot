@@ -2458,10 +2458,107 @@ check(desk_points(patent_desk.readiness(None)) == 0 and desk_points(patent_desk.
       "patent desk: no dossier scores 0 and every open check says what to do")
 check(desk_points(patent_desk.readiness(patent_desk.skeleton({"name": "x"}), {"state": "success"})) == 10,
       "patent desk: an empty dossier with green CI scores 10, tests only")
-check(desk_found(patent_desk.readiness({"tests_evidence": "pytest, 2026-11-10, 41 passed"}, {"state": "failure"}), "tests")["ok"]
-      and not desk_found(patent_desk.readiness({}, {"state": "failure"}), "tests")["ok"]
-      and not desk_found(patent_desk.readiness({}, {"state": "none"}), "tests")["ok"],
-      "patent desk: tests count with green CI or a recorded local run, not with red CI or none")
+local_evidence = {"command": "python -m pytest", "date": "2026-11-10", "passed": 41, "failed": 0}
+
+
+def desk_tests(evidence, state):
+    ci = {"state": state} if state else {}
+    return desk_found(patent_desk.readiness({"tests_evidence": evidence}, ci, None, patent_today), "tests")
+
+
+check(desk_tests(local_evidence, "none")["ok"]
+      and desk_tests(local_evidence, "none")["found"]
+      == "no test runs on GitHub; local run on 2026-11-10: 41 passed, 0 failed (python -m pytest)"
+      and desk_tests(None, "success")["ok"] and desk_tests(None, "success")["found"] == "last CI run passed",
+      "patent desk: tests count with a green CI run, or with a recorded local run when GitHub has no test runs")
+check(not desk_tests(local_evidence, "failure")["ok"] and "does not count while CI fails" in desk_tests(local_evidence, "failure")["found"]
+      and not desk_tests(local_evidence, None)["ok"] and "once GitHub has answered" in desk_tests(local_evidence, None)["found"]
+      and not desk_tests(local_evidence, "something else")["ok"]
+      and not desk_tests(None, "failure")["ok"] and not desk_tests(None, "none")["ok"],
+      "patent desk: a local run never outweighs a failed CI run and does not count while the CI state is unknown")
+check(not desk_tests("pytest, 2026-11-10, 41 passed", "none")["ok"]
+      and "a sentence, not a run" in desk_tests("pytest, 2026-11-10, 41 passed", "none")["found"]
+      and not desk_tests("pytest, 2026-11-10, 41 passed", "failure")["ok"],
+      "patent desk: a sentence about the tests is not a test run")
+check(all(not desk_tests({**local_evidence, **change}, "none")["ok"] for change in (
+    {"failed": 1}, {"passed": 0}, {"command": ""}, {"date": ""}, {"date": "2026-11-15"}, {"date": "soon"}, {"date": 20261110},
+    {"passed": "41"}, {"passed": True}, {"failed": None}, {"failed": False}))
+      and "incomplete or has failures" in desk_tests({**local_evidence, "failed": 1}, "none")["found"]
+      and desk_tests({**local_evidence, "date": "2026-11-14"}, "none")["ok"]
+      and patent_desk.local_run(local_evidence, patent_today) == local_evidence
+      and patent_desk.local_run(["damaged"], patent_today) is None
+      and patent_desk.skeleton({"name": "x"})["tests_evidence"] == {"command": "", "date": "", "passed": 0, "failed": 0}
+      and desk_tests(patent_desk.skeleton({"name": "x"})["tests_evidence"], "none")["found"] == "no test runs on GitHub",
+      "patent desk: a local run needs a command, a date that is not in the future, at least one pass and no failure")
+
+
+def workflow_run(name, path, conclusion, created, event="push", branch="main", workflow_id=None):
+    return {"name": name, "path": path, "conclusion": conclusion, "created_at": created, "event": event,
+            "head_branch": branch, "workflow_id": workflow_id or path, "html_url": f"https://example.test/{created}"}
+
+
+ci_run = workflow_run("CI", ".github/workflows/ci.yml", "success", "2026-11-10T08:00:00Z")
+pages_run = workflow_run("pages-build-deployment", "dynamic/pages/pages-build-deployment", "success", "2026-11-13T08:00:00Z")
+deploy_run = workflow_run("Deploy site", ".github/workflows/pages.yml", "success", "2026-11-13T09:00:00Z")
+check(patent_desk.summarise_runs([pages_run, deploy_run], "main") == {"state": "none"}
+      and patent_desk.summarise_runs([pages_run, deploy_run, ci_run], "main")
+      == {"state": "success", "url": "https://example.test/2026-11-10T08:00:00Z", "workflows": ["CI"]},
+      "patent desk: a Pages build or a deploy is not a test run; the check names the workflows it counted")
+failed_ci = workflow_run("CI", ".github/workflows/ci.yml", "failure", "2026-11-12T08:00:00Z")
+lint_run = workflow_run("Lint", ".github/workflows/lint.yml", "success", "2026-11-13T10:00:00Z")
+check(patent_desk.summarise_runs([deploy_run, lint_run, failed_ci, ci_run], "main")
+      == {"state": "failure", "url": "https://example.test/2026-11-12T08:00:00Z", "workflows": ["CI", "Lint"]}
+      and patent_desk.summarise_runs([ci_run, failed_ci], "main")["state"] == "failure"
+      and patent_desk.summarise_runs([failed_ci, workflow_run("CI", ".github/workflows/ci.yml", "success", "2026-11-13T08:00:00Z")],
+                                     "main")["state"] == "success",
+      "patent desk: the newest run of each workflow counts, and a newer deploy or lint success does not hide a failed test run")
+check(patent_desk.summarise_runs([ci_run, workflow_run("CI", ".github/workflows/ci.yml", "skipped", "2026-11-13T08:00:00Z"),
+                                  workflow_run("CI", ".github/workflows/ci.yml", "cancelled", "2026-11-13T09:00:00Z")],
+                                 "main")["state"] == "success"
+      and patent_desk.summarise_runs([workflow_run("CI", ".github/workflows/ci.yml", "skipped", "2026-11-13T08:00:00Z")], "main")
+      == {"state": "none"}
+      and patent_desk.summarise_runs([workflow_run("Bench", ".github/workflows/bench.yml", "success", "2026-11-13T08:00:00Z",
+                                                   event="workflow_dispatch")], "main") == {"state": "none"}
+      and patent_desk.summarise_runs([workflow_run("CI", ".github/workflows/ci.yml", "success", "2026-11-13T08:00:00Z",
+                                                   branch="agent/try")], "main") == {"state": "none"}
+      and patent_desk.summarise_runs([workflow_run("Nightly tests", ".github/workflows/nightly.yml", "failure",
+                                                   "2026-11-13T08:00:00Z", event="schedule")], "main")["state"] == "failure"
+      and patent_desk.summarise_runs([workflow_run("Release checks", ".github/workflows/release.yml", "failure",
+                                                   "2026-11-13T08:00:00Z")], "main")["state"] == "failure",
+      "patent desk: skipped, cancelled, manual and other-branch runs are not counted; a scheduled test run and a release check are")
+check(all(patent_desk.summarise_runs(damaged, "main") == {"state": "none"} for damaged in (None, [], "damaged", [None, "x", 3], [{}], {}))
+      and desk_tests(None, "success")["ok"]
+      and desk_found(patent_desk.readiness({}, {"state": "success", "workflows": ["CI", "Lint"]}), "tests")["found"]
+      == "last CI run passed (CI, Lint)",
+      "patent desk: empty or damaged run lists give no test runs; the tests check says which workflows it counted")
+
+
+def results_heading(effects):
+    blocks = patent_desk.specification("x", {"effects": effects}, True)
+    position = next(index for index, block in enumerate(blocks) if block[0] == "h2" and block[1].endswith("esults"))
+    return blocks[position][1], blocks[position + 1][1]
+
+
+sourced = {"result": "Holds 0.42 N m.", "source": "bench/torque.csv"}
+check(results_heading([{**sourced, "kind": "measured"}]) == ("Measured results", ["Holds 0.42 N m. (source: bench/torque.csv)"])
+      and results_heading([{**sourced, "kind": "Simulated"}, {"result": "Detects 9 of 10.", "kind": "simulated"}])[0] == "Simulated results"
+      and results_heading([{**sourced, "kind": "computed"}])[0] == "Computed results",
+      "patent desk: the specification says measured, simulated or computed only when every result says so and they agree")
+check(results_heading([{**sourced, "kind": "measured"}, {**sourced, "kind": "simulated"}])
+      == ("Results", ["Measured: Holds 0.42 N m. (source: bench/torque.csv)", "Simulated: Holds 0.42 N m. (source: bench/torque.csv)"])
+      and results_heading([sourced]) == ("Results", ["Holds 0.42 N m. (source: bench/torque.csv)"])
+      and results_heading([{**sourced, "kind": "measured"}, sourced])
+      == ("Results", ["Measured: Holds 0.42 N m. (source: bench/torque.csv)", "Holds 0.42 N m. (source: bench/torque.csv)"])
+      and results_heading([{**sourced, "kind": "guessed"}])[0] == "Results"
+      and "Measured results" not in json.dumps(patent_desk.specification("x", full_dossier, True)),
+      "patent desk: results that are mixed, unlabelled or labelled with something else are headed Results, never Measured")
+check(desk_found(patent_desk.readiness({"effects": [{**sourced, "kind": "measured"}, sourced, {"result": "Feels smoother."}]}),
+                 "effect")["found"] == "2 with a source, 1 without (1 measured, 1 not labelled)"
+      and desk_found(patent_desk.readiness({"effects": [{**sourced, "kind": "simulated"}, {**sourced, "kind": "computed"}]}),
+                     "effect")["found"] == "2 with a source (1 simulated, 1 computed)"
+      and desk_found(patent_desk.readiness({"effects": [sourced]}), "effect")["found"] == "1 with a source"
+      and desk_found(patent_desk.readiness({}), "effect")["label"] == "Result with a source",
+      "patent desk: the result check counts how each sourced result was obtained when the dossier says")
 check(not desk_found(patent_desk.readiness({"problem": "x" * 119}), "problem")["ok"]
       and desk_found(patent_desk.readiness({"problem": "x" * 120}), "problem")["ok"]
       and not desk_found(patent_desk.readiness({"mechanism": ["a", "b", "c", ""]}), "mechanism")["ok"]
@@ -2498,7 +2595,7 @@ check(desk["total"] == 6 and desk["counts"] == {"filed": 1, "closed": 0, "owners
 check(on_desk["hinge-lab"]["deadline"] is None and on_desk["hinge-lab"]["package"] == {"built": "2026-11-13", "pdf": True, "draft": False}
       and on_desk["pocket-rig"]["package"] is None and on_desk["pocket-rig"]["ci"] == "failure" and on_desk["leaky"]["ci"] == "unknown",
       "patent desk: a private project has no date; package and CI state come from the last run")
-check(on_desk["pocket-rig"]["next_step"].startswith("Add one measured result")
+check(on_desk["pocket-rig"]["next_step"].startswith("Add one result and name the file or command")
       and on_desk["pocket-rig"]["deadline"] == {"label": "12-month date of the public repository", "date": "2026-12-09", "days_left": 25}
       and (on_desk["pocket-rig"]["passed"], on_desk["pocket-rig"]["total"]) == (2, 8),
       "patent desk: a half-written dossier names its first gap and keeps the public repository's date")
@@ -2568,7 +2665,7 @@ check([(item["priority"], item["title"]) for item in desk_items] == [
 ], f"hub patent desk: to-dos ({[(item['priority'], item['title']) for item in desk_items]})")
 check(desk_items[0]["action"] == "patents:open:hinge-lab" and desk_items[0]["action_label"] == "Open the folder"
       and "files nothing" in desk_items[0]["detail"] and desk_items[1]["action"] is None
-      and "pocket-rig (25/100): Add one measured result" in desk_items[3]["detail"]
+      and "pocket-rig (25/100): Add one result and name the file or command" in desk_items[3]["detail"]
       and all(item["module"] == "Patents" for item in desk_items)
       and hub.patents_todo(desk_card)[-4:] == desk_items,
       "hub patent desk: the ready to-do opens the folder; the gaps to-do names each project's next step")

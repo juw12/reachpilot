@@ -5,8 +5,9 @@ The patent screen (patents.py) says which projects may hold patent material. The
 one every day:
 
     dossier     data/patents/dossiers/NAME/dossier.json: the invention written down (problem, mechanism,
-                measured effect, example, figures, claims, closest prior art). A person or an agent fills it.
-    readiness   eight checks over the dossier and the repository's last CI run, 100 points in total
+                a result with its source, example, figures, claims, closest prior art). A person or an agent
+                fills it.
+    readiness   eight checks over the dossier and the repository's test runs on GitHub, 100 points in total
     package     once the dossier has content: a draft US provisional specification (Markdown, HTML and PDF),
                 the cover sheet fields (form PTO/SB/16), a filing checklist and notes for the attorney
     dates       before filing: the 12-month date of a public repository; after filing: the 12 months to file
@@ -54,6 +55,12 @@ STAGES = {
 }
 STAGE_ORDER = ("ready", "filed", "strengthen", "disclosure", "ownership", "closed")
 DEPENDENT = re.compile(r"\b(?:of|to|in) (?:any (?:one )?of )?claims? \d", re.I)
+KINDS = ("measured", "simulated", "computed")  # how a result was obtained; the specification says which
+# A workflow run counts as a test run when a push or a schedule started it on the default branch and the
+# workflow does not only ship something. A Pages build that went through says nothing about the tests.
+TEST_EVENTS = {"push", "schedule"}
+SHIPS = re.compile(r"pages|deploy|publish|release", re.I)
+TESTS = re.compile(r"tests?\b|\bci\b|check|verify|lint", re.I)
 NOTE = (
     "Drafts and a checklist, not legal advice. ReachPilot files nothing: a filing needs your identity check at "
     "the patent office, your name as inventor and your payment. Have an attorney read a draft before it is filed. "
@@ -112,7 +119,7 @@ def skeleton(row: dict) -> dict:
         "variants": [],
         "effects": [],
         "example": {"steps": [], "output": ""},
-        "tests_evidence": "",
+        "tests_evidence": {"command": "", "date": "", "passed": 0, "failed": 0},
         "figures": [],
         "claims": [],
         "prior_art": [],
@@ -132,8 +139,8 @@ Rules
 
 - Keep this folder private. Do not copy any of it into a repository, an issue, a post or a chat with a
   cloud model you do not control. A draft that becomes public is a disclosure.
-- Write only what the repository really does. No invented numbers: every measured result names the file or
-  the command that reproduces it.
+- Write only what the repository really does. No invented numbers: every result names the file or the
+  command that reproduces it, and says whether it was measured, simulated or computed.
 - Describe the mechanism, not the product. What does it do, step by step, that a skilled person would not
   already do?
 
@@ -145,9 +152,15 @@ Fields
 - `mechanism`: a list of steps, at least 4, concrete enough that someone could rebuild it.
 - `variants`: other ways to build the same idea (other data, thresholds, orderings). A provisional
   application only protects what it describes, so list them.
-- `effects`: a list of `{"result": "...", "source": "path or command"}`. At least one.
+- `effects`: a list of `{"result": "...", "source": "path or command", "kind": "measured"}`. At least one.
+  `kind` is `measured` (a bench, a benchmark run, real data), `simulated` (a model of the thing) or
+  `computed` (worked out from a formula or a solver). The specification says which; a simulation is never
+  printed as a measurement.
 - `example`: `{"steps": ["..."], "output": "..."}`: one worked run.
-- `tests_evidence`: only if the repository has no CI: the command, the date and the result of a local run.
+- `tests_evidence`: only if the repository has no test workflow on GitHub:
+  `{"command": "python -m pytest", "date": "2026-11-01", "passed": 42, "failed": 0}` from a real local run.
+  It counts only while GitHub reports no test runs; it never outweighs a failed run, and a sentence in
+  place of the four fields does not count.
 - `figures`: a list of `{"title": "...", "file": "fig1.svg"}`; the files sit in this folder.
 - `claims`: a list of strings. One independent claim and at least three dependent ones
   ("The method of claim 1, wherein ..."). A provisional application does not need claims, but drafting
@@ -180,7 +193,53 @@ def split_claims(claims) -> tuple[list[str], list[str]]:
     return [text for text in texts if text not in dependent], dependent
 
 
-def readiness(dossier: dict | None, ci: dict | None = None, figure_exists=None) -> list[dict]:
+def effect_kind(effect) -> str:
+    """measured, simulated or computed; empty when the dossier does not say."""
+    kind = _text(effect.get("kind")).lower() if isinstance(effect, dict) else ""
+    return kind if kind in KINDS else ""
+
+
+def local_run(value, today: date | None = None) -> dict | None:
+    """A recorded local test run that can count: a command, a date that is not in the future, at least one test
+    passed and none failed. A sentence, a missing field or a failure is None."""
+    if not isinstance(value, dict):
+        return None
+    command = _text(value.get("command"))
+    day = _day(value.get("date")) if isinstance(value.get("date"), str) else None
+    passed, failed = value.get("passed"), value.get("failed")
+    if not command or day is None or day > (today or date.today()):
+        return None
+    if type(passed) is not int or type(failed) is not int or passed < 1 or failed != 0:
+        return None
+    return {"command": command, "date": day.isoformat(), "passed": passed, "failed": failed}
+
+
+def tests_pass(ci: dict, evidence, today: date | None = None) -> tuple[bool, str]:
+    """Whether the tests count as passing, and what was found. Green test runs on GitHub count. A local run
+    counts only when GitHub answered that the repository has no test runs: it never outweighs a failed run,
+    and it does not count while the state is unknown."""
+    state = ci.get("state") if ci.get("state") in ("success", "failure", "none") else "unknown"
+    names = ", ".join(_text(name) for name in _items(ci.get("workflows")) if _text(name))
+    counted = f" ({names})" if names else ""
+    run = local_run(evidence, today)
+    written = bool(_text(evidence)) or (isinstance(evidence, dict) and any(evidence.values()))
+    if state == "success":
+        return True, f"last CI run passed{counted}"
+    if state == "failure":
+        return False, f"last CI run failed{counted}" + ("; a local run does not count while CI fails" if written else "")
+    if state == "unknown":
+        return False, "CI state not read yet" + ("; a local run counts once GitHub has answered" if written else "")
+    if run:
+        return True, (f"no test runs on GitHub; local run on {run['date']}: {run['passed']} passed, "
+                      f"{run['failed']} failed ({run['command'][:80]})")
+    if isinstance(evidence, dict) and written:
+        return False, "no test runs on GitHub; the local run under tests_evidence is incomplete or has failures"
+    if written:
+        return False, "no test runs on GitHub; tests_evidence is a sentence, not a run (command, date, passed, failed)"
+    return False, "no test runs on GitHub"
+
+
+def readiness(dossier: dict | None, ci: dict | None = None, figure_exists=None, today: date | None = None) -> list[dict]:
     """The eight checks. Each one: key, label, points, ok, what was found, and what to do when it fails."""
     dossier = dossier if isinstance(dossier, dict) else {}
     ci = ci if isinstance(ci, dict) else {}
@@ -193,15 +252,16 @@ def readiness(dossier: dict | None, ci: dict | None = None, figure_exists=None) 
     example = dossier.get("example")
     has_example = bool(_text(example)) or (isinstance(example, dict) and bool(
         _items(example.get("steps")) or _text(example.get("command"))))
-    evidence = _text(dossier.get("tests_evidence"))
+    labelled = [effect_kind(effect) for effect in effects]
+    kinds = [f"{labelled.count(kind)} {kind}" for kind in KINDS if kind in labelled]
+    if kinds and "" in labelled:
+        kinds.append(f"{labelled.count('')} not labelled")
+    tests_ok, tests_found = tests_pass(ci, dossier.get("tests_evidence"), today)
     figures = [figure for figure in _items(dossier.get("figures")) if isinstance(figure, dict) and _text(figure.get("file"))]
     present = [figure for figure in figures if figure_exists(_text(figure["file"]))]
     independent, dependent = split_claims(dossier.get("claims"))
     prior = [entry for entry in _items(dossier.get("prior_art"))
              if isinstance(entry, dict) and _text(entry.get("reference")) and _text(entry.get("difference"))]
-    ci_state = ci.get("state") or "unknown"
-    ci_words = {"success": "last CI run passed", "failure": "last CI run failed", "none": "no CI runs",
-                "unknown": "CI state not read yet"}.get(ci_state, "CI state not read yet")
 
     def check(key, label, points, ok, found, fix):
         return {"key": key, "label": label, "points": points, "ok": bool(ok), "found": found, "fix": fix}
@@ -211,14 +271,16 @@ def readiness(dossier: dict | None, ci: dict | None = None, figure_exists=None) 
               "Write the problem in the dossier: what fails today and for whom, in at least 120 characters."),
         check("mechanism", "Mechanism in steps", 15, len(steps) >= 4, f"{len(steps)} step(s)",
               "List the mechanism as at least 4 steps, concrete enough that someone could rebuild it."),
-        check("effect", "Measured effect with a source", 15, len(effects) >= 1,
-              f"{len(effects)} with a source" + (f", {unsourced} without" if unsourced else ""),
-              "Add one measured result and name the file or command in the repository that reproduces it."),
+        check("effect", "Result with a source", 15, len(effects) >= 1,
+              f"{len(effects)} with a source" + (f", {unsourced} without" if unsourced else "")
+              + (f" ({', '.join(kinds)})" if kinds else ""),
+              "Add one result and name the file or command in the repository that reproduces it. "
+              "Say whether it was measured, simulated or computed."),
         check("example", "Worked example", 10, has_example, "present" if has_example else "missing",
               "Add one worked example: the steps or the command, and what comes out."),
-        check("tests", "Tests pass", 10, ci_state == "success" or bool(evidence),
-              ci_words + (", local test run recorded" if evidence else ""),
-              "Get the repository's CI run green, or record a local test run (command, date, result) under tests_evidence."),
+        check("tests", "Tests pass", 10, tests_ok, tests_found,
+              "Get the repository's CI run green. If it has no test workflow on GitHub, record a real local run "
+              "under tests_evidence: command, date, passed, failed."),
         check("figures", "At least one figure", 10, len(present) >= 1,
               f"{len(present)} of {len(figures)} listed file(s) found",
               "Put a flow chart or block diagram in the dossier folder and list it under figures."),
@@ -253,7 +315,7 @@ def _filing(note: dict) -> dict | None:
 
 
 def project(row: dict, note: dict, dossier: dict | None, fact: dict, today: date, figure_exists=None) -> dict:
-    checks = readiness(dossier, fact.get("ci"), figure_exists)
+    checks = readiness(dossier, fact.get("ci"), figure_exists, today)
     score = sum(check["points"] for check in checks if check["ok"])
     failing = [check for check in checks if not check["ok"]]
     when = row["window"]
@@ -278,7 +340,7 @@ def project(row: dict, note: dict, dossier: dict | None, fact: dict, today: date
                      "Nothing is drafted until you mark it as yours.")
     elif is_empty(dossier):
         stage = "disclosure"
-        next_step = "Write the invention down in the dossier: problem, mechanism in steps, one measured result. BRIEF.md in the folder says how."
+        next_step = "Write the invention down in the dossier: problem, mechanism in steps, one result with its source. BRIEF.md in the folder says how."
     elif failing:
         stage = "strengthen"
         next_step = failing[0]["fix"]
@@ -388,8 +450,13 @@ def specification(name: str, dossier: dict, ready: bool) -> list[tuple]:
             blocks.append(("pre", output))
     effects = [effect for effect in _items(dossier.get("effects")) if isinstance(effect, dict) and _text(effect.get("result"))]
     if effects:
-        blocks.append(("h2", "Measured results"))
-        blocks.append(("ul", [_text(effect["result"]) + (f" (source: {_text(effect.get('source'))})" if _text(effect.get("source")) else "")
+        # The heading names how the results were obtained only when every one says so and they agree.
+        found = {effect_kind(effect) for effect in effects}
+        same = len(found) == 1 and "" not in found
+        blocks.append(("h2", f"{found.pop().capitalize()} results" if same else "Results"))
+        blocks.append(("ul", [(f"{effect_kind(effect).capitalize()}: " if effect_kind(effect) and not same else "")
+                              + _text(effect["result"])
+                              + (f" (source: {_text(effect.get('source'))})" if _text(effect.get("source")) else "")
                               for effect in effects]))
     claims = [_text(claim) for claim in _items(dossier.get("claims")) if _text(claim)]
     if claims:
@@ -570,19 +637,49 @@ def _fingerprint(dossier: dict, item: dict) -> str:
 
 # ------------------------------------------------------------------ the daily run
 
+def summarise_runs(runs, branch: str = "") -> dict:
+    """What the completed workflow runs say about the tests. Counts the newest run of each workflow that a push
+    or a schedule started on the given branch, and leaves out GitHub's own workflows (path dynamic/...) and
+    workflows that only ship something (Pages, deploy, publish, release). One failed workflow makes it a failure;
+    nothing left to count is "none"."""
+    newest = {}
+    ordered = sorted((run for run in runs if isinstance(run, dict)) if isinstance(runs, list) else [],
+                     key=lambda run: str(run.get("created_at") or ""), reverse=True)
+    for run in ordered:
+        path = str(run.get("path") or "")
+        name = _text(run.get("name")) or Path(path).stem
+        label = f"{Path(path).stem} {name}"
+        if path.startswith("dynamic/") or (SHIPS.search(label) and not TESTS.search(label)):
+            continue
+        if run.get("event") not in TEST_EVENTS or (branch and run.get("head_branch") != branch):
+            continue
+        if run.get("conclusion") in (None, "", "skipped", "cancelled", "neutral"):
+            continue
+        newest.setdefault(run.get("workflow_id") or path or name, {
+            "name": name, "ok": run.get("conclusion") == "success", "url": str(run.get("html_url") or "")})
+    if not newest:
+        return {"state": "none"}
+    counted = list(newest.values())
+    failed = [run for run in counted if not run["ok"]]
+    return {"state": "failure" if failed else "success", "url": (failed or counted)[0]["url"],
+            "workflows": sorted(run["name"] for run in counted)[:6]}
+
+
 def ci_state(full_name: str) -> dict | None:
-    """The conclusion of the repository's last completed GitHub Actions run. None when GitHub did not answer."""
+    """The state of the repository's test runs on its default branch. None when GitHub did not answer."""
+    from urllib.parse import quote
+
     import github_source as gh
 
-    reply = gh.gh_api(f"repos/{full_name}/actions/runs?per_page=1&status=completed")
+    repository = gh.gh_api(f"repos/{full_name}")
+    branch = repository.get("default_branch") if isinstance(repository, dict) else None
+    if not isinstance(branch, str) or not branch:
+        return None
+    reply = gh.gh_api(f"repos/{full_name}/actions/runs?branch={quote(branch, safe='')}&status=completed"
+                      "&per_page=100&exclude_pull_requests=true")
     if not isinstance(reply, dict) or not isinstance(reply.get("workflow_runs"), list):
         return None
-    runs = reply["workflow_runs"]
-    if not runs:
-        return {"state": "none", "checked": date.today().isoformat()}
-    run = runs[0] if isinstance(runs[0], dict) else {}
-    return {"state": "success" if run.get("conclusion") == "success" else "failure",
-            "url": str(run.get("html_url") or ""), "checked": date.today().isoformat()}
+    return {**summarise_runs(reply["workflow_runs"], branch), "branch": branch, "checked": date.today().isoformat()}
 
 
 def load_inputs() -> dict:
