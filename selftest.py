@@ -2536,6 +2536,59 @@ try:
     check("may not have gone out" in broken_tap and "never sent twice" in launch_auto.action("launch:followup:demo", auto_at("2026-11-24T10:07"))
           and len(auto_sent()) == 1, "launch auto reply: an unclear send is not retried (no double mail)")
 
+    # Two runs at once (the hourly task and a run by hand): the second one does nothing, the next one works again
+    auto_fresh()
+    auto_world["version"] = 3
+    with launch_auto._only_one("run") as first_holder:
+        second_run = launch_auto.run(now=auto_at("2026-11-16T09:00"))
+        check(first_holder and second_run == "another run is still working; nothing done" and auto_posts == []
+              and not (auto_home / "data" / "demo" / "state.json").exists(),
+              "launch auto lock: a second run at the same time reads, sends and writes nothing")
+    after_release = launch_auto.run(now=auto_at("2026-11-16T09:00"))
+    check("another run" not in after_release and [payload.get("action") for payload in auto_posts] == ["check_reply"]
+          and auto_sent() == [], "launch auto lock: the lock is released, the next run works and only reads")
+
+    # A tap that lands while the slow proposal check is still running is not undone by that run
+    auto_fresh()
+
+
+    def auto_sync_with_tap(url, folder):
+        launch_auto.action("launch:replied:demo", auto_at("2026-11-17T09:01"))
+        return auto_sync(url, folder)
+
+
+    launch_auto._sync_repo = auto_sync_with_tap
+    try:
+        launch_auto.run(now=auto_at("2026-11-17T09:00"))
+    finally:
+        launch_auto._sync_repo = auto_sync
+    kept = launch_auto.load_state("demo")
+    check(kept["reply"].get("status") == "replied" and kept["reply"].get("by_hand") is True
+          and kept["proposal"].get("commit") == "abc1234" and kept.get("last_run"),
+          "launch auto lock: 'an answer came' tapped during a slow check survives, and the check result is kept too")
+
+    # A run that still holds old state cannot send the follow-up a second time: the marker on disk decides
+    auto_fresh()
+    stale = launch_auto.load_state("demo")
+    tapped = launch_auto.action("launch:followup:demo", auto_at("2026-11-24T10:05"))
+    late = launch_auto._send_followup("demo", auto_settings["reply"], auto_settings["mail"], stale,
+                                      auto_at("2026-11-24T10:06"), only_if_no_answer=False)
+    check(tapped == "Follow-up sent to help@office.test." and "never sent twice" in late and len(auto_sent()) == 1,
+          "launch auto lock: a second sender with old state sends nothing (one follow-up, ever)")
+
+    # Two senders at the very same moment: the one that does not get the lock sends nothing
+    auto_fresh()
+    auto_wait = launch_auto.FOLLOWUP_WAIT_SECONDS
+    launch_auto.FOLLOWUP_WAIT_SECONDS = 0
+    try:
+        with launch_auto._only_one("followup"):
+            blocked = launch_auto.action("launch:followup:demo", auto_at("2026-11-24T10:05"))
+    finally:
+        launch_auto.FOLLOWUP_WAIT_SECONDS = auto_wait
+    check("nothing sent from here" in blocked and auto_sent() == []
+          and not (launch_auto.load_state("demo").get("reply") or {}).get("followup_attempt_at"),
+          "launch auto lock: while another sender works, this one sends nothing and leaves no false marker")
+
     # A relay that reads the inbox (version 3): it looks every run and follows up once, by itself
     auto_fresh()
     auto_world["version"] = 3

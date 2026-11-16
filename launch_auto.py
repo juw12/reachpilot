@@ -33,6 +33,7 @@ import subprocess
 import sys
 import time
 import urllib.parse
+from contextlib import contextmanager
 from datetime import date, datetime
 from pathlib import Path
 
@@ -48,6 +49,7 @@ READS_INBOX = 3  # first relay version that can look for an answer and send an "
 SETTLED = ("replied", "bounced", "closed")  # nothing more is read or sent for a mail in one of these states
 OFFICE_HOURS = (8, 17)  # a follow-up to an organisation goes out on a weekday inside these local hours
 SEND_PAUSE_SECONDS = 4  # between two invitations
+FOLLOWUP_WAIT_SECONDS = 90  # how long a second sender waits for the first before it gives up
 LINK_LIMIT = 40
 LINK_STRIKES = 2  # a link is reported after this many failed days in a row, not on one slow answer
 SCORE_DROP = 0.5  # judge noise is about 0.3, so only a larger fall is reported
@@ -128,12 +130,47 @@ def load_state(test_id: str) -> dict:
     return state if isinstance(state, dict) else {}
 
 
-def save_state(test_id: str, state: dict) -> None:
+def save_state(test_id: str, state: dict, only: str | None = None) -> None:
+    """Write the state. With only="reply" just that part is replaced, so a slow job cannot undo what a tap
+    in the dashboard wrote in the meantime."""
+    if only is not None:
+        part = state.get(only)
+        state = load_state(test_id)
+        if part is not None:
+            state[only] = part
     folder = test_dir(test_id)
     folder.mkdir(parents=True, exist_ok=True)
     draft = folder / "state.json.tmp"
     draft.write_text(json.dumps(state, indent=1, ensure_ascii=False), encoding="utf-8")
     draft.replace(folder / "state.json")
+
+
+@contextmanager
+def _only_one(name: str, wait: float = 0.0):
+    """True for the one holder of this lock on this PC, False for everyone else. The lock ends with its process,
+    so a crashed run can never block the next one."""
+    import msvcrt
+
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    handle = open(DATA_DIR / f"{name}.lock", "a+b")
+    deadline = time.monotonic() + wait
+    held = False
+    try:
+        while not held:
+            try:
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                held = True
+            except OSError:
+                if time.monotonic() >= deadline:
+                    break
+                time.sleep(0.2)
+        yield held
+    finally:
+        if held:
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        handle.close()
 
 
 def _open(path: Path) -> None:
@@ -228,9 +265,16 @@ def _send_followup(test_id: str, cfg: dict, mail: dict, state: dict, now: dateti
         }
     if only_if_no_answer:
         payload.update({"action": "followup", "from": cfg["to"], "since": str(cfg.get("sent_at") or "")[:10]})
-    reply["followup_attempt_at"] = _stamp(now)
-    save_state(test_id, state)
-    answer = _relay_post(mail, payload)
+    with _only_one("followup", wait=FOLLOWUP_WAIT_SECONDS) as mine:  # a tap and the hourly run may arrive together
+        if not mine:
+            return "Another run is sending the follow-up right now; nothing sent from here."
+        on_disk = (load_state(test_id).get("reply") or {}).get("followup_attempt_at")
+        if on_disk:
+            reply["followup_attempt_at"] = on_disk
+            return "The follow-up was already sent or tried; it is never sent twice."
+        reply["followup_attempt_at"] = _stamp(now)
+        save_state(test_id, state, only="reply")
+        answer = _relay_post(mail, payload)
     if answer.get("ok") and answer.get("status") == "replied":
         reply.pop("followup_attempt_at", None)
         _keep_answer(test_id, reply, answer, now)
@@ -245,7 +289,7 @@ def _send_followup(test_id: str, cfg: dict, mail: dict, state: dict, now: dateti
     else:
         reply["followup_error"] = str(answer.get("error") or "no answer from the relay")[:200]
         outcome = f"The follow-up may not have gone out ({reply['followup_error']}). It is not tried again: check the Sent folder."
-    save_state(test_id, state)
+    save_state(test_id, state, only="reply")
     log(f"{test_id} follow-up: {outcome}")
     return outcome
 
@@ -482,12 +526,12 @@ def step_invites(test_id: str, cfg: dict, mail: dict, state: dict, now: datetime
         if len(sent) >= found["target"]:
             break
         sent[address] = {"at": _stamp(now), "ok": None}
-        save_state(test_id, state)
+        save_state(test_id, state, only="invites")
         answer = _relay_post(mail, {**_mail(mail, subject, _personal(message, person["name"])), "to": address})
         sent[address]["ok"] = bool(answer.get("ok"))
         if not answer.get("ok"):
             sent[address]["error"] = str(answer.get("error") or "no answer")[:160]
-        save_state(test_id, state)
+        save_state(test_id, state, only="invites")
         count += 1
         time.sleep(SEND_PAUSE_SECONDS)
     if count:
@@ -734,10 +778,17 @@ def rows(test_id: str, now: datetime | None = None) -> list[dict]:
 
 
 def run(force: bool = False, now: datetime | None = None) -> str:
-    now = now or now_local()
+    """One pass over every configured test. Only one pass works at a time on this PC."""
+    with _only_one("run") as mine:
+        if not mine:
+            return "another run is still working; nothing done"
+        return _run(force, now or now_local())
+
+
+def _run(force: bool, now: datetime) -> str:
     outcomes = []
     for test_id, cfg in load_config().items():
-        state = load_state(test_id)
+        state = {}
         mail = cfg.get("mail") or {}
         jobs = (
             ("reply", lambda: step_reply(test_id, cfg["reply"], mail, state, now)),
@@ -747,13 +798,14 @@ def run(force: bool = False, now: datetime | None = None) -> str:
         for key, job in jobs:
             if not isinstance(cfg.get(key), dict):
                 continue
+            state.clear()
+            state.update(load_state(test_id))  # fresh for every job: a tap may have landed during the last one
             try:
                 outcomes.append(f"{test_id} {job()}")
             except Exception as error:
                 outcomes.append(f"{test_id} {key}: FAILED {type(error).__name__}: {str(error)[:160]}")
-            save_state(test_id, state)
-        state["last_run"] = _stamp(now)
-        save_state(test_id, state)
+            save_state(test_id, state, only=key)
+        save_state(test_id, {"last_run": _stamp(now)}, only="last_run")
     return "; ".join(outcomes) or "nothing configured"
 
 
@@ -783,11 +835,11 @@ def action(name: str, now: datetime | None = None) -> str:
         return _send_followup(test_id, reply_cfg, mail, state, now, only_if_no_answer=reads)
     if verb == "replied" and reply_cfg:
         reply.update({"status": "replied", "by_hand": True, "found_at": _stamp(now)})
-        save_state(test_id, state)
+        save_state(test_id, state, only="reply")
         return "Noted: an answer came. No follow-up will be sent."
     if verb == "no_reply" and reply_cfg:
         reply["status"] = "closed"
-        save_state(test_id, state)
+        save_state(test_id, state, only="reply")
         return "Noted: no answer. This step is closed."
     if verb in ("open_reply", "reply_read") and reply_cfg:
         saved = test_dir(test_id) / "reply.txt"
@@ -796,7 +848,7 @@ def action(name: str, now: datetime | None = None) -> str:
                 return "No saved answer on this PC."
             _open(saved)
         reply["read_at"] = _stamp(now)
-        save_state(test_id, state)
+        save_state(test_id, state, only="reply")
         return "Answer opened." if verb == "open_reply" else "Marked as read."
     if verb == "relay_code":
         code = Path(str(mail.get("relay_code_path") or ""))
@@ -817,7 +869,7 @@ def action(name: str, now: datetime | None = None) -> str:
         if not digest or invites.get("preview_hash") != digest:
             return "The list or the text changed since the preview. A new preview is mailed to you within the hour; approve that one."
         invites.update({"approved_hash": digest, "approved_at": _stamp(now)})
-        save_state(test_id, state)
+        save_state(test_id, state, only="invites")
         return f"Approved: {len(emails)} invitations go out at the start time, each person once."
     if verb == "open_invites" and invite_cfg:
         phones = _invite_people(test_id, invite_cfg)["phones"]
@@ -839,7 +891,7 @@ def action(name: str, now: datetime | None = None) -> str:
         return "Contact list opened. Save it when you are done; the next hourly run picks it up."
     if verb == "wa_done" and invite_cfg:
         invites["whatsapp_done_at"] = _stamp(now)
-        save_state(test_id, state)
+        save_state(test_id, state, only="invites")
         return "Noted: the WhatsApp invitations are sent."
     raise ValueError(f"Unknown action: {name}")
 
