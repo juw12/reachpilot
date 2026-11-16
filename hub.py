@@ -1526,6 +1526,7 @@ def help_sections(tasks: dict, podcast: dict | None = None, launch: dict | None 
                     "Where launch_auto.py is installed, steps marked 'runs itself' are done by this PC every hour: it looks for the answer "
                     "to a mail that was sent and sends one follow-up when the date passes without one, mails approved invitations at the "
                     "start time (each person once, never more than the target), and checks the waiting proposal every day. "
+                    "If reminders are switched on, a step that is due today and needs you is mailed to you once. "
                     + when("launch", ""),
             "you": "Do the steps marked 'one tap left', 'blocked' or 'only you'. They also sit in the To do list, urgent from 3 days before their date. "
                    "Nothing is mailed to other people before you approved the preview that is mailed to you first.",

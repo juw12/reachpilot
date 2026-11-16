@@ -328,6 +328,8 @@ card, marked *automatic*, and replace the public steps they cover:
 - **A document that waits for a review.** Once a day it runs the checks you name on a fresh copy of the repository
   and opens every link the document cites; once a week it asks a judge command for a score. It reports a failing
   check, a link that is gone two days in a row or a clear fall in the score. It never rewrites the document.
+- **A reminder to you.** With `"nudge": true` under `mail`, a step that is due today and needs your hand is
+  mailed to you once, with its button name and its links. It goes to the relay's own owner address only.
 
 Settings live under `auto` in `launch_private.json`; contact lists, mail texts, answers and run state stay in
 `data/launch_auto/` (both git-ignored). A send that may not have gone out is not retried, so nobody gets a mail

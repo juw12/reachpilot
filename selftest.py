@@ -3439,6 +3439,45 @@ try:
     check(hub._launch_auto_rows("demo") == [], "hub launch auto: a broken automation does not break the card")
     launch_auto.rows = auto_real[-1]
     check("runs itself" in hub.help_sections({}, None, {"tests": [card]})[-1]["auto"], "hub launch auto: the help entry explains the hourly automations")
+
+    # the reminder to the owner: one mail per step, on the day the step needs a hand that this PC does not have
+    auto_plain_config = launch_auto.PRIVATE_FILE.read_text(encoding="utf-8")
+    nudge_settings = {**auto_settings, "mail": {**auto_settings["mail"], "nudge": True}}
+    launch_auto.PRIVATE_FILE.write_text(json.dumps({"demo": {"needsMe": [], "auto": nudge_settings}}), encoding="utf-8")
+    auto_fresh()
+    launch_auto.run(now=auto_at("2026-11-23T10:00"))
+    launch_auto.run(now=auto_at("2026-11-24T09:00"))
+    check(auto_posts == [], "launch auto nudge: nothing is mailed before the day, or on the day before the reminder hours")
+    nudge_run = launch_auto.run(now=auto_at("2026-11-24T10:00"))
+    first_nudge = list(auto_posts)
+    launch_auto.run(now=auto_at("2026-11-24T11:00"))
+    launch_auto.run(now=auto_at("2026-11-25T10:00"))
+    check(len(first_nudge) == 1 and auto_posts == first_nudge and "to" not in first_nudge[0] and "action" not in first_nudge[0]
+          and "Send the follow-up" in first_nudge[0]["text"] and '"No answer: send the follow-up"' in first_nudge[0]["text"]
+          and "nudge: 2 steps mailed to the owner" in nudge_run,
+          "launch auto nudge: on the day, one mail to the owner only, naming each step and its button, never repeated")
+    launch_auto.run(now=auto_at("2026-11-28T10:00"))
+    check(len(auto_posts) == 2 and "to" not in auto_posts[1] and "https://wa.me/?text=" in auto_posts[1]["text"]
+          and auto_posts[1]["subject"] == "Launch test demo: 1 step for you today",
+          "launch auto nudge: the invitation day brings the share links, and a step already mailed is left out")
+    auto_fresh()
+    auto_world["relay_ok"] = False
+    failed_nudges = [launch_auto.run(now=auto_at(f"2026-11-24T{hour}:00")) for hour in (10, 11, 12, 13)]
+    auto_world["relay_ok"] = True
+    launch_auto.run(now=auto_at("2026-11-24T14:00"))
+    check(len(auto_posts) == launch_auto.NUDGE_TRIES == 3 and "nudge: could not be mailed" in failed_nudges[2]
+          and "nudge" not in failed_nudges[3],
+          "launch auto nudge: a reminder that could not be mailed is tried three times, then left to the card")
+    auto_fresh()
+    launch_auto.action("launch:replied:demo", auto_at("2026-11-20T09:00"))
+    launch_auto.run(now=auto_at("2026-11-24T10:00"))
+    check(auto_posts == [], "launch auto nudge: a step that is settled is not mailed")
+    auto_fresh()
+    auto_world["version"] = 3
+    launch_auto.run(now=auto_at("2026-11-24T10:00"))
+    check(len(auto_posts) == 2 and all(payload.get("action") for payload in auto_posts),
+          "launch auto nudge: a relay that reads the inbox does the step itself, so there is no reminder")
+    launch_auto.PRIVATE_FILE.write_text(auto_plain_config, encoding="utf-8")
 finally:
     (launch_auto.DATA_DIR, launch_auto.PRIVATE_FILE, launch_auto.LOG_FILE, launch_auto._relay_version, launch_auto._relay_post,
      launch_auto._open, launch_auto._sync_repo, launch_auto._run_command, launch_auto._link_answers,

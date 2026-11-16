@@ -12,6 +12,8 @@ Three jobs per launch test, all configured in launch_private.json (git-ignored) 
             links it cites, and let a judge score it against a fixed rubric once a week. It reports; it never
             rewrites the wording.
 
+With "nudge": true under "mail" it also mails me, once per step, on the day a step is due and needs my hand.
+
 Everything it learns stays in data/launch_auto/ (git-ignored). The dashboard reads rows() and calls action().
 
     python launch_auto.py            run once (the scheduled task does this every hour)
@@ -50,6 +52,9 @@ SETTLED = ("replied", "bounced", "closed")  # nothing more is read or sent for a
 OFFICE_HOURS = (8, 17)  # a follow-up to an organisation goes out on a weekday inside these local hours
 SEND_PAUSE_SECONDS = 4  # between two invitations
 FOLLOWUP_WAIT_SECONDS = 90  # how long a second sender waits for the first before it gives up
+NUDGE_HOURS = (10, 20)  # a reminder to the owner goes out inside these local hours, on any day
+NUDGE_TRIES = 3  # a reminder that could not be mailed is tried again on the next runs, this often at most
+NUDGE_LINKS = 6  # links of one step that are repeated in the reminder
 LINK_LIMIT = 40
 LINK_STRIKES = 2  # a link is reported after this many failed days in a row, not on one slow answer
 SCORE_DROP = 0.5  # judge noise is about 0.3, so only a larger fall is reported
@@ -825,6 +830,54 @@ def rows(test_id: str, now: datetime | None = None) -> list[dict]:
     return result
 
 
+# ───────────────────────── D. a reminder to me, on the day a step needs me
+
+def step_nudge(test_id: str, mail: dict, now: datetime) -> str:
+    """One mail to the owner, once per step, on the day a step needs a hand that this PC does not have.
+    It names the step, its button and its links. It goes to the relay's own owner address and to nobody else."""
+    if not NUDGE_HOURS[0] <= now.hour < NUDGE_HOURS[1]:
+        return ""
+    state = load_state(test_id)
+    nudges = state.setdefault("nudges", {})
+    waiting = []
+    for row in rows(test_id, now):
+        due = _day(row.get("due"))
+        if row.get("status") not in ("yours", "last-tap") or not due or due > now.date():
+            continue
+        key = f"{row.get('id')}|{row.get('due')}|{row.get('status')}"
+        told = nudges.get(key) or {}
+        if not told.get("ok") and int(told.get("tries") or 0) < NUDGE_TRIES:
+            waiting.append((key, row))
+    if not waiting:
+        return ""
+    parts = []
+    for number, (key, row) in enumerate(waiting, 1):
+        lines = [f"{number}. {row.get('title', '')}", f"   {row.get('detail', '')}"]
+        buttons = ", ".join(f'"{button["label"]}"' for button in row.get("actions") or [] if button.get("label"))
+        if buttons:
+            lines.append(f"   On the PC: ReachPilot > Overview > Launch test > {buttons}")
+        lines += [f"   {link.get('label') or 'Link'}: {link['url']}" for link in (row.get("links") or [])[:NUDGE_LINKS]
+                  if isinstance(link, dict) and link.get("url")]
+        parts.append("\n".join(lines))
+        nudges[key] = {"at": _stamp(now), "ok": False, "tries": int((nudges.get(key) or {}).get("tries") or 0) + 1}
+    save_state(test_id, state, only="nudges")
+    count = len(waiting)
+    steps = "1 step" if count == 1 else f"{count} steps"
+    text = (
+        f"ReachPilot, launch test \"{test_id}\": {steps} wait for you today. This PC cannot do them for you.\n\n"
+        + "\n\n".join(parts)
+        + "\n\nThis reminder is sent once per step. It went to you only; nothing was sent to anyone else."
+    )
+    # No "to": the relay then mails its own fixed owner address, so a reminder cannot reach anyone else.
+    answer = _relay_post(mail, _mail(mail, f"Launch test {test_id}: {steps} for you today", text))
+    if not answer.get("ok"):
+        return f"nudge: could not be mailed ({str(answer.get('error') or 'no answer')[:120]})"
+    for key, _ in waiting:
+        nudges[key]["ok"] = True
+    save_state(test_id, state, only="nudges")
+    return f"nudge: {steps} mailed to the owner"
+
+
 def run(force: bool = False, now: datetime | None = None) -> str:
     """One pass over every configured test. Only one pass works at a time on this PC."""
     with _only_one("run") as mine:
@@ -853,6 +906,13 @@ def _run(force: bool, now: datetime) -> str:
             except Exception as error:
                 outcomes.append(f"{test_id} {key}: FAILED {type(error).__name__}: {str(error)[:160]}")
             save_state(test_id, state, only=key)
+        if mail.get("nudge") is True:
+            try:
+                told = step_nudge(test_id, mail, now)
+            except Exception as error:
+                told = f"nudge: FAILED {type(error).__name__}: {str(error)[:160]}"
+            if told:
+                outcomes.append(f"{test_id} {told}")
         save_state(test_id, {"last_run": _stamp(now)}, only="last_run")
     return "; ".join(outcomes) or "nothing configured"
 
