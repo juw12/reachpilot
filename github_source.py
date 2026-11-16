@@ -34,30 +34,72 @@ TRIVIAL_COMMIT = re.compile(
 
 
 _GH_BROKEN = False  # set after gh fails once, so a run doesn't wait on it for every call
+_GH_ENV = None  # the environment gh last answered in; None is my own
+PROXY_VARIABLES = ("https_proxy", "http_proxy", "all_proxy")
+
+
+def system_proxy() -> str:
+    """The proxy this computer itself is set to use (Windows Internet Settings), or "" when there is none."""
+    import urllib.request
+
+    try:
+        found = urllib.request.getproxies_registry()
+    except (AttributeError, OSError):  # not Windows, or the setting cannot be read
+        return ""
+    return str(found.get("https") or found.get("http") or "")
+
+
+def proxy_environment() -> dict | None:
+    """My environment with the computer's own proxy in place of the one named in it; None when that changes nothing.
+
+    A proxy named in HTTPS_PROXY can be down while the one the computer is set to use still answers.
+    """
+    import os
+
+    proxy = system_proxy()
+    named = os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy") or ""
+    if not proxy or proxy.rstrip("/") == named.rstrip("/"):
+        return None
+    environment = {key: value for key, value in os.environ.items() if key.lower() not in PROXY_VARIABLES}
+    environment["HTTPS_PROXY"] = environment["HTTP_PROXY"] = proxy
+    return environment
+
+
+def run_gh(args: list[str], environment: dict | None):
+    try:
+        return subprocess.run(args, capture_output=True, timeout=90, creationflags=CREATE_NO_WINDOW, env=environment)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+
+def gh_answered(result) -> bool:
+    """gh reached GitHub: it has the answer, or GitHub said there is no such thing."""
+    if result is None:
+        return False
+    if result.returncode == 0:
+        return True
+    stderr = result.stderr.decode("utf-8", "replace").lower()
+    return "404" in stderr or "not found" in stderr
 
 
 def gh_api(path: str, raw: bool = False):
-    global _GH_BROKEN
+    global _GH_BROKEN, _GH_ENV
     if _GH_BROKEN:
         return public_api(path, raw)
     args = ["gh", "api", path]
     if raw:
         args += ["-H", "Accept: application/vnd.github.raw"]
-    try:
-        result = subprocess.run(
-            args,
-            capture_output=True,
-            timeout=90,
-            creationflags=CREATE_NO_WINDOW,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        _GH_BROKEN = True
-        return public_api(path, raw)
-    if result.returncode != 0:
-        # gh missing or its login expired: public data is still readable without a login.
-        stderr = result.stderr.decode("utf-8", "replace").lower()
-        if "404" not in stderr and "not found" not in stderr:  # login expired, proxy down, ...
+    result = run_gh(args, _GH_ENV)
+    if not gh_answered(result):
+        # gh missing, its login expired, or the proxy is down. One more try through the computer's own proxy;
+        # the signed-in answer is the only one that includes private repos.
+        other = proxy_environment() if _GH_ENV is None else None
+        again = run_gh(args, other) if other else None
+        if not gh_answered(again):
             _GH_BROKEN = True
+            return public_api(path, raw)
+        _GH_ENV, result = other, again
+    if result.returncode != 0:  # not found: a public copy may still be in the cache
         return public_api(path, raw)
     if raw:
         return result.stdout
@@ -66,6 +108,15 @@ def gh_api(path: str, raw: bool = False):
 
 PUBLIC_CACHE = Path(__file__).resolve().parent / "data" / "github_public_cache"
 PUBLIC_CACHE_HOURS = 6  # anonymous GitHub API allows 60 requests/hour, so answers are reused
+
+
+def open_public(request, proxy: str = "") -> bytes:
+    """The body of a web request, through the given proxy or, without one, the usual settings."""
+    import urllib.request
+
+    handlers = [urllib.request.ProxyHandler({"https": proxy, "http": proxy})] if proxy else []
+    with urllib.request.build_opener(*handlers).open(request, timeout=30) as response:
+        return response.read()
 
 
 def public_api(path: str, raw: bool = False):
@@ -89,10 +140,17 @@ def public_api(path: str, raw: bool = False):
             headers={"Accept": accept, "User-Agent": "reachpilot"},
         )
         try:
-            with urllib.request.urlopen(request, timeout=30) as response:
-                body = response.read()
+            body = open_public(request)
+        except urllib.error.HTTPError:
+            return None  # GitHub answered: no such thing, or it needs a login
         except (urllib.error.URLError, OSError, ValueError):
-            return None
+            proxy = system_proxy()  # the proxy named in the environment may be down
+            try:
+                body = open_public(request, proxy) if proxy else None
+            except (urllib.error.URLError, OSError, ValueError):
+                body = None
+            if body is None:
+                return None
         PUBLIC_CACHE.mkdir(parents=True, exist_ok=True)
         cache_file.write_bytes(body)
     if raw:

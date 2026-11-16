@@ -651,12 +651,12 @@ def refresh(today: date | None = None, fetch_ci=ci_state, pdf: bool = True) -> d
     moved = changes(inputs["previous"], desk["projects"], today) if inputs["refreshed_at"] else []
     history = (inputs["history"] + moved)[-HISTORY_LIMIT:]
     patents.DATA_DIR.mkdir(parents=True, exist_ok=True)
-    desk_file().write_text(json.dumps({
+    patents.save_json(desk_file(), {
         "version": 1, "refreshed_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
         "projects": [{key: item[key] for key in ("name", "stage", "score")} for item in desk["projects"]],
         "facts": {name: fact for name, fact in facts.items() if name in by_name},
         "history": history,
-    }, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+    })
     counts = desk["counts"]
     return {"ok": True, "message": (
         f"Patent desk: {desk['total']} project(s): {counts['ready']} ready to file, {counts['filed']} filed, "
@@ -680,7 +680,7 @@ def _note(name: str) -> tuple[dict, dict]:
 
 def _save(overrides: dict) -> None:
     patents.DATA_DIR.mkdir(parents=True, exist_ok=True)
-    patents.OVERRIDES_FILE.write_text(json.dumps(overrides, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+    patents.save_json(patents.OVERRIDES_FILE, overrides)
 
 
 def set_ownership(name: str, state: str, today: date | None = None) -> str:

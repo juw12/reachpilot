@@ -23,6 +23,10 @@ import trylinks
 config = json.loads((Path(__file__).parent / "config.json").read_text(encoding="utf-8"))
 failures = []
 
+# A piped Windows console is cp1252: a README bullet outside it must not stop the run.
+if sys.stdout is not None and hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 
 def check(condition, message):
     print(("PASS " if condition else "FAIL ") + message)
@@ -2268,8 +2272,125 @@ try:
             check(False, f"hub patents: malformed action refused ({refused})")
         except ValueError:
             check(True, f"hub patents: malformed action refused ({refused})")
+
+    # A scan whose GitHub sign-in does not answer sees public repos only. It must not forget the private ones.
+    scan_real = (patents.list_repos, patents.read_readme)
+    try:
+        public_listing = [patent_repo("pocket-rig", hinge, "2025-12-09T00:00:00Z"),
+                          patent_repo("gear-rig", hinge, "2026-01-21T00:00:00Z")]
+        private_repo = patent_repo("hinge-lab", hinge, "2026-05-01T00:00:00Z", private=True, licence="")
+        patents.SCAN_FILE.write_text(json.dumps(patent_scan), encoding="utf-8")
+        patents.read_readme = lambda full_name: strong_text
+        patents.list_repos = lambda user: (public_listing, False)
+        outcome = patents.scan("someone")
+        saved = json.loads(patents.SCAN_FILE.read_text(encoding="utf-8"))
+        found = {entry["name"]: entry for entry in saved["repos"]}
+        check(outcome["ok"] and sorted(found) == ["gear-rig", "hinge-lab", "pocket-rig"]
+              and found["hinge-lab"]["private"] and found["hinge-lab"]["stale"] is True
+              and found["hinge-lab"]["score"] == patent_scan["repos"][0]["score"]
+              and saved["includes_private"] and saved["signed_in"] is False
+              and "1 private project(s) kept from the last scan" in outcome["message"],
+              "patents: a scan that cannot sign in keeps the private projects of the last scan, marked as not read again")
+        check("stale" not in found["pocket-rig"] and "stale" not in found["gear-rig"] and saved["changes"] == [],
+              "patents: the public projects of that scan are read as usual and nothing is reported as changed")
+        check(hub.patents_section(patent_today)["signed_in"] is False and hub.patents_section(patent_today)["includes_private"],
+              "hub patents: the card knows the private projects are from an earlier scan")
+        check(not list(patents.DATA_DIR.glob("*.tmp")), "patents: the scan is saved through a temporary file that does not stay")
+
+        patents.scan("someone")
+        again = json.loads(patents.SCAN_FILE.read_text(encoding="utf-8"))
+        check([entry["name"] for entry in again["repos"] if entry.get("stale")] == ["hinge-lab"],
+              "patents: a second scan without a sign-in still keeps them")
+
+        patents.list_repos = lambda user: (public_listing + [private_repo], True)
+        outcome = patents.scan("someone")
+        saved = json.loads(patents.SCAN_FILE.read_text(encoding="utf-8"))
+        found = {entry["name"]: entry for entry in saved["repos"]}
+        check(saved["signed_in"] is True and "stale" not in found["hinge-lab"] and found["hinge-lab"]["private"]
+              and "sign-in" not in outcome["message"] and hub.patents_section(patent_today)["signed_in"] is True,
+              "patents: once the sign-in answers again the private project is current")
+
+        patents.list_repos = lambda user: (public_listing, True)
+        patents.scan("someone")
+        check("hinge-lab" not in [entry["name"] for entry in json.loads(patents.SCAN_FILE.read_text(encoding="utf-8"))["repos"]],
+              "patents: a project that is really gone (signed in, not listed) leaves the scan")
+
+        before = {entry["name"]: entry for entry in json.loads(patents.SCAN_FILE.read_text(encoding="utf-8"))["repos"]}
+        patents.list_repos = lambda user: ([patent_repo("pocket-rig", hinge, "2025-12-09T00:00:00Z", pushed="2026-11-12T08:00:00Z"),
+                                            public_listing[1]], True)
+        patents.read_readme = lambda full_name: ""
+        outcome = patents.scan("someone")
+        found = {entry["name"]: entry for entry in json.loads(patents.SCAN_FILE.read_text(encoding="utf-8"))["repos"]}
+        check(found["pocket-rig"]["stale"] is True and found["pocket-rig"]["score"] == before["pocket-rig"]["score"] > 0
+              and found["pocket-rig"]["pushed"] == before["pocket-rig"]["pushed"]
+              and "1 README(s) could not be read" in outcome["message"],
+              "patents: a README that cannot be read does not wipe the last reading, and is tried again next time")
+        patents.read_readme = lambda full_name: rig_text
+        patents.scan("someone")
+        found = {entry["name"]: entry for entry in json.loads(patents.SCAN_FILE.read_text(encoding="utf-8"))["repos"]}
+        check("stale" not in found["pocket-rig"] and found["pocket-rig"]["pushed"] == "2026-11-12T08:00:00Z"
+              and found["pocket-rig"]["score"] != before["pocket-rig"]["score"],
+              "patents: when the README answers again the project is read afresh")
+    finally:
+        patents.list_repos, patents.read_readme = scan_real
 finally:
     patents.DATA_DIR, patents.SCAN_FILE, patents.OVERRIDES_FILE, patents.LOG_FILE = patent_real
+
+
+class GhAnswer:
+    def __init__(self, returncode, stdout=b"", stderr=b""):
+        self.returncode, self.stdout, self.stderr = returncode, stdout, stderr
+
+
+gh_real = (gh.run_gh, gh.system_proxy, gh.public_api, gh._GH_BROKEN, gh._GH_ENV)
+proxy_real = os.environ.get("HTTPS_PROXY")
+try:
+    os.environ["HTTPS_PROXY"] = "http://127.0.0.1:9"
+    gh_calls = []
+
+    def proxy_down_gh(args, environment):
+        gh_calls.append(environment)
+        if environment is None:
+            return GhAnswer(1, stderr=b"connectex: No connection could be made because the target machine actively refused it.")
+        return GhAnswer(0, stdout=b'[{"name": "hinge-lab", "private": true}]')
+
+    gh.run_gh = proxy_down_gh
+    gh.public_api = lambda path, raw=False: "public only"
+    gh.system_proxy = lambda: "http://proxy.example.test:8080"
+    gh._GH_BROKEN, gh._GH_ENV = False, None
+    check(gh.gh_api("user/repos") == [{"name": "hinge-lab", "private": True}] and len(gh_calls) == 2
+          and gh_calls[1]["HTTPS_PROXY"] == "http://proxy.example.test:8080" and not gh._GH_BROKEN,
+          "github: when the proxy named in the environment is down, gh is tried once through the computer's own proxy")
+    gh_calls.clear()
+    check(gh.gh_api("user/repos") == [{"name": "hinge-lab", "private": True}] and len(gh_calls) == 1
+          and gh_calls[0]["HTTPS_PROXY"] == "http://proxy.example.test:8080",
+          "github: the proxy that worked is remembered for the rest of the run")
+
+    gh._GH_BROKEN, gh._GH_ENV = False, None
+    gh.system_proxy = lambda: "http://127.0.0.1:9/"
+    gh_calls.clear()
+    check(gh.gh_api("user/repos") == "public only" and len(gh_calls) == 1 and gh._GH_BROKEN,
+          "github: no second try when the computer's proxy is the one already in use; the public answer is used")
+    gh._GH_BROKEN, gh._GH_ENV = False, None
+    gh.system_proxy = lambda: ""
+    gh_calls.clear()
+    check(gh.gh_api("user/repos") == "public only" and len(gh_calls) == 1 and gh._GH_BROKEN,
+          "github: no second try where the computer has no proxy setting")
+
+    gh._GH_BROKEN, gh._GH_ENV = False, None
+    gh.system_proxy = lambda: "http://proxy.example.test:8080"
+    gh_calls.clear()
+    gh.run_gh = lambda args, environment: (gh_calls.append(environment), GhAnswer(1, stderr=b"gh: Not Found (HTTP 404)"))[1]
+    check(gh.gh_api("repos/someone/none/readme", raw=True) == "public only" and len(gh_calls) == 1 and not gh._GH_BROKEN,
+          "github: 'not found' is an answer, not a broken connection")
+    gh.run_gh = lambda args, environment: None
+    check(gh.gh_api("user/repos") == "public only" and gh._GH_BROKEN, "github: gh missing or timing out falls back to the public answer")
+finally:
+    gh.run_gh, gh.system_proxy, gh.public_api, gh._GH_BROKEN, gh._GH_ENV = gh_real
+    if proxy_real is None:
+        os.environ.pop("HTTPS_PROXY", None)
+    else:
+        os.environ["HTTPS_PROXY"] = proxy_real
 
 patent_page = (Path(__file__).parent / "dashboard.html").read_text(encoding="utf-8")
 check(all(piece in patent_page for piece in ("function patentCard", "patents_run_now", "why-row", "patents:decide:")),

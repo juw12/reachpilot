@@ -810,7 +810,8 @@ function patentCard(p) {
   const facts = [
     `${plural(p.total, "project")} read`,
     p.scanned_at ? `scanned ${esc(p.scanned_at)}` : "",
-    p.includes_private ? "private ones included" : "public ones only (sign in to gh to include private ones)",
+    !p.includes_private ? "public ones only (sign in to gh to include private ones)"
+      : p.signed_in === false ? "private ones as last read (the GitHub sign-in did not answer)" : "private ones included",
     c.undecided ? `${num(c.undecided)} without a decision` : "",
   ].filter(Boolean).join(" · ");
   const next = p.next_deadline;

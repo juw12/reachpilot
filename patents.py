@@ -24,6 +24,7 @@ package and the dates after a filing.
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import sys
@@ -322,8 +323,15 @@ def load_overrides() -> dict:
     return value if isinstance(value, dict) else {}
 
 
-def list_repos(github_user: str) -> list[dict]:
-    """Every repo I own, private ones included when gh is signed in; public ones only otherwise."""
+def save_json(path: Path, value) -> None:
+    """Write through a temporary file, so a reader never meets a half-written one."""
+    temporary = path.with_name(path.name + ".tmp")
+    temporary.write_text(json.dumps(value, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+    os.replace(temporary, path)
+
+
+def list_repos(github_user: str) -> tuple[list[dict], bool]:
+    """Every repo I own, and whether the signed-in listing answered: only that one shows private repos."""
     import github_source as gh
 
     repos, page = [], 1
@@ -335,10 +343,11 @@ def list_repos(github_user: str) -> list[dict]:
         if len(batch) < 100:
             break
         page += 1
+    signed_in = bool(repos)
     if not repos:
         batch = gh.gh_api(f"users/{github_user}/repos?per_page=100&type=owner")
         repos = batch if isinstance(batch, list) else []
-    return [repo for repo in repos if isinstance(repo, dict) and repo.get("name")]
+    return [repo for repo in repos if isinstance(repo, dict) and repo.get("name")], signed_in
 
 
 def read_readme(full_name: str) -> str:
@@ -390,35 +399,56 @@ def scan(github_user: str | None = None) -> dict:
     previous = _load(SCAN_FILE, {})
     previous_repos = previous.get("repos") if isinstance(previous, dict) and isinstance(previous.get("repos"), list) else []
     known = {entry.get("name"): entry for entry in previous_repos if isinstance(entry, dict)}
-    repos = list_repos(github_user)
+    repos, signed_in = list_repos(github_user)
     if not repos:
         return {"ok": False, "message": "GitHub gave no repositories (offline, or gh not signed in). Kept the last scan."}
-    entries = []
+    entries, unread = [], 0
     for repo in repos:
         old = known.get(repo["name"])
         unchanged = (old and old.get("rubric") == RUBRIC and old.get("pushed") == (repo.get("pushed_at") or "")
                      and (old.get("description") or "") == " ".join((repo.get("description") or "").split())[:240])
+        now = {"private": bool(repo.get("private")), "archived": bool(repo.get("archived")),
+               "licence": ((repo.get("license") or {}).get("key") or "")}
         if repo.get("fork"):
             readme = ""
         elif unchanged:
-            entries.append({**old, "private": bool(repo.get("private")), "archived": bool(repo.get("archived")),
-                            "licence": ((repo.get("license") or {}).get("key") or "")})
+            entries.append({**{key: value for key, value in old.items() if key != "stale"}, **now})
             continue
         else:
             readme = read_readme(repo.get("full_name") or f"{github_user}/{repo['name']}")
+            if not readme.strip() and old and old.get("has_readme") and old.get("band") in BANDS:
+                # The README was there last time and cannot be read now: the last reading stands until it can.
+                entries.append({**old, **now, "stale": True})
+                unread += 1
+                continue
         entries.append(build_entry(repo, readme))
-    entries.sort(key=lambda entry: (-entry["score"], entry["name"].lower()))
+    kept = []
+    if not signed_in:
+        # Without the signed-in listing GitHub shows public repos only. That is no reason to forget the private ones.
+        listed = {repo["name"] for repo in repos}
+        kept = [{**entry, "stale": True} for entry in previous_repos
+                if isinstance(entry, dict) and entry.get("name") and entry.get("private")
+                and entry["name"] not in listed and entry.get("band") in BANDS]
+        entries.extend(kept)
+    entries.sort(key=lambda entry: (-int(entry.get("score") or 0), entry["name"].lower()))
     result = {
         "version": 1, "rubric": RUBRIC, "owner": github_user,
         "scanned_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "signed_in": signed_in,
         "includes_private": any(entry["private"] for entry in entries),
         "repos": entries, "changes": changes_since(previous_repos, entries),
     }
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    SCAN_FILE.write_text(json.dumps(result, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
-    counts = {band: sum(1 for entry in entries if entry["band"] == band and not entry["fork"]) for band in BANDS}
-    return {"ok": True, "message": f"{len(entries)} repos read: {counts['look']} worth an attorney look, "
-                                   f"{counts['maybe']} maybe, {len(result['changes'])} change(s)."}
+    save_json(SCAN_FILE, result)
+    counts = {band: sum(1 for entry in entries if entry["band"] == band and not entry.get("fork")) for band in BANDS}
+    message = (f"{len(entries)} repos read: {counts['look']} worth an attorney look, "
+               f"{counts['maybe']} maybe, {len(result['changes'])} change(s).")
+    if not signed_in:
+        message += (f" The GitHub sign-in did not answer: {len(kept)} private project(s) kept from the last scan, not read again."
+                    if kept else " The GitHub sign-in did not answer: public projects only.")
+    if unread:
+        message += f" {unread} README(s) could not be read: the last reading stands."
+    return {"ok": True, "message": message}
 
 
 # ------------------------------------------------------------------ view (what the dashboard shows)
@@ -487,7 +517,7 @@ def decide(name: str, decision: str) -> str:
     note["decided"] = date.today().isoformat()
     overrides[name] = note
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    OVERRIDES_FILE.write_text(json.dumps(overrides, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+    save_json(OVERRIDES_FILE, overrides)
     return f"{name}: decision cleared." if decision == "clear" else f"{name}: {DECISIONS[decision]}."
 
 

@@ -1096,7 +1096,7 @@ def patents_summary(scan, overrides, today: date | None = None, desk: dict | Non
 
     empty = {
         "desk": None,
-        "installed": True, "has_scan": False, "scanned_at": "", "includes_private": False, "total": 0,
+        "installed": True, "has_scan": False, "scanned_at": "", "includes_private": False, "signed_in": True, "total": 0,
         "counts": {"look": 0, "maybe": 0, "unlikely": 0, "forks": 0, "undecided": 0, "exposed": 0},
         "next_deadline": None, "candidates": [], "others": [], "changes": [], "disclaimer": PATENTS_DISCLAIMER,
     }
@@ -1129,6 +1129,7 @@ def patents_summary(scan, overrides, today: date | None = None, desk: dict | Non
         "has_scan": True,
         "scanned_at": str(scan.get("scanned_at") or ""),
         "includes_private": bool(scan.get("includes_private")),
+        "signed_in": scan.get("signed_in") is not False,  # False: private projects are carried over from an earlier scan
         "total": len(own),
         "counts": {
             "look": sum(1 for row in own if row["band"] == "look"),
