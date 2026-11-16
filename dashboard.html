@@ -709,7 +709,7 @@ function runStrip(tasks) {
 
 function launchCards(launch) {
   const tests = (launch && launch.tests) || [];
-  const stateBadge = { done: "good", "last-tap": "warn", blocked: "bad", yours: "grey" };
+  const stateBadge = { done: "good", "last-tap": "warn", blocked: "bad", yours: "grey", auto: "good" };
   const cell = (value) => (value === null || value === undefined ? "–" : num(value));
   return tests.map((t) => {
     const whenBadge = t.when ? ` <span class="badge ${t.phase === "final" ? "grey" : ""}">${esc(t.when)}</span>` : "";
@@ -731,9 +731,13 @@ function launchCards(launch) {
         <td class="num">${cell(c.stop)}</td>
       </tr>`).join("");
     const linkRow = (links) => `<div class="launch-links">${links.map((l) => link(l.url, l.label)).join("")}</div>`;
+    const stepTag = (s) => (s.automation ? ` <span class="badge grey">automatic</span>` : s.private ? ` <span class="badge grey">private</span>` : "");
+    const stepButtons = (s) => ((s.actions || []).length
+      ? `<div class="launch-links">${s.actions.map((a) => actionButton(a.name, a.label, true)).join("")}</div>` : "");
     const steps = t.needs_me.map((s) => `<tr>
-        <td>${esc(s.title)}${s.private ? ` <span class="badge grey">private</span>` : ""}
-          ${s.links.length ? linkRow(s.links) : ""}</td>
+        <td>${esc(s.title)}${stepTag(s)}
+          ${s.automation && s.detail ? `<div class="hint">${esc(s.detail)}</div>` : ""}
+          ${s.links.length ? linkRow(s.links) : ""}${stepButtons(s)}</td>
         <td><span class="badge ${stateBadge[s.status] || "grey"}">${esc(s.status_label)}</span>
           ${s.due ? `<div class="hint">by ${esc(s.due)}</div>` : ""}</td>
       </tr>`).join("");
@@ -747,7 +751,7 @@ function launchCards(launch) {
         <tbody>${counts}</tbody>
       </table>
       ${steps ? `<table style="margin-top:12px">
-        <thead><tr><th>Needs you · ${num(t.open)} open</th><th>State</th></tr></thead>
+        <thead><tr><th>Needs you · ${num(t.open)} open${t.automatic ? ` · ${num(t.automatic)} run by this PC` : ""}</th><th>State</th></tr></thead>
         <tbody>${steps}</tbody>
       </table>` : ""}
       ${t.links.length ? linkRow(t.links) : ""}

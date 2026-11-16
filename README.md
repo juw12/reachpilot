@@ -279,6 +279,25 @@ only reads a public `summary.json` that the tested project publishes; it never w
 file can't be reached, the card shows the last good answer and says so. Steps that should not be public go in
 `launch_private.json` next to the code; that file is git-ignored and is shown only on this dashboard.
 
+**Launch automations.** `python launch_auto.py install` adds an hourly task (`\ReachPilot\Launch automations`)
+that takes over steps of a launch test which only wait on a date or on somebody else. Its rows appear on the same
+card, marked *automatic*, and replace the public steps they cover:
+
+- **An answer to a mail you sent.** It asks your own mail relay whether the addressee has answered. If not, it
+  sends one follow-up on the date you set, on a weekday in office hours, and then stops. A mail that came back
+  undelivered is reported instead and is not followed up. A relay that cannot read
+  the inbox is never asked to send by itself: the row then says so and the follow-up stays one tap.
+- **Invitations.** It reads a contact list on this PC, mails you the exact text and the list as a preview, and
+  sends only after you approve on the card: one mail per person, each address once, never before the start time.
+  A changed list or text needs a new approval. Phone numbers become ready WhatsApp links you tap yourself.
+- **A document that waits for a review.** Once a day it runs the checks you name on a fresh copy of the repository
+  and opens every link the document cites; once a week it asks a judge command for a score. It reports a failing
+  check, a link that is gone two days in a row or a clear fall in the score. It never rewrites the document.
+
+Settings live under `auto` in `launch_private.json`; contact lists, mail texts, answers and run state stay in
+`data/launch_auto/` (both git-ignored). A send that may not have gone out is not retried, so nobody gets a mail
+twice. `python launch_auto.py show` prints what each row is doing.
+
 **Patent screen.** `python patents.py install` adds a weekly task (`\ReachPilot\Patent screen`, Mondays 09:00) and a
 card on the Overview. Each run reads the description and README of every repository you own, private ones included
 when `gh` is signed in, and answers three questions per project:
@@ -314,6 +333,7 @@ name private repositories. Your own notes in `data/patents/overrides.json` are n
 | `dashboard.py` + `dashboard.html` | local dashboard (restarts itself onto new code) |
 | `hub.py` | dashboard modules, to-do list and whitelisted actions |
 | `patents.py` | weekly patent screen of your GitHub projects: score, filing date, next step |
+| `launch_auto.py` | hourly launch automations: an answer and one follow-up, invitations after approval, daily checks of a waiting document |
 | `selfupdate.py` | fast-forward updater used by the dashboard and the Updates task |
 | `selftest.py` | tests (run in CI) |
 

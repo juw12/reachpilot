@@ -2056,5 +2056,390 @@ check("data/patents/" in (Path(__file__).parent / ".gitignore").read_text(encodi
 check(("patents" in hub.TASKS) == (hub.ROOT / "data" / "patents").exists(),
       "hub patents: the weekly task is listed only where the screen is installed")
 
+# launch automations (launch_auto.py): the answer to a sent mail and one follow-up, invitations, the waiting proposal
+import launch_auto  # noqa: E402
+
+auto_home = Path(tempfile.mkdtemp(prefix="rp-launch-auto-"))
+auto_real = (launch_auto.DATA_DIR, launch_auto.PRIVATE_FILE, launch_auto.LOG_FILE, launch_auto._relay_version,
+             launch_auto._relay_post, launch_auto._open, launch_auto._sync_repo, launch_auto._run_command,
+             launch_auto._link_answers, launch_auto.SEND_PAUSE_SECONDS, launch_auto.rows)
+auto_posts, auto_opened, auto_calls = [], [], {"sync": 0, "judge": 0}
+auto_memory = {"contacts": None}  # the last contact list a case wrote
+auto_world = {"version": 2, "inbox": "none", "at_send": "none", "relay_ok": True, "refuse": set(),
+              "sync_ok": True, "checks_ok": True, "dead": set(), "score": 9.1}
+auto_answer = {"ok": True, "status": "replied", "from": "Office <help@office.test>", "date": "2026-11-20 10:00",
+               "subject": "Re: Question", "body": "Thank you. Our answer: point 2 is fine."}
+
+
+def auto_post(mail, payload):
+    auto_posts.append(payload)
+    if not auto_world["relay_ok"] or payload.get("to") in auto_world["refuse"]:
+        return {"ok": False, "error": "relay down"}
+    if payload.get("action") == "check_reply":
+        return {**auto_answer, "status": auto_world["inbox"]} if auto_world["inbox"] != "none" else {"ok": True, "status": "none"}
+    if payload.get("action") == "followup":
+        return {**auto_answer, "status": auto_world["at_send"]} if auto_world["at_send"] != "none" else {"ok": True, "status": "sent"}
+    return {"ok": True}
+
+
+def auto_sync(url, folder):
+    auto_calls["sync"] += 1
+    if not auto_world["sync_ok"]:
+        return False, "could not reach GitHub"
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "pack.md").write_text("See https://example.test/law and https://example.test/app.\n", encoding="utf-8")
+    return True, "abc1234"
+
+
+def auto_command(command, folder, timeout, replace=None):
+    if replace:  # the judge: it writes its verdict to {out}
+        auto_calls["judge"] += 1
+        Path(replace["out"]).write_text(json.dumps({"council_score": auto_world["score"],
+                                                    "fixes": [{"fix": "Say who you are in the first line."}]}), encoding="utf-8")
+        return True, "judged"
+    return auto_world["checks_ok"], "1 passed" if auto_world["checks_ok"] else "pack.md: a link is missing"
+
+
+def auto_at(text):
+    return datetime.fromisoformat(text + ":00+07:00")
+
+
+def auto_fresh(keep_contacts=False):
+    """Forget everything the automation learned; start the next case clean."""
+    folder = auto_home / "data" / "demo"
+    if (folder / "contacts.csv").exists():
+        auto_memory["contacts"] = (folder / "contacts.csv").read_text(encoding="utf-8")
+    contacts = auto_memory["contacts"] if keep_contacts else None
+    shutil.rmtree(folder, ignore_errors=True)
+    folder.mkdir(parents=True)
+    (folder / "followup.txt").write_text("Dear Office,\nmay I ask again about my mail of 14 November?\nhttps://example.test/pack\n", encoding="utf-8")
+    if contacts is not None:
+        (folder / "contacts.csv").write_text(contacts, encoding="utf-8")
+    auto_posts.clear()
+    auto_world.update({"version": 2, "inbox": "none", "at_send": "none", "relay_ok": True, "refuse": set(),
+                       "sync_ok": True, "checks_ok": True, "dead": set(), "score": 9.1})
+
+
+def auto_row(row_id, now):
+    return next((row for row in launch_auto.rows("demo", now) if row["id"] == row_id), None)
+
+
+def auto_sent():
+    return [payload for payload in auto_posts if payload.get("to")]
+
+
+auto_settings = {
+    "mail": {"sender_name": "Me", "reply_to": "me@example.test"},
+    "reply": {"who": "Office", "to": "help@office.test", "sent_at": "2026-11-14T17:24:10+07:00", "subject": "Question",
+              "followup_due": "2026-11-24", "give_up": "2026-12-03", "followup_text_file": "followup.txt", "replaces": "odd"},
+    "invites": {"start": "2026-11-28T10:00:00+07:00", "target": 30, "contacts_file": "contacts.csv", "subject": "Try it?",
+                "message": "Hello {name}, one test tonight? https://example.test/app", "reminder": "Now is the busy hour.",
+                "day7": "Thank you.", "replaces": "invite"},
+    "proposal": {"name": "Pack", "repo": "https://example.test/repo.git",
+                 "checks": [{"name": "pack check", "command": ["node", "check.mjs"]}], "link_files": ["pack.md"],
+                 "judge": {"command": ["judge", "--out", "{out}"], "every_days": 7}},
+}
+try:
+    launch_auto.DATA_DIR = auto_home / "data"
+    launch_auto.PRIVATE_FILE = auto_home / "launch_private.json"
+    launch_auto.LOG_FILE = auto_home / "launch_auto.log"
+    launch_auto._relay_version = lambda mail: auto_world["version"]
+    launch_auto._relay_post = auto_post
+    launch_auto._open = auto_opened.append
+    launch_auto._sync_repo = auto_sync
+    launch_auto._run_command = auto_command
+    launch_auto._link_answers = lambda url: url not in auto_world["dead"]
+    launch_auto.SEND_PAUSE_SECONDS = 0
+
+    check(launch_auto.load_config() == {} and launch_auto.rows("demo") == [] and launch_auto.run() == "nothing configured",
+          "launch auto: no private file, nothing configured, nothing done")
+    launch_auto.PRIVATE_FILE.write_text(json.dumps({
+        "demo": {"needsMe": [], "auto": auto_settings}, "Bad Id": {"auto": auto_settings}, "plain": {"needsMe": []}}), encoding="utf-8")
+    check(list(launch_auto.load_config()) == ["demo"], "launch auto: only tests with settings and a safe id are run")
+
+    # A. a relay that cannot read the inbox (older than version 3): nothing is ever sent without a tap
+    auto_fresh()
+    launch_auto.run(now=auto_at("2026-11-16T09:00"))
+    check(auto_posts == [], "launch auto reply: an old relay is neither asked to read nor to send")
+    check(auto_row("auto-reply", auto_at("2026-11-16T09:00"))["status"] == "yours"
+          and auto_row("auto-relay", auto_at("2026-11-16T09:00"))["actions"][0]["name"] == "launch:relay_code:demo",
+          "launch auto reply: old relay shows 'look yourself' and offers the new relay code")
+    check(launch_auto.action("launch:followup:demo", auto_at("2026-11-16T09:05")).startswith("Too early") and auto_posts == [],
+          "launch auto reply: a follow-up before its date is refused")
+    launch_auto.run(now=auto_at("2026-11-24T10:00"))
+    due_row = auto_row("auto-reply", auto_at("2026-11-24T10:00"))
+    check(auto_posts == [] and due_row["status"] == "last-tap" and due_row["actions"][0]["name"] == "launch:followup:demo",
+          "launch auto reply: on the date an old relay still sends nothing; the follow-up is one tap")
+    first_tap = launch_auto.action("launch:followup:demo", auto_at("2026-11-24T10:05"))
+    second_tap = launch_auto.action("launch:followup:demo", auto_at("2026-11-24T10:06"))
+    launch_auto.run(now=auto_at("2026-11-24T11:00"))
+    check(first_tap == "Follow-up sent to help@office.test." and "never sent twice" in second_tap and len(auto_sent()) == 1
+          and auto_sent()[0]["to"] == "help@office.test" and auto_sent()[0]["subject"] == "Re: Question"
+          and "mail of 14 November" in auto_sent()[0]["text"] and "action" not in auto_sent()[0],
+          "launch auto reply: the tapped follow-up goes out exactly once")
+    check(auto_row("auto-reply", auto_at("2026-11-24T11:00"))["status"] == "yours"
+          and launch_auto.action("launch:no_reply:demo") == "Noted: no answer. This step is closed."
+          and auto_row("auto-reply", auto_at("2026-12-04T09:00"))["status"] == "done"
+          and auto_row("auto-relay", auto_at("2026-12-04T09:00")) is None,
+          "launch auto reply: after the follow-up I say what happened and the step closes")
+
+    # A broken relay during the tapped follow-up: the attempt is kept, so it can never be repeated
+    auto_fresh()
+    auto_world["relay_ok"] = False
+    broken_tap = launch_auto.action("launch:followup:demo", auto_at("2026-11-24T10:05"))
+    auto_world["relay_ok"] = True
+    check("may not have gone out" in broken_tap and "never sent twice" in launch_auto.action("launch:followup:demo", auto_at("2026-11-24T10:07"))
+          and len(auto_sent()) == 1, "launch auto reply: an unclear send is not retried (no double mail)")
+
+    # A relay that reads the inbox (version 3): it looks every run and follows up once, by itself
+    auto_fresh()
+    auto_world["version"] = 3
+    launch_auto.run(now=auto_at("2026-11-16T09:00"))
+    waiting = auto_row("auto-reply", auto_at("2026-11-16T09:00"))
+    check([payload.get("action") for payload in auto_posts] == ["check_reply"] and auto_posts[0]["from"] == "help@office.test"
+          and auto_posts[0]["since"] == "2026-11-14" and waiting["status"] == "auto" and "Tue 24 Nov" in waiting["detail"]
+          and auto_row("auto-relay", auto_at("2026-11-16T09:00")) is None,
+          "launch auto reply: a reading relay is asked for the answer and the row runs itself")
+    launch_auto.run(now=auto_at("2026-11-24T07:00"))  # the date, but before office hours
+    launch_auto.run(now=auto_at("2026-11-22T10:00"))  # office hours, but before the date
+    check(auto_sent() == [], "launch auto reply: no follow-up before the date or outside office hours")
+    launch_auto.run(now=auto_at("2026-11-24T10:00"))
+    launch_auto.run(now=auto_at("2026-11-24T11:00"))
+    launch_auto.run(now=auto_at("2026-11-25T10:00"))
+    followups = [payload for payload in auto_posts if payload.get("action") == "followup"]
+    check(len(followups) == 1 and len(auto_sent()) == 1 and followups[0]["to"] == "help@office.test"
+          and followups[0]["from"] == "help@office.test" and followups[0]["since"] == "2026-11-14"
+          and followups[0]["replyTo"] == "me@example.test" and '<a href="https://example.test/pack">' in followups[0]["html"],
+          "launch auto reply: with no answer on the date, one follow-up is sent and never a second")
+    check("Follow-up sent 2026-11-24 10:00" in auto_row("auto-reply", auto_at("2026-11-25T10:00"))["detail"],
+          "launch auto reply: the row says when the follow-up went out")
+    launch_auto.run(now=auto_at("2026-12-04T10:00"))
+    check(auto_row("auto-reply", auto_at("2026-12-04T10:00"))["status"] == "done" and len(auto_sent()) == 1,
+          "launch auto reply: no answer by the last day closes the step")
+
+    auto_fresh()
+    auto_world.update({"version": 3, "inbox": "replied"})
+    launch_auto.run(now=auto_at("2026-11-24T10:00"))
+    answered = auto_row("auto-reply", auto_at("2026-11-24T10:00"))
+    check(auto_sent() == [] and "point 2 is fine" in (auto_home / "data" / "demo" / "reply.txt").read_text(encoding="utf-8")
+          and answered["status"] == "yours" and answered["actions"][0]["name"] == "launch:open_reply:demo",
+          "launch auto reply: an answer is saved, shown as mine to read, and no follow-up is sent")
+    check(launch_auto.action("launch:open_reply:demo") == "Answer opened." and auto_opened[-1].name == "reply.txt"
+          and auto_row("auto-reply", auto_at("2026-11-24T10:10"))["status"] == "done"
+          and launch_auto.action("launch:followup:demo", auto_at("2026-11-24T10:20")).startswith("This mail is already settled"),
+          "launch auto reply: opening the answer finishes the step")
+
+    auto_fresh()
+    auto_world.update({"version": 3, "at_send": "replied"})  # the answer lands between the check and the send
+    launch_auto.run(now=auto_at("2026-11-24T10:00"))
+    check(launch_auto.load_state("demo")["reply"]["status"] == "replied"
+          and "followup_attempt_at" not in launch_auto.load_state("demo")["reply"],
+          "launch auto reply: the relay's own last look wins, so an answer just before the send stops the follow-up")
+
+    # The first mail never arrived: say so, send no follow-up, and let me close the step
+    auto_fresh()
+    auto_world.update({"version": 3, "inbox": "bounced"})
+    launch_auto.run(now=auto_at("2026-11-24T10:00"))
+    launch_auto.run(now=auto_at("2026-11-25T10:00"))
+    returned = auto_row("auto-reply", auto_at("2026-11-25T10:00"))
+    check(auto_sent() == [] and len(auto_posts) == 1 and returned["status"] == "yours" and "undelivered" in returned["title"]
+          and [button["name"] for button in returned["actions"]] == ["launch:open_reply:demo", "launch:no_reply:demo"]
+          and launch_auto.action("launch:followup:demo", auto_at("2026-11-25T10:05")).startswith("This mail is already settled"),
+          "launch auto reply: a returned mail is reported, checked no further, and never followed up")
+    check(launch_auto.action("launch:no_reply:demo") == "Noted: no answer. This step is closed."
+          and "no follow-up" in auto_row("auto-reply", auto_at("2026-11-25T10:10"))["detail"],
+          "launch auto reply: closing a returned mail does not claim a follow-up was sent")
+
+    auto_fresh()
+    auto_world.update({"version": 3, "at_send": "bounced"})  # the bounce is only seen by the relay's last look
+    launch_auto.run(now=auto_at("2026-11-24T10:00"))
+    late_bounce = launch_auto.load_state("demo")["reply"]
+    check(late_bounce["status"] == "bounced" and "followup_sent_at" not in late_bounce and "followup_attempt_at" not in late_bounce,
+          "launch auto reply: a bounce found at send time is not written down as a sent follow-up")
+
+    auto_fresh()
+    auto_world["version"] = 3
+    launch_auto.run(now=auto_at("2026-11-16T09:00"))
+    auto_world["version"] = 0  # offline: the GET gets no answer
+    launch_auto.run(now=auto_at("2026-11-16T10:00"))
+    offline_row = auto_row("auto-reply", auto_at("2026-11-16T10:00"))
+    check(offline_row["status"] == "auto" and "the relay did not answer" in offline_row["detail"]
+          and auto_row("auto-relay", auto_at("2026-11-16T10:00")) is None,
+          "launch auto reply: offline is not mistaken for an old relay")
+
+    # B. invitations: nobody invented, a preview to me first, each person once, never more than the target
+    auto_fresh()
+    launch_auto.run(now=auto_at("2026-11-16T09:00"))
+    empty = auto_row("auto-invites", auto_at("2026-11-16T09:00"))
+    check(empty["status"] == "yours" and empty["actions"][0]["name"] == "launch:open_contacts:demo" and auto_posts == [],
+          "launch auto invites: an empty list asks me for people and mails nobody")
+    check(launch_auto.action("launch:open_contacts:demo").startswith("Contact list opened")
+          and "name,email,whatsapp" in (auto_home / "data" / "demo" / "contacts.csv").read_text(encoding="utf-8")
+          and auto_row("auto-invites", auto_at("2026-11-16T09:01"))["status"] == "yours",
+          "launch auto invites: the button makes an empty template (still nobody to invite)")
+    people_lines = ["# my list", "name,email,whatsapp", "Ani,,0812-3456-7890", "Budi,,+62 813 0000 1111"]
+    people_lines += [f"Friend {index},friend{index}@example.test," for index in range(1, 34)]
+    people_lines += ["Friend 1 again,FRIEND1@example.test,", "Nobody,,", "Broken,not-an-address,"]
+    (auto_home / "data" / "demo" / "contacts.csv").write_text("\n".join(people_lines) + "\n", encoding="utf-8")
+    found = launch_auto.load_contacts(auto_home / "data" / "demo" / "contacts.csv", 30)
+    check(len(found["people"]) == 30 and found["over"] == 5 and found["skipped"] == 3
+          and found["people"][0] == {"name": "Ani", "email": "", "phone": "6281234567890"}
+          and len({person["email"] or person["phone"] for person in found["people"]}) == 30,
+          "launch auto invites: doubles and unusable lines dropped, never more than the target")
+    launch_auto.run(now=auto_at("2026-11-16T10:00"))
+    launch_auto.run(now=auto_at("2026-11-16T11:00"))
+    check(len(auto_posts) == 1 and "to" not in auto_posts[0] and auto_posts[0]["subject"] == "Preview, please approve: Try it?"
+          and "friend28@example.test" in auto_posts[0]["text"] and "friend29@example.test" not in auto_posts[0]["text"],
+          "launch auto invites: one preview, with no recipient (the relay mails only its owner)")
+    approve_row = auto_row("auto-invites", auto_at("2026-11-16T11:00"))
+    whatsapp_row = auto_row("auto-invites-wa", auto_at("2026-11-16T11:00"))
+    whatsapp_page = (auto_home / "data" / "demo" / "invites.html").read_text(encoding="utf-8")
+    check(approve_row["status"] == "last-tap" and approve_row["actions"][0]["name"] == "launch:approve_invites:demo"
+          and whatsapp_row["status"] == "last-tap" and "https://wa.me/6281234567890?text=Hello%20Ani%2C" in whatsapp_page
+          and "https://wa.me/6281300001111?text=" in whatsapp_page and "example.test" not in approve_row["detail"],
+          "launch auto invites: approval is one tap; WhatsApp people get ready links on a local page")
+    launch_auto.run(now=auto_at("2026-11-28T10:05"))
+    check(auto_sent() == [], "launch auto invites: nothing goes out without my approval, even after the start")
+    check(launch_auto.action("launch:approve_invites:demo", auto_at("2026-11-20T09:00")).startswith("Approved: 28 invitations"),
+          "launch auto invites: approving covers exactly the previewed list")
+    launch_auto.run(now=auto_at("2026-11-27T10:00"))
+    check(auto_sent() == [] and auto_row("auto-invites", auto_at("2026-11-27T10:00"))["status"] == "auto",
+          "launch auto invites: approved invitations wait for the start time")
+    auto_world["refuse"] = {"friend7@example.test"}
+    launch_auto.run(now=auto_at("2026-11-28T10:05"))
+    launch_auto.run(now=auto_at("2026-11-28T11:05"))
+    auto_world["refuse"] = set()
+    launch_auto.run(now=auto_at("2026-11-28T12:05"))
+    invited = [payload["to"] for payload in auto_sent()]
+    check(sorted(invited) == sorted(f"friend{index}@example.test" for index in range(1, 29)) and len(invited) == 28,
+          "launch auto invites: at the start each previewed person is mailed once, across several runs")
+    check(auto_sent()[0]["text"] == "Hello Friend 1, one test tonight? https://example.test/app" and auto_sent()[0]["subject"] == "Try it?",
+          "launch auto invites: the mail is the approved text with the person's name")
+    failed_row = auto_row("auto-invites", auto_at("2026-11-28T12:05"))
+    check(failed_row["status"] == "blocked" and failed_row["title"] == "E-mail invitations: 27 of 28 sent" and "invite them by hand" in failed_row["detail"],
+          "launch auto invites: a mail that failed is reported, not retried")
+    check(launch_auto.action("launch:open_invites:demo") == "WhatsApp links opened." and auto_opened[-1].name == "invites.html"
+          and launch_auto.action("launch:wa_done:demo") == "Noted: the WhatsApp invitations are sent."
+          and auto_row("auto-invites-wa", auto_at("2026-11-28T12:10"))["status"] == "done",
+          "launch auto invites: WhatsApp is opened by me and ticked off by me")
+
+    auto_fresh(keep_contacts=True)
+    launch_auto.run(now=auto_at("2026-11-16T10:00"))
+    launch_auto.action("launch:approve_invites:demo", auto_at("2026-11-16T10:30"))
+    contacts_file = auto_home / "data" / "demo" / "contacts.csv"
+    contacts_file.write_text(contacts_file.read_text(encoding="utf-8").replace("friend2@example.test", "stranger@example.test"), encoding="utf-8")
+    stale_tap = launch_auto.action("launch:approve_invites:demo", auto_at("2026-11-28T09:00"))
+    launch_auto.run(now=auto_at("2026-11-28T10:05"))
+    check(stale_tap.startswith("The list or the text changed") and auto_sent() == [] and len(auto_posts) == 2
+          and "stranger@example.test" in auto_posts[1]["text"] and "to" not in auto_posts[1]
+          and auto_row("auto-invites", auto_at("2026-11-28T10:05"))["status"] == "last-tap",
+          "launch auto invites: a changed list voids the approval and asks again with a new preview")
+
+    # C. the waiting proposal: checked daily, judged weekly, reported, never rewritten
+    auto_fresh()
+    auto_calls.update({"sync": 0, "judge": 0})
+    launch_auto.run(now=auto_at("2026-11-16T09:00"))
+    launch_auto.run(now=auto_at("2026-11-16T10:00"))
+    healthy = auto_row("auto-proposal", auto_at("2026-11-16T10:00"))
+    check(auto_calls == {"sync": 1, "judge": 1} and healthy["status"] == "auto" and healthy["actions"] == [{"name": "launch_run_now", "label": "Check again now"}]
+          and "1 of 1 checks pass, 2 of 2 cited links answer" in healthy["detail"] and "Judge: 9.10 on 2026-11-16" in healthy["detail"]
+          and "Say who you are in the first line." in healthy["detail"],
+          "launch auto proposal: checked once a day, with the judge's score and top suggestion")
+    launch_auto.run(force=True, now=auto_at("2026-11-16T11:00"))
+    check(auto_calls == {"sync": 2, "judge": 1}, "launch auto proposal: 'Check again now' repeats the checks, not the weekly judge")
+    auto_world["dead"] = {"https://example.test/law"}
+    launch_auto.run(now=auto_at("2026-11-17T09:00"))
+    check(auto_row("auto-proposal", auto_at("2026-11-17T09:00"))["status"] == "auto", "launch auto proposal: one slow day does not report a link")
+    launch_auto.run(now=auto_at("2026-11-18T09:00"))
+    dead_row = auto_row("auto-proposal", auto_at("2026-11-18T09:00"))
+    check(dead_row["status"] == "blocked" and "link does not answer for 2 days: https://example.test/law" in dead_row["detail"],
+          "launch auto proposal: a cited link that is gone for two days blocks the row")
+    auto_world.update({"dead": set(), "checks_ok": False})
+    launch_auto.run(now=auto_at("2026-11-19T09:00"))
+    failing = auto_row("auto-proposal", auto_at("2026-11-19T09:00"))
+    check(failing["status"] == "blocked" and 'check "pack check" fails (pack.md: a link is missing)' in failing["detail"],
+          "launch auto proposal: a failing check blocks the row and says which one")
+    auto_world.update({"checks_ok": True, "sync_ok": False})
+    launch_auto.run(now=auto_at("2026-11-20T09:00"))
+    unreachable = auto_row("auto-proposal", auto_at("2026-11-20T09:00"))
+    check(unreachable["status"] == "blocked" and "GitHub was not reachable on 2026-11-20" in unreachable["detail"],
+          "launch auto proposal: without GitHub it keeps the last check and says so")
+    auto_world.update({"sync_ok": True, "score": 8.4})
+    launch_auto.run(now=auto_at("2026-11-22T09:00"))
+    check(auto_calls["judge"] == 1 and auto_row("auto-proposal", auto_at("2026-11-22T09:00"))["status"] == "auto",
+          "launch auto proposal: the judge is not asked again within the week")
+    launch_auto.run(now=auto_at("2026-11-23T09:00"))
+    fallen = auto_row("auto-proposal", auto_at("2026-11-23T09:00"))
+    check(auto_calls["judge"] == 2 and fallen["status"] == "blocked" and "score fell from 9.10 to 8.40" in fallen["detail"],
+          "launch auto proposal: a clear fall in the weekly score is reported")
+
+    # D. the dashboard card and its buttons
+    auto_fresh(keep_contacts=True)
+    auto_world["version"] = 3
+    launch_auto.run(now=auto_at("2026-11-16T09:00"))
+    card_rows = launch_auto.rows("demo", auto_at("2026-11-16T09:00"))
+    card = hub._launch_view(launch_test, {"summary": launch_answer, "stale": False, "read_at": "now"}, now=launch_now, auto_rows=card_rows)
+    check([step["id"] for step in card["needs_me"]] == ["name", "seen", "auto-reply", "auto-invites", "auto-invites-wa", "auto-proposal"]
+          and [step["status"] for step in card["needs_me"]] == ["blocked", "done", "auto", "last-tap", "last-tap", "auto"]
+          and card["open"] == 3 and card["automatic"] == 2,
+          "hub launch auto: automation rows replace the public steps they take over; 'runs itself' is not counted as open")
+    card_invite = card["needs_me"][3]
+    check(card_invite["automation"] and card_invite["private"] and [entry["label"] for entry in card_invite["links"]] == ["Texts"]
+          and card_invite["actions"][0] == {"name": "launch:approve_invites:demo", "label": "Approve the invitations"}
+          and card["needs_me"][2]["status_label"] == "runs itself",
+          "hub launch auto: a row keeps the links of the step it replaces and carries its buttons")
+    spoofed = hub._launch_view(launch_test, {"summary": {**launch_answer, "needsMe": [
+        {"id": "x", "title": "Trust me", "status": "auto", "replaces": "name", "actions": [{"name": "launch:followup:demo", "label": "Send"}]}]},
+        "stale": False, "read_at": "now"}, now=launch_now)
+    check(spoofed["needs_me"][0]["status"] == "yours" and spoofed["needs_me"][0]["actions"] == [] and not spoofed["needs_me"][0]["automation"]
+          and spoofed["needs_me"][0]["replaces"] is None and spoofed["open"] == 1,
+          "hub launch auto: a public summary cannot claim 'runs itself' or put a button on the page")
+    filtered = hub._launch_steps([{"title": "Row", "status": "auto", "actions": [
+        {"name": "patents_run_now", "label": "no"}, {"name": "launch:followup:demo\" onclick=\"x", "label": "no"}, "junk",
+        {"name": "launch:followup:demo", "label": "L" * 90}, {"name": "launch_run_now"}]}], True, trusted=True)[0]
+    check([entry["name"] for entry in filtered["actions"]] == ["launch:followup:demo", "launch_run_now"]
+          and len(filtered["actions"][0]["label"]) == 60 and filtered["actions"][1]["label"] == "Do it",
+          "hub launch auto: only launch buttons with a well-formed name reach the page")
+    auto_todo = hub.launch_todo({"tests": [card]}, today=launch_now.date())
+    check([item["title"] for item in auto_todo] == ["Demo app: Trademark search",
+                                                    "Demo app: E-mail invitations: approve the preview (28 people)",
+                                                    "Demo app: WhatsApp invitations: tap 2 ready links on Sat 28 Nov 10:00"]
+          and auto_todo[1]["action"] == "launch:approve_invites:demo" and auto_todo[1]["action_label"] == "Approve the invitations"
+          and auto_todo[0]["action"] is None,
+          "hub launch auto: only rows that need a tap become to-dos, with their button")
+    check(hub.run_action("launch:replied:demo") == "Noted: an answer came. No follow-up will be sent."
+          and launch_auto.load_state("demo")["reply"]["by_hand"] is True
+          and auto_row("auto-reply", auto_at("2026-11-16T09:30"))["actions"][0]["name"] == "launch:reply_read:demo"
+          and hub.run_action("launch:reply_read:demo") == "Marked as read.",
+          "hub launch auto: the card's buttons reach the automation")
+    for refused in ("launch:followup:other", "launch:followup:../x", "launch:nonsense:demo", "launch:followup", "launch:FOLLOWUP:demo",
+                    "launch:followup:demo:extra", "launch:followup:Bad Id"):
+        try:
+            hub.run_action(refused)
+            check(False, f"hub launch auto: malformed action refused ({refused})")
+        except ValueError:
+            check(True, f"hub launch auto: malformed action refused ({refused})")
+    check(len(hub._launch_auto_rows("demo")) >= 3 and hub._launch_auto_rows("nobody") == [], "hub launch auto: rows are read for a configured test only")
+    launch_auto.rows = lambda test_id, now=None: 1 / 0
+    check(hub._launch_auto_rows("demo") == [], "hub launch auto: a broken automation does not break the card")
+    launch_auto.rows = auto_real[-1]
+    check("runs itself" in hub.help_sections({}, None, {"tests": [card]})[-1]["auto"], "hub launch auto: the help entry explains the hourly automations")
+finally:
+    (launch_auto.DATA_DIR, launch_auto.PRIVATE_FILE, launch_auto.LOG_FILE, launch_auto._relay_version, launch_auto._relay_post,
+     launch_auto._open, launch_auto._sync_repo, launch_auto._run_command, launch_auto._link_answers,
+     launch_auto.SEND_PAUSE_SECONDS, launch_auto.rows) = auto_real
+
+auto_page = (Path(__file__).parent / "dashboard.html").read_text(encoding="utf-8")
+check(all(piece in auto_page for piece in ('auto: "good"', "s.automation", "actionButton(a.name, a.label, true)", "run by this PC")),
+      "dashboard: launch rows show 'automatic', their detail and their buttons")
+auto_source = (Path(__file__).parent / "launch_auto.py").read_bytes()
+check(not auto_source.startswith(b"\xef\xbb\xbf") and "\u00c3" not in auto_source.decode("utf-8")
+      and "\u00e2\u20ac" not in auto_source.decode("utf-8"), "launch_auto.py: clean UTF-8, no byte-order mark")
+auto_ignored = (Path(__file__).parent / ".gitignore").read_text(encoding="utf-8").split()
+check("data/launch_auto/" in auto_ignored and "launch_auto.log" in auto_ignored and "launch_private.json" in auto_ignored,
+      "launch auto: contacts, answers, state and the log are git-ignored")
+check(("launch" in hub.TASKS) == (hub.ROOT / "data" / "launch_auto").exists(),
+      "hub launch auto: the hourly task is listed only where it is installed")
+
 print("\nALL PASSED" if not failures else f"\n{len(failures)} FAILED")
 sys.exit(1 if failures else 0)

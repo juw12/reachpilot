@@ -31,3 +31,7 @@ data/launch_cache/
 
 # Patent screen: scan results and my notes name private repositories (patents.py)
 data/patents/
+
+# Launch automations: contact lists, mail texts, answers and run state (launch_auto.py)
+data/launch_auto/
+launch_auto.log

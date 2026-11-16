@@ -10,7 +10,8 @@ Modules live in modules/ (git-ignored, personal data) and keep running on their 
 Other platforms (Bluesky, Mastodon, Dev.to, Telegram, Discord) are part of the public code
 (channels.py); channels_section() reads their state from state.db.
 Launch tests (launch_section) are read from a project's public summary.json, plus private steps from
-launch_private.json (git-ignored) when that file exists.
+launch_private.json (git-ignored) when that file exists. Where launch_auto.py is installed its rows join them:
+steps this PC does by itself (watch for an answer, one follow-up, approved invitations, daily proposal checks).
 The patent screen (patents_section) reads the last weekly scan written by patents.py into data/patents/
 (git-ignored); it shows only where that folder exists.
 
@@ -61,6 +62,8 @@ if (PODCAST / "podcast.py").exists():  # only where the private podcast module i
     TASKS.update(podcast_tasks(PODCAST))
 if (ROOT / "data" / "patents").exists():  # only where `python patents.py install` has been run
     TASKS["patents"] = "Patent screen"
+if (ROOT / "data" / "launch_auto").exists():  # only where `python launch_auto.py install` has been run
+    TASKS["launch"] = "Launch automations"
 PYTHONW = Path(sys.executable).with_name("pythonw.exe")
 PYTHON = Path(sys.executable).with_name("python.exe")
 NO_WINDOW = 0x08000000
@@ -823,7 +826,8 @@ LAUNCH_CACHE = ROOT / "data" / "launch_cache"  # git-ignored: the last good answ
 LAUNCH_REFRESH_SECONDS = 600
 LAUNCH_RETRY_SECONDS = 120  # after a failed read, try again sooner
 LAUNCH_COUNTS = ("testers", "regulars", "letters")
-LAUNCH_STATES = {"done": "done", "last-tap": "one tap left", "blocked": "blocked", "yours": "only you"}
+LAUNCH_STATES = {"done": "done", "last-tap": "one tap left", "blocked": "blocked", "yours": "only you", "auto": "runs itself"}
+LAUNCH_BUTTON = re.compile(r"^(launch_run_now|launch:[a-z_]{2,30}:[a-z0-9][a-z0-9-]{0,39})$")
 LAUNCH_LINKS = (("app", "App"), ("repo", "Repo"), ("status", "Status page"),
                 ("launchIssue", "Launch issue"), ("verdictIssue", "Verdict"))
 
@@ -908,12 +912,21 @@ def _launch_days(moment, now: datetime | None) -> int | None:
     return int(-(-seconds // 86400))
 
 
-def _launch_steps(items, private: bool) -> list[dict]:
+def _launch_steps(items, private: bool, trusted: bool = False) -> list[dict]:
+    """Steps for the page. Only trusted rows (from launch_auto.py on this PC) may say "runs itself" or carry
+    buttons: a public summary comes from the network and must never be able to put an action on the page."""
     steps = []
     for item in items if isinstance(items, list) else []:
         if not isinstance(item, dict) or not item.get("title"):
             continue
         status = item.get("status") if item.get("status") in LAUNCH_STATES else "yours"
+        if status == "auto" and not trusted:
+            status = "yours"
+        buttons = [
+            {"name": entry["name"], "label": str(entry.get("label") or "Do it")[:60]}
+            for entry in (item.get("actions") if trusted and isinstance(item.get("actions"), list) else [])
+            if isinstance(entry, dict) and isinstance(entry.get("name"), str) and LAUNCH_BUTTON.match(entry["name"])
+        ]
         links = [
             {"label": str(entry.get("label") or entry["url"])[:80], "url": entry["url"], "note": ""}
             for entry in (item.get("links") if isinstance(item.get("links"), list) else [])
@@ -928,11 +941,24 @@ def _launch_steps(items, private: bool) -> list[dict]:
             "detail": str(item.get("detail") or "")[:600],
             "links": links,
             "private": private,
+            "automation": trusted,
+            "actions": buttons,
+            "replaces": str(item["replaces"])[:60] if trusted and item.get("replaces") else None,
         })
     return steps
 
 
-def _launch_view(test: dict, fetched: dict, private_steps=None, now: datetime | None = None) -> dict:
+def _launch_auto_rows(test_id: str) -> list[dict]:
+    """What launch_auto.py is doing for this test, read from disk. A problem there must not break the card."""
+    try:
+        import launch_auto
+
+        return launch_auto.rows(test_id)
+    except Exception:
+        return []
+
+
+def _launch_view(test: dict, fetched: dict, private_steps=None, now: datetime | None = None, auto_rows=None) -> dict:
     """One launch test for the dashboard. Every field is checked: a half-written summary must not break the page."""
     summary = _launch_dict(fetched.get("summary"))
     totals, need, stop = (_launch_dict(summary.get(key)) for key in ("totals", "need", "stop"))
@@ -946,7 +972,14 @@ def _launch_view(test: dict, fetched: dict, private_steps=None, now: datetime | 
         when = f"{days_left} day{'' if days_left == 1 else 's'} left"
     else:
         when = "ended" if days_left is not None else ""
-    steps = _launch_steps(summary.get("needsMe"), False) + _launch_steps(private_steps, True)
+    public = _launch_steps(summary.get("needsMe"), False)
+    automated = _launch_steps(auto_rows, True, trusted=True)
+    replaced = {step["replaces"]: step for step in reversed(automated) if step["replaces"]}
+    for step in public:  # an automation that takes a public step over keeps that step's links
+        taker = replaced.get(step["id"])
+        if taker is not None and not taker["links"]:
+            taker["links"] = step["links"]
+    steps = [step for step in public if step["id"] not in replaced] + _launch_steps(private_steps, True) + automated
 
     def text(key: str) -> str:
         return str(summary.get(key) or "")[:300]
@@ -977,14 +1010,16 @@ def _launch_view(test: dict, fetched: dict, private_steps=None, now: datetime | 
         } for key in LAUNCH_COUNTS],
         "links": [{"label": label, "url": links[key]} for key, label in LAUNCH_LINKS if _launch_url(links.get(key))],
         "needs_me": steps,
-        "open": sum(1 for step in steps if step["status"] != "done"),
+        "open": sum(1 for step in steps if step["status"] not in ("done", "auto")),
+        "automatic": sum(1 for step in steps if step["status"] == "auto"),
     }
 
 
 def launch_section() -> dict:
     private = _launch_private()
     tests = [
-        _launch_view(test, _launch_cached(test), _launch_dict(private.get(test["id"])).get("needsMe"))
+        _launch_view(test, _launch_cached(test), _launch_dict(private.get(test["id"])).get("needsMe"),
+                     auto_rows=_launch_auto_rows(test["id"]))
         for test in LAUNCH_TESTS
     ]
     return {"installed": bool(tests), "tests": tests}
@@ -1004,7 +1039,7 @@ def launch_todo(section: dict | None, today: date | None = None) -> list[dict]:
                 "links": [{**entry, "note": ""} for entry in test.get("links") or []],
             })
         for step in test.get("needs_me") or []:
-            if step["status"] == "done":
+            if step["status"] in ("done", "auto"):  # "auto" runs without me: nothing to do
                 continue
             try:
                 days = (date.fromisoformat(step["due"]) - today).days if step.get("due") else None
@@ -1015,11 +1050,14 @@ def launch_todo(section: dict | None, today: date | None = None) -> list[dict]:
             else:
                 priority = 2 if step["status"] == "last-tap" else 3
             lead = step["status_label"].capitalize() + (f", by {step['due']}" if step.get("due") else "") + "."
+            button = (step.get("actions") or [None])[0]
             items.append({
                 "priority": priority, "module": "Launch",
                 "title": f"{test['name']}: {step['title']}",
                 "detail": f"{lead} {step['detail']}".strip(),
-                "action": None, "action_label": None, "links": step["links"],
+                "action": button["name"] if button else None,
+                "action_label": button["label"] if button else None,
+                "links": step["links"],
             })
     return items
 
@@ -1282,8 +1320,13 @@ def help_sections(tasks: dict, podcast: dict | None = None, launch: dict | None 
                     + ", ".join(test["name"] for test in launch["tests"]) + "). The project's own workflow updates that file.",
             "auto": "Shows the launch test on Overview: days to the start or the end, each count against what is needed and the stop line, "
                     "the verdict, and the steps that still need you. Offline it shows the last good answer and says so. "
-                    "Steps that must stay private are read from launch_private.json on this PC (git-ignored).",
-            "you": "Do the steps marked 'one tap left', 'blocked' or 'only you'. They also sit in the To do list, urgent from 3 days before their date.",
+                    "Steps that must stay private are read from launch_private.json on this PC (git-ignored). "
+                    "Where launch_auto.py is installed, steps marked 'runs itself' are done by this PC every hour: it looks for the answer "
+                    "to a mail that was sent and sends one follow-up when the date passes without one, mails approved invitations at the "
+                    "start time (each person once, never more than the target), and checks the waiting proposal every day. "
+                    + when("launch", ""),
+            "you": "Do the steps marked 'one tap left', 'blocked' or 'only you'. They also sit in the To do list, urgent from 3 days before their date. "
+                   "Nothing is mailed to other people before you approved the preview that is mailed to you first.",
         })
     if patents and patents.get("installed"):
         entries.append({
@@ -1372,6 +1415,15 @@ def run_action(name: str) -> str:
         return "Patent screen started; the card updates in about a minute."
     if name.startswith("patents:"):
         return patents_action(name)
+    if name == "launch_run_now":
+        runner = PYTHONW if PYTHONW.exists() else Path(sys.executable)
+        subprocess.Popen([str(runner), str(ROOT / "launch_auto.py"), "--force"], cwd=ROOT, creationflags=NO_WINDOW)
+        _cache.pop("tasks", None)
+        return "Launch automations started; the card updates in a few minutes."
+    if name.startswith("launch:"):
+        import launch_auto
+
+        return launch_auto.action(name)
     raise ValueError(f"Unknown action: {name}")
 
 
