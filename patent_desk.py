@@ -773,7 +773,9 @@ def prefill_sb16(form: Path, target: Path, values: dict) -> bool:
 
 def pdf_pages(path: Path) -> int | None:
     """How many pages a PDF has, read from its page tree. None when the file cannot be read, or when the page
-    objects and the count in the page tree disagree (then the number is left for you to fill in)."""
+    objects and the count in the page tree disagree (then the number is left for you to fill in). A longer
+    document has a page tree with branches: each branch states its own count and the root states the total,
+    so the total is the largest count stated."""
     try:
         data = Path(path).read_bytes()
     except OSError:
@@ -783,7 +785,7 @@ def pdf_pages(path: Path) -> int | None:
     pages = len(re.findall(rb"/Type\s*/Page(?![A-Za-z])", data))
     stated = {int(count) for count in re.findall(rb"/Type\s*/Pages\b[^>]*?/Count\s+(\d+)", data)}
     stated |= {int(count) for count in re.findall(rb"/Count\s+(\d+)[^>]*?/Type\s*/Pages\b", data)}
-    return pages if pages and stated == {pages} else None
+    return pages if pages and stated and max(stated) == pages else None
 
 
 def build_package(name: str, dossier: dict, item: dict | None = None, row: dict | None = None, pdf: bool = True) -> dict:
@@ -805,19 +807,22 @@ def build_package(name: str, dossier: dict, item: dict | None = None, row: dict 
         if not filled:
             (target / SB16_FILE).unlink(missing_ok=True)
     (target / "cover_sheet.md").write_text(cover_sheet(name, dossier, pages, filled), encoding="utf-8")
-    return {"built": date.today().isoformat(), "pdf": bool(made), "draft": not ready, "sb16": filled}
+    return {"built": date.today().isoformat(), "pdf": bool(made), "draft": not ready, "sb16": filled, "pages": pages}
 
 
 def package_stale(old: dict, fingerprint: str, target: Path, pdf: bool = True, ready: bool = False,
                   edge: bool | None = None, form=sb16_form) -> bool:
     """Whether a package is built again: the dossier, stage or score changed, the specification is gone, or a
-    part that could not be made last time (the printed PDF, the typed-in form) can be tried again."""
+    part that could not be made last time (the printed PDF, the typed-in form, the page count on that form) can
+    be tried again."""
     if old.get("fingerprint") != fingerprint or not (target / "specification.md").exists():
         return True
     if not pdf:
         return False
     if not old.get("pdf") and (any(path.exists() for path in EDGE) if edge is None else edge):
         return True
+    if ready and old.get("sb16") and not old.get("pages") and pdf_pages(target / "specification.pdf"):
+        return True  # the form was typed in without its page count, and the printed PDF can be counted now
     return ready and not old.get("sb16") and can_prefill() and form() is not None
 
 
