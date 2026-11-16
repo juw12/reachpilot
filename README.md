@@ -246,6 +246,13 @@ A repository whose name should not appear in this repository (a private one, for
 git-ignored `config.local.json` instead of `config.json`: `{"exclude_repos": ["its-name"]}`. Only that list is
 read from the file.
 
+**Leak check.** `python leakcheck.py --history` looks for the name of every private repository of the last patent
+scan in the tracked files and in every commit, and ends with an error when it finds one. It prints the place (a
+file and a line, or a commit), never the name. The same check runs in CI against the repository secret
+`PRIVATE_NAMES`, which the daily patent run refreshes (`python leakcheck.py --sync` does it by hand). In
+`config.local.json`, `"leak_words"` adds your own words to the list and `"leak_accepted"` takes out a name you
+decided to live with or an ordinary word.
+
 ### Create the LinkedIn app (once, about 5 minutes)
 
 ReachPilot posts as you through your own free LinkedIn developer app; nobody else's server is involved.
@@ -406,6 +413,7 @@ and Markdown are still written. `python patent_desk.py show` prints the desk.
 | `patent_desk.py` | daily patent desk: readiness checklist per candidate, provisional draft package, filing follow-up |
 | `launch_auto.py` | hourly launch automations: an answer and one follow-up, invitations after approval, daily checks of a waiting document |
 | `selfupdate.py` | fast-forward updater used by the dashboard and the Updates task |
+| `leakcheck.py` | no private repository name in the files or the history (run in CI, names never printed) |
 | `selftest.py` | tests (run in CI) |
 
 ## License

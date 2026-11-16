@@ -572,8 +572,16 @@ if __name__ == "__main__":
         except Exception as error:
             desk = f"Patent desk failed: {type(error).__name__}: {error}"
         log(desk)
+        try:  # the CI leak check uses the same private names as this PC, so a new private repo is covered the next day
+            import leakcheck
+
+            leak = leakcheck.sync(leakcheck.local_names())
+        except Exception as error:
+            leak = f"Leak list not stored: {type(error).__name__}: {error}"
+        log(leak)
         if sys.stdout:
             print(outcome)
             print(desk)
+            print(leak)
     else:
         print(__doc__)
