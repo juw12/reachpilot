@@ -1146,7 +1146,9 @@ function readersCard(r) {
     : `Target ${num(r.target)} by ${day}: ${num(r.needed)} to go in ${num(r.days_left)} day${r.days_left === 1 ? "" : "s"}, about ${num(r.per_day)} a day`;
   const read = r.stale
     ? `Cached numbers of ${esc(niceDate(r.date))}: the live file did not answer.`
-    : `Numbers of ${esc(niceDate(r.date))}, read ${esc(r.read_at)}.`;
+    : r.route === "git"
+      ? `Numbers of ${esc(niceDate(r.date))}, read through git: this network blocks the plain link.`
+      : `Numbers of ${esc(niceDate(r.date))}, read ${esc(r.read_at)}.`;
   return `<div class="card module readers">${head}
     <div class="big">${num(r.subscribers)} subscriber${r.subscribers === 1 ? "" : "s"}</div>
     <div class="hint">${num(r.views)} typical view${r.views === 1 ? "" : "s"} a post &middot; ${num(r.per_100)} views per 100 readers &middot; ${trend}</div>

@@ -1898,6 +1898,7 @@ READERS = [
     # juw12/morrow writes one row a day on its social-data branch. ReachPilot only reads it: no post, no write.
     {"id": "morrow", "name": "Morrow Brief",
      "url": "https://raw.githubusercontent.com/juw12/morrow/social-data/metrics.csv",
+     "git": "https://github.com/juw12/morrow.git", "branch": "social-data", "file": "metrics.csv",
      "source": "https://github.com/juw12/morrow/tree/social-data",
      "target": 250, "target_date": "2026-12-31"},
 ]
@@ -1969,22 +1970,47 @@ def _readers_fetch(url: str) -> str | None:
         return None
 
 
+def _readers_git(source: dict) -> str | None:
+    """The same file through git, for a network where raw.githubusercontent is blocked (this PC's OA proxy is).
+
+    A small bare copy sits in the cache folder, so only a newer commit costs a fetch, and nothing in the
+    project's working copy is touched.
+    """
+    folder = READERS_CACHE / "git" / source["id"]
+    try:
+        folder.parent.mkdir(parents=True, exist_ok=True)
+        if (folder / "HEAD").exists():
+            done = subprocess.run(["git", "--git-dir", str(folder), "fetch", "--quiet", "--depth", "1", "origin",
+                                   source["branch"]], capture_output=True, timeout=60)
+        else:
+            done = subprocess.run(["git", "clone", "--quiet", "--bare", "--single-branch", "--branch", source["branch"],
+                                   source["git"], str(folder)], capture_output=True, timeout=90)
+        if done.returncode != 0:
+            return None
+        shown = subprocess.run(["git", "--git-dir", str(folder), "show", f"{source['branch']}:{source['file']}"],
+                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return shown.stdout if shown.returncode == 0 else None
+
+
 def _readers_file(source: dict) -> dict:
-    """A fresh file when the network answers; otherwise the last good copy from disk, marked stale."""
+    """A fresh read when the network answers (plain link first, git after it), else the last good copy on disk."""
     cache_file = READERS_CACHE / f"{source['id']}.csv"
-    text = _readers_fetch(source["url"])
-    if text and parse_metrics(text):
-        try:
-            READERS_CACHE.mkdir(parents=True, exist_ok=True)
-            cache_file.write_text(text, encoding="utf-8")
-        except OSError:
-            pass
-        return {"text": text, "stale": False, "read_at": datetime.now().strftime("%Y-%m-%d %H:%M")}
+    for route, read in (("link", lambda: _readers_fetch(source["url"])), ("git", lambda: _readers_git(source))):
+        text = read()
+        if text and parse_metrics(text):
+            try:
+                READERS_CACHE.mkdir(parents=True, exist_ok=True)
+                cache_file.write_text(text, encoding="utf-8")
+            except OSError:
+                pass
+            return {"text": text, "stale": False, "route": route, "read_at": datetime.now().strftime("%Y-%m-%d %H:%M")}
     try:
         text = cache_file.read_text(encoding="utf-8")
     except OSError:
-        return {"text": "", "stale": True, "read_at": None}
-    return {"text": text, "stale": True, "read_at": stamp(cache_file)}
+        return {"text": "", "stale": True, "route": "cache", "read_at": None}
+    return {"text": text, "stale": True, "route": "cache", "read_at": stamp(cache_file)}
 
 
 def _readers_cached(source: dict) -> dict:
@@ -2004,7 +2030,8 @@ def readers_section(today: date | None = None) -> dict:
         got = _readers_cached(source)
         view = readers_view(parse_metrics(got["text"]), source["target"], source["target_date"], today)
         view.update({"id": source["id"], "name": source["name"], "link": source.get("source", ""),
-                     "source_url": source["url"], "stale": got["stale"], "read_at": got["read_at"]})
+                     "source_url": source["url"], "stale": got["stale"], "read_at": got["read_at"],
+                     "route": got.get("route", "link")})
         products.append(view)
     return {"installed": any(product["available"] for product in products), "products": products}
 

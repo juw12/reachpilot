@@ -735,11 +735,12 @@ check(readers_done["reached"] and readers_done["needed"] == 0 and readers_done["
 check(hub.readers_view([], 250, "2026-12-31", readers_today)["available"] is False,
       "readers: no rows says so instead of showing a zero")
 
-readers_real = (hub._readers_fetch, hub.READERS_CACHE)
+readers_real = (hub._readers_fetch, hub._readers_git, hub.READERS_CACHE)
 readers_home = Path(tempfile.mkdtemp())
 try:
     hub.READERS_CACHE = readers_home / "cache"
     hub._readers_fetch = lambda url: None
+    hub._readers_git = lambda source: None
     for cache_key in [key for key in hub._cache if str(key).startswith("readers:")]:
         hub._cache.pop(cache_key, None)
     offline = hub.readers_section(today=readers_today)
@@ -764,6 +765,19 @@ try:
     check(all(product["source_url"].endswith("/morrow/social-data/metrics.csv")
               for product in hub.readers_section(today=readers_today)["products"]),
           "readers: the card names the file it read")
+    hub._readers_fetch = lambda url: None  # the plain link is blocked on this PC's proxy
+    hub._readers_git = lambda source: metrics_csv.replace("2026-11-18,2,5,2,100", "2026-11-18,4,5,2,50")
+    for cache_key in [key for key in hub._cache if str(key).startswith("readers:")]:
+        hub._cache.pop(cache_key, None)
+    via_git = hub.readers_section(today=readers_today)["products"][0]
+    check(via_git["stale"] is False and via_git["route"] == "git" and via_git["subscribers"] == 4,
+          "readers: when the plain link is blocked the same file is read through git, and the card says so")
+    hub._readers_fetch = lambda url: metrics_csv.replace("2026-11-18,2,5,2,100", "2026-11-18,5,5,2,40")
+    for cache_key in [key for key in hub._cache if str(key).startswith("readers:")]:
+        hub._cache.pop(cache_key, None)
+    check(hub.readers_section(today=readers_today)["products"][0]["route"] == "link",
+          "readers: the plain link is used first when it answers")
+    hub._readers_git = lambda source: None
     hub._readers_fetch = lambda url: None
     for cache_key in [key for key in hub._cache if str(key).startswith("readers:")]:
         hub._cache.pop(cache_key, None)
@@ -776,7 +790,7 @@ try:
     check(hub._readers_cached(hub.READERS[0])["stale"] is False,
           "readers: two minutes after a failed read the card tries the live file again")
 finally:
-    hub._readers_fetch, hub.READERS_CACHE = readers_real
+    hub._readers_fetch, hub._readers_git, hub.READERS_CACHE = readers_real
     shutil.rmtree(readers_home, ignore_errors=True)
     for cache_key in [key for key in hub._cache if str(key).startswith("readers:")]:
         hub._cache.pop(cache_key, None)

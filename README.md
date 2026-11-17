@@ -230,8 +230,10 @@ Once a day `growth.py` grows the audience and points all of it at GitHub:
   (`date,subscribers,posts_counted,median_views,views_per_100_subscribers`) on a branch of its own repo. The
   dashboard reads it read-only (Morrow Brief: `juw12/morrow`, branch `social-data`) and shows, on Overview,
   today's subscribers, the typical views a post gets, and the gap to the target the project was given
-  (250 by 31 Dec) with the pace the remaining days need. The file is cached for the next offline start,
-  and the card says when it is showing the cache.
+  (250 by 31 Dec) with the pace the remaining days need. The plain link is tried first; where a proxy blocks
+  `raw.githubusercontent` (the office network does), the same file is read through git into a small bare copy
+  under `data/readers_cache/git/`. The last good copy is kept for an offline start, and the card says when it
+  is showing the cache instead of live numbers.
 
 It never follows, likes or replies to strangers automatically: Mastodon instances and Bluesky treat that as spam.
 
