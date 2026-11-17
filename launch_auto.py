@@ -57,7 +57,8 @@ NUDGE_TRIES = 3  # a reminder that could not be mailed is tried again on the nex
 NUDGE_LINKS = 6  # links of one step that are repeated in the reminder
 LINK_LIMIT = 40
 LINK_STRIKES = 2  # a link is reported after this many failed days in a row, not on one slow answer
-SCORE_DROP = 0.5  # judge noise is about 0.3, so only a larger fall is reported
+SCORE_DROP = 1.0  # a fall from the run before is reported above this. Measured noise on near-identical pages
+# reaches 0.60: 9.75 to 9.15 (commit 14c35eb) and 9.70 to 9.10 (commit 8cb148e) on 17 Nov 2026.
 JUDGE_TIMEOUT = 1500  # seconds for one weekly judge run: the judges answer side by side and each may retry
 # twice (180 s a try), so the slowest observed run took 549 s on 16 Nov 2026. 600 s left it 51 s of room.
 
@@ -815,8 +816,9 @@ def proposal_rows(test_id: str, cfg: dict, state: dict, now: datetime) -> list[d
         if latest.get("commit") and proposal.get("commit") and latest["commit"] != proposal["commit"]:
             judged += " The page changed after that score; the weekly run judges the new text."
         judged += f" Next weekly run {_nice((_day(latest['date']) or now.date()) + timedelta(days=every))}."
-        if latest["score"] < best - SCORE_DROP:
-            problems.append(f"the judge's score fell from {best:.2f} to {latest['score']:.2f}")
+        if len(scores) > 1 and round(scores[-2]["score"] - latest["score"], 2) >= SCORE_DROP:
+            # Against the run before, not the best ever: a good week should not turn every later week into a scare.
+            problems.append(f"the judge's score fell from {scores[-2]['score']:.2f} to {latest['score']:.2f}")
     elif (cfg.get("judge") or {}).get("command") and not _judge_missed(proposal):
         judged = f" Judge: {proposal.get('judge_error') or 'first run pending'}."
     stale = f" GitHub was not reachable on {proposal['sync_failed_on']}; this is the last good check." if proposal.get("sync_error") else ""

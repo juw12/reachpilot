@@ -3998,14 +3998,25 @@ try:
     unreachable = auto_row("auto-proposal", auto_at("2026-11-20T09:00"))
     check(unreachable["status"] == "blocked" and "GitHub was not reachable on 2026-11-20" in unreachable["detail"],
           "launch auto proposal: without GitHub it keeps the last check and says so")
-    auto_world.update({"sync_ok": True, "score": 8.4})
+    auto_world.update({"sync_ok": True, "score": 8.1})
     launch_auto.run(now=auto_at("2026-11-22T09:00"))
     check(auto_calls["judge"] == 1 and auto_row("auto-proposal", auto_at("2026-11-22T09:00"))["status"] == "auto",
           "launch auto proposal: the judge is not asked again within the week")
     launch_auto.run(now=auto_at("2026-11-23T09:00"))
     fallen = auto_row("auto-proposal", auto_at("2026-11-23T09:00"))
-    check(auto_calls["judge"] == 2 and fallen["status"] == "blocked" and "score fell from 9.10 to 8.40" in fallen["detail"],
+    check(auto_calls["judge"] == 2 and fallen["status"] == "blocked" and "score fell from 9.10 to 8.10" in fallen["detail"],
           "launch auto proposal: a clear fall in the weekly score is reported")
+    quiet = {"proposal": {"checked_on": "2026-11-17", "checked_at": "2026-11-17 09:00", "commit": "8cb148e",
+                          "checks": [{"name": "pack check", "ok": True}], "links": {"total": 11, "strikes": {}},
+                          "scores": [{"date": "2026-11-10", "score": 9.75, "commit": "ee2de23", "judges": "3 of 3"},
+                                     {"date": "2026-11-17", "score": 9.15, "commit": "14c35eb", "judges": "3 of 3"}]}}
+    quiet_row = launch_auto.proposal_rows("demo", {"name": "Review pack", "judge": {"every_days": 7}}, quiet, auto_at("2026-11-17T09:00"))[0]
+    quiet["proposal"]["scores"][-1]["score"] = 8.15
+    loud_row = launch_auto.proposal_rows("demo", {"name": "Review pack", "judge": {"every_days": 7}}, quiet, auto_at("2026-11-17T09:00"))[0]
+    check(quiet_row["status"] == "auto" and "score fell" not in quiet_row["detail"],
+          "launch auto proposal: the 0.60 the judges differ by on near-identical pages (9.75 then 9.15) is not reported as a fall")
+    check(loud_row["status"] == "blocked" and "score fell from 9.75 to 8.15" in loud_row["detail"],
+          "launch auto proposal: a fall of 1.60 from the run before is still reported, against the previous run, not the best ever")
     check("Next weekly run Mon 23 Nov." in healthy["detail"] and auto_world["judge_budget"] >= 1200,
           "launch auto proposal: the row says when the next weekly run is due, and the judge gets more than the 549 s "
           "the slowest observed run needed in 600 s")
