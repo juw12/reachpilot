@@ -5,6 +5,7 @@ import random
 import sys
 import sqlite3
 import tempfile
+import shutil
 import base64
 import hashlib
 import threading
@@ -695,6 +696,78 @@ try:
 finally:
     hub._launch_fetch, hub.LAUNCH_CACHE, hub.LAUNCH_PRIVATE = launch_real
     for cache_key in [key for key in hub._cache if str(key).startswith("launch:")]:
+        hub._cache.pop(cache_key, None)
+
+# Readers: a project's own metrics.csv (hub.py readers_section / readers_view), read-only
+from datetime import date  # noqa: E402
+
+metrics_csv = ("date,subscribers,posts_counted,median_views,views_per_100_subscribers\n"
+               "2026-11-17,2,5,2,100\n"
+               "2026-11-18,2,5,2,100\n")
+readers_rows = hub.parse_metrics(metrics_csv)
+check([row["date"] for row in readers_rows] == ["2026-11-17", "2026-11-18"]
+      and readers_rows[-1]["subscribers"] == 2 and readers_rows[-1]["views"] == 2,
+      "readers: the CSV becomes rows, oldest first, subscribers and typical views kept")
+check(hub.parse_metrics(metrics_csv + "2026-11-18,7,5,3,43\n")[-1]["subscribers"] == 7
+      and len(hub.parse_metrics(metrics_csv + "2026-11-18,7,5,3,43\n")) == 2,
+      "readers: a day written twice keeps the last line, not a second row")
+check(hub.parse_metrics("") == [] and hub.parse_metrics("nonsense\n") == []
+      and hub.parse_metrics("date,subscribers,median_views\n2026-11-18,abc,2\n") == []
+      and hub.parse_metrics("\ufeffdate,subscribers,median_views\n2026-11-18,2,2\n")[0]["subscribers"] == 2,
+      "readers: an empty, half-written or BOM-prefixed file gives no rows (or the good rows) instead of an error")
+
+readers_today = date(2026, 11, 18)
+readers_view = hub.readers_view(readers_rows, 250, "2026-12-31", readers_today)
+check(readers_view["available"] and readers_view["subscribers"] == 2 and readers_view["views"] == 2
+      and readers_view["days_left"] == 43 and readers_view["date"] == "2026-11-18",
+      "readers: the latest numbers, and 43 days left from 18 Nov to 31 Dec")
+check(readers_view["needed"] == 248 and readers_view["per_day"] == 6 and readers_view["per_week"] == 42,
+      "readers: the pace the 250 target needs (248 to go in 43 days: about 6 a day)")
+check(readers_view["progress"] == 1 and readers_view["gained"] == 0 and readers_view["reached"] is False
+      and readers_view["headline"] == "2 subscribers, 2 typical views a post",
+      "readers: progress against the target, the change since the first row, and a plain headline")
+readers_done = hub.readers_view(
+    [{"date": "2026-12-20", "subscribers": 260, "views": 40, "posts": 5, "per_100": 15}], 250, "2026-12-31",
+    date(2026, 12, 20))
+check(readers_done["reached"] and readers_done["needed"] == 0 and readers_done["per_day"] == 0
+      and readers_done["progress"] == 100,
+      "readers: past the target there is no pace left to ask for")
+check(hub.readers_view([], 250, "2026-12-31", readers_today)["available"] is False,
+      "readers: no rows says so instead of showing a zero")
+
+readers_real = (hub._readers_fetch, hub.READERS_CACHE)
+readers_home = Path(tempfile.mkdtemp())
+try:
+    hub.READERS_CACHE = readers_home / "cache"
+    hub._readers_fetch = lambda url: None
+    for cache_key in [key for key in hub._cache if str(key).startswith("readers:")]:
+        hub._cache.pop(cache_key, None)
+    offline = hub.readers_section(today=readers_today)
+    check(offline["installed"] is False and offline["products"][0]["available"] is False
+          and offline["products"][0]["name"] == "Morrow Brief",
+          "readers: offline with no cache says so, and the dashboard still builds")
+    hub.READERS_CACHE.mkdir(parents=True, exist_ok=True)
+    (hub.READERS_CACHE / "morrow.csv").write_text(metrics_csv, encoding="utf-8")
+    for cache_key in [key for key in hub._cache if str(key).startswith("readers:")]:
+        hub._cache.pop(cache_key, None)
+    cached_section = hub.readers_section(today=readers_today)["products"][0]
+    check(cached_section["available"] and cached_section["stale"] and cached_section["subscribers"] == 2
+          and cached_section["target"] == 250 and cached_section["read_at"],
+          "readers: offline, the last good file is shown and marked as read from the cache")
+    hub._readers_fetch = lambda url: metrics_csv.replace("2026-11-18,2,5,2,100", "2026-11-18,3,5,2,67")
+    for cache_key in [key for key in hub._cache if str(key).startswith("readers:")]:
+        hub._cache.pop(cache_key, None)
+    live = hub.readers_section(today=readers_today)["products"][0]
+    check(live["stale"] is False and live["subscribers"] == 3
+          and "3,5,2,67" in (hub.READERS_CACHE / "morrow.csv").read_text(encoding="utf-8"),
+          "readers: a live answer is used and kept for the next offline start")
+    check(all(product["source_url"].endswith("/morrow/social-data/metrics.csv")
+              for product in hub.readers_section(today=readers_today)["products"]),
+          "readers: the card names the file it read")
+finally:
+    hub._readers_fetch, hub.READERS_CACHE = readers_real
+    shutil.rmtree(readers_home, ignore_errors=True)
+    for cache_key in [key for key in hub._cache if str(key).startswith("readers:")]:
         hub._cache.pop(cache_key, None)
 
 # hub: the TradeBot card - five steps from the trading bot's public status page, read only

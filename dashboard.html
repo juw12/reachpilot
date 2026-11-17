@@ -74,6 +74,9 @@
   pre.text { margin: 8px 0 0; padding: 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface);
     font: inherit; white-space: pre-wrap; }
   .empty { padding: 18px; border: 1px dashed var(--line-strong); border-radius: 6px; color: var(--muted); text-align: center; }
+/* Readers: the bar from today's number to the project's own target */
+.meter { height: 6px; margin: 10px 0 8px; border-radius: 3px; background: var(--line); overflow: hidden; }
+.meter > span { display: block; height: 100%; background: var(--ink); }
 
   /* Page head: the group (or today's date), the page name, one line on what the page shows */
   .page-head { margin: 0 0 28px; }
@@ -1123,6 +1126,37 @@ function keepingState(root, render) {
   root.querySelectorAll("input[data-keep]").forEach((input) => { if (typed[input.dataset.keep]) input.value = typed[input.dataset.keep]; });
 }
 
+// Readers: one project's own numbers (juw12/morrow social-data/metrics.csv) against the target it was given.
+function meter(percent, label) {
+  const value = Math.max(0, Math.min(100, Number(percent) || 0));
+  return `<div class="meter" role="img" aria-label="${esc(label)}"><span style="width:${value}%"></span></div>`;
+}
+
+function readersCard(r) {
+  const day = esc(niceDate(r.target_date).replace(/^[A-Za-z]{3} /, ""));
+  const head = `<h3>${esc(r.name)} readers</h3>`;
+  if (!r.available) {
+    return `<div class="card module readers">${head}
+      <div class="hint">No numbers yet: ${link(r.link, "the metrics file")} has not been read on this PC.</div>
+    </div>`;
+  }
+  const trend = r.gained ? `${r.gained > 0 ? "+" : ""}${num(r.gained)} since ${esc(niceDate(r.since))}` : `flat since ${esc(niceDate(r.since))}`;
+  const pace = r.reached
+    ? `<span class="badge good">Target of ${num(r.target)} reached</span>`
+    : `Target ${num(r.target)} by ${day}: ${num(r.needed)} to go in ${num(r.days_left)} day${r.days_left === 1 ? "" : "s"}, about ${num(r.per_day)} a day`;
+  const read = r.stale
+    ? `Cached numbers of ${esc(niceDate(r.date))}: the live file did not answer.`
+    : `Numbers of ${esc(niceDate(r.date))}, read ${esc(r.read_at)}.`;
+  return `<div class="card module readers">${head}
+    <div class="big">${num(r.subscribers)} subscriber${r.subscribers === 1 ? "" : "s"}</div>
+    <div class="hint">${num(r.views)} typical view${r.views === 1 ? "" : "s"} a post &middot; ${num(r.per_100)} views per 100 readers &middot; ${trend}</div>
+    ${meter(r.progress, `${r.progress}% of the ${num(r.target)} target`)}
+    <div class="hint">${pace}</div>
+    ${r.series.length > 2 ? lineChart(r.series, "") : ""}
+    <div class="hint">${read} ${link(r.link, "Source")}</div>
+  </div>`;
+}
+
 function renderOverview(d) {
   keepingState(document.getElementById("overview"), () => drawOverview(d));
 }
@@ -1141,6 +1175,7 @@ function drawOverview(d) {
   const tests = (h.launch && h.launch.tests) || [];
   const patents = h.patents && h.patents.installed ? h.patents : null;
   const tradebot = h.tradebot && h.tradebot.installed ? h.tradebot : null;
+  const readers = (h.readers && h.readers.products) || [];
   document.getElementById("overview").innerHTML = `
     ${pageHead(dateLine, title, lead)}
     <div class="grid">
@@ -1189,6 +1224,7 @@ function drawOverview(d) {
         ${t.available ? `<div class="big">${esc(t.headline || "No verdict yet.")}</div>
           ${t.next_step ? `<div class="hint">${esc(t.next_step)}</div>` : ""}` : `<div class="hint">No answer yet from the project's status file.</div>`}
       </div>`).join("")}
+      ${readers.map(readersCard).join("")}
       ${patents ? `<div class="card module">
         <h3>Patents <button class="btn ghost" data-goto="patents">Open</button></h3>
         ${patents.has_scan ? `<div class="big">${patentHeadline(patents.counts)}</div>

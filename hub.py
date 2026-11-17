@@ -22,7 +22,9 @@ Every reader is defensive: a missing or half-written file shows as "not set up" 
 from __future__ import annotations
 
 import csv
+import io
 import json
+import math
 import os
 import re
 import subprocess
@@ -1890,6 +1892,111 @@ def run_action(name: str) -> str:
     raise ValueError(f"Unknown action: {name}")
 
 
+# ------------------------------------------------------------------ readers (a project's own numbers, one CSV row a day)
+
+READERS = [
+    # juw12/morrow writes one row a day on its social-data branch. ReachPilot only reads it: no post, no write.
+    {"id": "morrow", "name": "Morrow Brief",
+     "url": "https://raw.githubusercontent.com/juw12/morrow/social-data/metrics.csv",
+     "source": "https://github.com/juw12/morrow/tree/social-data",
+     "target": 250, "target_date": "2026-12-31"},
+]
+READERS_CACHE = ROOT / "data" / "readers_cache"  # git-ignored: the last good file, shown when the network is out
+READERS_REFRESH_SECONDS = 900
+
+
+def parse_metrics(text: str) -> list[dict]:
+    """The rows of a metrics.csv, oldest first. A line that is not a date with numbers is skipped, not fatal."""
+    if not text:
+        return []
+    rows: list[dict] = []
+    try:
+        reader = csv.DictReader(io.StringIO(text.lstrip("\ufeff")))
+        for line in reader:
+            day = date.fromisoformat(str(line.get("date") or "").strip())
+            rows = [row for row in rows if row["date"] != day.isoformat()]  # a day written twice: the last line wins
+            rows.append({
+                "date": day.isoformat(),
+                "subscribers": int(str(line.get("subscribers") or 0).strip()),
+                "views": int(float(str(line.get("median_views") or 0).strip())),
+                "posts": int(float(str(line.get("posts_counted") or 0).strip())),
+                "per_100": int(float(str(line.get("views_per_100_subscribers") or 0).strip())),
+            })
+    except (ValueError, TypeError, csv.Error):  # a half-written file: keep what was readable before the bad line
+        pass
+    rows.sort(key=lambda row: row["date"])
+    return rows
+
+
+def readers_view(rows: list[dict], target: int, target_date: str, today: date | None = None) -> dict:
+    """Where a project stands against its own target, and the pace the remaining days need."""
+    today = today or date.today()
+    days_left = max((date.fromisoformat(target_date) - today).days, 0)
+    view = {"available": False, "target": target, "target_date": target_date, "days_left": days_left}
+    if not rows:
+        return view
+    first, latest = rows[0], rows[-1]
+    subscribers = latest["subscribers"]
+    views = latest["views"]
+    reached = subscribers >= target
+    needed = max(target - subscribers, 0)
+    per_day = 0 if reached or not days_left else math.ceil(needed / days_left)
+    view.update({
+        "available": True, "date": latest["date"], "subscribers": subscribers, "views": views,
+        "per_100": latest["per_100"] or (round(100 * views / subscribers) if subscribers else 0),
+        "posts": latest["posts"], "needed": needed, "reached": reached, "per_day": per_day,
+        "per_week": per_day * 7 if per_day else 0,
+        "progress": 100 if reached else max(0, min(100, round(100 * subscribers / target))) if target else 0,
+        "gained": subscribers - first["subscribers"], "since": first["date"], "days_counted": len(rows),
+        "headline": f"{subscribers} subscriber{'s' if subscribers != 1 else ''}, "
+                    f"{views} typical view{'s' if views != 1 else ''} a post",
+        "series": [{"x": row["date"], "y": row["subscribers"]} for row in rows],
+    })
+    return view
+
+
+def _readers_fetch(url: str) -> str | None:
+    """The CSV text, or None when the network is out or the answer is not a CSV with numbers in it."""
+    import urllib.error
+    import urllib.request
+
+    request = urllib.request.Request(url, headers={"User-Agent": "reachpilot"})
+    try:
+        with urllib.request.urlopen(request, timeout=6) as response:
+            return response.read().decode("utf-8", "replace")
+    except (urllib.error.URLError, OSError, ValueError):
+        return None
+
+
+def _readers_file(source: dict) -> dict:
+    """A fresh file when the network answers; otherwise the last good copy from disk, marked stale."""
+    cache_file = READERS_CACHE / f"{source['id']}.csv"
+    text = _readers_fetch(source["url"])
+    if text and parse_metrics(text):
+        try:
+            READERS_CACHE.mkdir(parents=True, exist_ok=True)
+            cache_file.write_text(text, encoding="utf-8")
+        except OSError:
+            pass
+        return {"text": text, "stale": False, "read_at": datetime.now().strftime("%Y-%m-%d %H:%M")}
+    try:
+        text = cache_file.read_text(encoding="utf-8")
+    except OSError:
+        return {"text": "", "stale": True, "read_at": None}
+    return {"text": text, "stale": True, "read_at": stamp(cache_file)}
+
+
+def readers_section(today: date | None = None) -> dict:
+    products = []
+    for source in READERS:
+        got = cached("readers:" + source["id"], READERS_REFRESH_SECONDS, lambda source=source: _readers_file(source))
+        view = readers_view(parse_metrics(got["text"]), source["target"], source["target_date"], today)
+        view.update({"id": source["id"], "name": source["name"], "link": source.get("source", ""),
+                     "source_url": source["url"], "stale": got["stale"], "read_at": got["read_at"]})
+        products.append(view)
+    return {"installed": any(product["available"] for product in products), "products": products}
+
+
 # ------------------------------------------------------------------ everything for the dashboard
 
 def build(linkedin_overview: dict | None) -> dict:
@@ -1898,7 +2005,8 @@ def build(linkedin_overview: dict | None) -> dict:
     for key, reader in (("jobs", jobs_section), ("email", email_section), ("promote", promote_section),
                         ("channels", channels_section), ("podcast", podcast_section),
                         ("podcast_promotion", podcast_promotion_section), ("launch", launch_section),
-                        ("patents", patents_section), ("tradebot", tradebot_section)):
+                        ("patents", patents_section), ("tradebot", tradebot_section),
+                        ("readers", readers_section)):
         try:
             sections[key] = reader()
         except Exception as error:  # one broken module must not take the dashboard down

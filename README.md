@@ -226,6 +226,12 @@ Once a day `growth.py` grows the audience and points all of it at GitHub:
   All show on the dashboard's "Every platform" table.
 - **Recorded:** every change it makes is written to `growth_log` in `state.db` and counted on the dashboard
   ("Growth actions"), with details in the log file.
+- **Readers of a project that counts its own:** a project can publish its numbers as a small `metrics.csv`
+  (`date,subscribers,posts_counted,median_views,views_per_100_subscribers`) on a branch of its own repo. The
+  dashboard reads it read-only (Morrow Brief: `juw12/morrow`, branch `social-data`) and shows, on Overview,
+  today's subscribers, the typical views a post gets, and the gap to the target the project was given
+  (250 by 31 Dec) with the pace the remaining days need. The file is cached for the next offline start,
+  and the card says when it is showing the cache.
 
 It never follows, likes or replies to strangers automatically: Mastodon instances and Bluesky treat that as spam.
 

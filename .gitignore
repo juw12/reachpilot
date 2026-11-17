@@ -34,6 +34,9 @@ data/github_public_cache/
 launch_private.json
 data/launch_cache/
 
+# Readers: the last good metrics.csv of a project (hub.py readers_section)
+data/readers_cache/
+
 # Patent screen: scan results and my notes name private repositories (patents.py)
 data/patents/
 
