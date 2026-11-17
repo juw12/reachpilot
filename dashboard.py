@@ -50,13 +50,19 @@ ICON_FILES = {  # url path -> (file in icons/, content type); one mark for favic
     "/icon-512.png": ("icon-512.png", "image/png"),
     "/favicon.ico": ("app.ico", "image/x-icon"),
 }
+FONTS = Path(__file__).with_name("fonts")
+FONT_FILES = {  # url path -> file in fonts/; the three faces design.md names, bundled so the page works offline
+    "/fonts/instrument-serif-normal.woff2": "instrument-serif-normal.woff2",
+    "/fonts/geist-normal.woff2": "geist-normal.woff2",
+    "/fonts/geist-mono-normal.woff2": "geist-mono-normal.woff2",
+}
 MANIFEST = json.dumps({
     "name": "ReachPilot",
     "short_name": "ReachPilot",
     "start_url": "/",
     "display": "standalone",
-    "background_color": "#f3f2ef",
-    "theme_color": "#0a66c2",
+    "background_color": "#f4f1ea",
+    "theme_color": "#f4f1ea",
     "icons": [
         {"src": "/icon.svg", "sizes": "any", "type": "image/svg+xml"},
         {"src": "/icon-192.png", "sizes": "192x192", "type": "image/png"},
@@ -375,6 +381,8 @@ class Handler(BaseHTTPRequestHandler):
         elif url.path in ICON_FILES:
             name, content_type = ICON_FILES[url.path]
             self.send(200, (ICONS / name).read_bytes(), content_type)
+        elif url.path in FONT_FILES:
+            self.send(200, (FONTS / FONT_FILES[url.path]).read_bytes(), "font/woff2")
         elif url.path == "/manifest.webmanifest":
             self.send(200, MANIFEST, "application/manifest+json")
         else:
