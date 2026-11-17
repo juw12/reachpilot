@@ -764,6 +764,17 @@ try:
     check(all(product["source_url"].endswith("/morrow/social-data/metrics.csv")
               for product in hub.readers_section(today=readers_today)["products"]),
           "readers: the card names the file it read")
+    hub._readers_fetch = lambda url: None
+    for cache_key in [key for key in hub._cache if str(key).startswith("readers:")]:
+        hub._cache.pop(cache_key, None)
+    failed = hub._readers_cached(hub.READERS[0])
+    hub._readers_fetch = lambda url: metrics_csv  # the network is back, but the failure is still fresh
+    check(failed["stale"] and hub._readers_cached(hub.READERS[0])["stale"],
+          "readers: a failed read is remembered, so the 60-second refresh does not hammer the network")
+    readers_key = "readers:" + hub.READERS[0]["id"]
+    hub._cache[readers_key] = (hub._cache[readers_key][0] - hub.READERS_RETRY_SECONDS - 1, hub._cache[readers_key][1])
+    check(hub._readers_cached(hub.READERS[0])["stale"] is False,
+          "readers: two minutes after a failed read the card tries the live file again")
 finally:
     hub._readers_fetch, hub.READERS_CACHE = readers_real
     shutil.rmtree(readers_home, ignore_errors=True)

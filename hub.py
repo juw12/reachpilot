@@ -1903,6 +1903,7 @@ READERS = [
 ]
 READERS_CACHE = ROOT / "data" / "readers_cache"  # git-ignored: the last good file, shown when the network is out
 READERS_REFRESH_SECONDS = 900
+READERS_RETRY_SECONDS = 120  # after a failed read, try again sooner
 
 
 def parse_metrics(text: str) -> list[dict]:
@@ -1986,10 +1987,21 @@ def _readers_file(source: dict) -> dict:
     return {"text": text, "stale": True, "read_at": stamp(cache_file)}
 
 
+def _readers_cached(source: dict) -> dict:
+    """One read per 15 minutes; after a failed read, try again in 2, so the card recovers when the network returns."""
+    key = "readers:" + source["id"]
+    hit = _cache.get(key)
+    if hit and time.time() - hit[0] < (READERS_RETRY_SECONDS if hit[1]["stale"] else READERS_REFRESH_SECONDS):
+        return hit[1]
+    value = _readers_file(source)
+    _cache[key] = (time.time(), value)
+    return value
+
+
 def readers_section(today: date | None = None) -> dict:
     products = []
     for source in READERS:
-        got = cached("readers:" + source["id"], READERS_REFRESH_SECONDS, lambda source=source: _readers_file(source))
+        got = _readers_cached(source)
         view = readers_view(parse_metrics(got["text"]), source["target"], source["target_date"], today)
         view.update({"id": source["id"], "name": source["name"], "link": source.get("source", ""),
                      "source_url": source["url"], "stale": got["stale"], "read_at": got["read_at"]})
