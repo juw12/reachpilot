@@ -179,7 +179,7 @@ After a post about one project, its video also gets a page of its own at `<you>.
 the video on top, what the project does underneath, and a link to the repo. It is one address that plays the
 demo, for anywhere a file can't be attached. Live pages are listed in `generated/watch_pages.json`.
 
-When someone covers a project in a video or an article, record it on the dashboard's **Promotion** tab
+When someone covers a project in a video or an article, record it on the dashboard's **Promote** page
 ("They covered it", then paste the link). The next post about that project thanks them by name with the link,
 once, and they are listed on the project's watch page. ReachPilot never sends them a message or tags them;
 it only writes the thank-you into your own post.
@@ -318,9 +318,11 @@ There is no ReachPilot server and no telemetry.
 The dashboard can also show other outreach automations. Personal ones (for example a job search) live in `modules/`,
 which is git-ignored and never committed; the dashboard only shows a module that exists on disk. Every job runs from
 Task Scheduler under `\ReachPilot\`, dashboard actions are whitelisted and need a per-session token from the same origin,
-and the `?` button explains per module when it runs, what it does by itself and what it needs from you.
+and **How it works** in the sidebar explains per module when it runs, what it does by itself and what it needs from you.
+The pages are listed in a sidebar on the left (Today, Posting, Projects, Job search, Other); on a phone the sidebar
+opens from the menu button. A page is listed only when its module is installed.
 
-When the promotion module ships `listings.py`, the **Promotion** tab also tracks where each GitHub project is listed.
+When the promotion module ships `listings.py`, the **Promote** page also tracks where each GitHub project is listed.
 One config file names the projects and the places. Each place is either checked by itself (a public page or index
 that needs no login), queued as one dated by-hand step a day, or held until the project has enough stars. Pull requests
 to curated lists are capped at 5 a day (3 of them automatic), always say who the author is and that an AI
@@ -334,13 +336,14 @@ When the podcast module ships `promotion.py`, a **Podcast** tab tracks its promo
 where each episode was announced and the follower counts on those channels. The tab only reads files; when the download
 numbers are older than 15 minutes it starts `promotion.py refresh` in the background.
 
-The **Overview** also shows a card for each launch test listed in `LAUNCH_TESTS` in `hub.py`: the test's own
+The **Launch tests** page shows a card for each launch test listed in `LAUNCH_TESTS` in `hub.py` (the Overview keeps
+a one-line summary with an Open button): the test's own
 one-line answer, the numbers against what is needed, the dates, and the steps that still need a person. The card
 only reads a public `summary.json` that the tested project publishes; it never writes to that project. When the
 file can't be reached, the card shows the last good answer and says so. Steps that should not be public go in
 `launch_private.json` next to the code; that file is git-ignored and is shown only on this dashboard.
 
-**TradeBot card.** The Overview also shows how the trading bot's Indodax copies work, as five steps with the
+**TradeBot page.** The **TradeBot** page shows how the trading bot's Indodax copies work, as five steps with the
 state of each one right now: the round on Cloudflare, the sender on a PC, the copies at Indodax, the real-money
 gate and the Telegram control. It reads only the bot's public status page (`TRADEBOT_STATUS_URL` in `hub.py`),
 which carries switches and counts and no amount, coin or result. The card is read only: nothing on it can trade,
@@ -370,7 +373,7 @@ Settings live under `auto` in `launch_private.json`; contact lists, mail texts, 
 twice. `python launch_auto.py show` prints what each row is doing.
 
 **Patent screen.** `python patents.py install` adds a daily task (`\ReachPilot\Patent screen`, every day 09:00) and a
-card on the Overview. Each run reads the description and README of every repository you own, private ones included
+**Patents** page. Each run reads the description and README of every repository you own, private ones included
 when `gh` is signed in, and answers three questions per project:
 
 - **Score**: how much technical mechanism the text describes, with the sentence it was found in. An app, a game or a
@@ -386,7 +389,7 @@ name private repositories. Your own notes in `data/patents/overrides.json` are n
 `python patents.py show` prints the ranked list; the public demo shows the card with made-up projects.
 
 **Patent desk.** The same daily run follows every project rated "worth an attorney look" or "maybe" that you have
-not decided to publish, licence or skip, and shows them in a second Overview card with one stage each:
+not decided to publish, licence or skip, and shows them in a second card on the Patents page with one stage each:
 
 - **needs an invention disclosure**: the run creates `data/patents/dossiers/NAME/dossier.json` and a `BRIEF.md`
   that says what to write down. You, or an agent you point at the brief, fill it in.

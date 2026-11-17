@@ -3,8 +3,8 @@
   "short_name": "ReachPilot",
   "start_url": "./",
   "display": "standalone",
-  "background_color": "#f4f3f0",
-  "theme_color": "#1667c4",
+  "background_color": "#f4f1ea",
+  "theme_color": "#f4f1ea",
   "icons": [
     {
       "src": "icon.svg",

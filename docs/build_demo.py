@@ -2,7 +2,7 @@
 
 Usage:  python docs/build_demo.py [path/to/dashboard.html]
 
-Writes docs/index.html and copies the app icons next to it. Every name, number and job
+Writes docs/index.html and copies the app icons and fonts next to it. Every name, number and job
 below is invented for the demo; nothing is read from your state, logs or private modules.
 """
 
@@ -57,15 +57,15 @@ NEEDS_YOU = [entry for entry in TODAY_JOBS if entry["status"] == "Stopped"]
 
 EMAIL_RECENT = [
     {"at": f"{TODAY} 09:12", "company": "Acme Precision", "title": "Mechanical Engineer", "region": "Singapore",
-     "source": "jobstreet", "url": "#", "to_domain": "@example.com"},
+     "source": "jobstreet", "url": "#", "to_domain": "example.com"},
     {"at": f"{TODAY} 08:40", "company": "Blue Harbor Systems", "title": "Product Engineer", "region": "Penang",
-     "source": "linkedin", "url": "#", "to_domain": "@example.org"},
+     "source": "linkedin", "url": "#", "to_domain": "example.org"},
     {"at": f"{day(-1)} 17:05", "company": "Summit Moulding", "title": "Tooling Engineer", "region": "Johor",
-     "source": "jobstreet", "url": "#", "to_domain": "@example.net"},
+     "source": "jobstreet", "url": "#", "to_domain": "example.net"},
     {"at": f"{day(-1)} 11:22", "company": "Orbit Electronics", "title": "NPI Engineer", "region": "Bangkok",
-     "source": "jobstreet", "url": "#", "to_domain": "@example.com"},
+     "source": "jobstreet", "url": "#", "to_domain": "example.com"},
     {"at": f"{day(-2)} 15:48", "company": "Cedar Medtech", "title": "R&D Engineer", "region": "Singapore",
-     "source": "linkedin", "url": "#", "to_domain": "@example.org"},
+     "source": "linkedin", "url": "#", "to_domain": "example.org"},
 ]
 EMAIL_LEADS = [
     {"title": "Senior Mechanical Engineer", "company": "Lumen Optics", "region": "Singapore", "url": "#", "fit": 27, "salary": ""},
@@ -520,13 +520,14 @@ SHIM = """<script>
 </script>
 """
 
-BANNER = (
-    '<div role="note" style="background:#fff7d6;border-bottom:1px solid #e9d27a;color:#5b4a00;'
-    'font:14px/1.4 system-ui,sans-serif;padding:8px 16px;text-align:center">'
+BANNER = (  # the first thing on every page of the demo, in the page's own amber note colours (design.md)
+    '<div role="note" style="margin:0 0 24px;padding:8px 14px;border:1px solid #e3cf9c;border-radius:6px;'
+    'background:#f6e8c9;color:#5c3a04;font-size:13.5px;line-height:1.45">'
     "Demo with made-up data. ReachPilot itself runs locally on Windows: "
-    '<a href="https://github.com/juw12/reachpilot" style="color:#5b4a00;font-weight:600;display:inline-block;padding:13px 4px;margin:-13px 0">source on GitHub</a>'
+    '<a href="https://github.com/juw12/reachpilot" style="color:#5c3a04;font-weight:600;display:inline-block;padding:13px 4px;margin:-13px 0">source on GitHub</a>'
     "</div>"
 )
+FONTS = ("instrument-serif-normal.woff2", "geist-normal.woff2", "geist-mono-normal.woff2", "LICENSE.md")
 
 ICONS = {"icon.svg": "icon.svg", "icon-192.png": "icon-192.png", "favicon.ico": "app.ico"}
 
@@ -535,8 +536,8 @@ MANIFEST = {
     "short_name": "ReachPilot",
     "start_url": "./",
     "display": "standalone",
-    "background_color": "#f4f3f0",
-    "theme_color": "#1667c4",
+    "background_color": "#f4f1ea",
+    "theme_color": "#f4f1ea",
     "icons": [
         {"src": "icon.svg", "sizes": "any", "type": "image/svg+xml"},
         {"src": "icon-192.png", "sizes": "192x192", "type": "image/png"},
@@ -550,17 +551,22 @@ def build(source: Path) -> Path:
     for absolute in ('href="/icon.svg"', 'href="/favicon.ico"', 'href="/icon-192.png"',
                      'href="/manifest.webmanifest"', 'src="/icon.svg"'):
         page = page.replace(absolute, absolute.replace('="/', '="'))
+    page = page.replace('url("/fonts/', 'url("fonts/')
+    assert "<b>This PC</b>" in page, "the sidebar status line moved: update the demo label"
+    page = page.replace("<b>This PC</b>", "<b>Demo data</b>", 1)
     page = page.replace("<title>ReachPilot</title>", "<title>ReachPilot - demo</title>", 1)
     shim = SHIM % (json.dumps(DEMO, ensure_ascii=False), json.dumps(ACTION_REPLIES))
     page = page.replace("<head>", "<head>\n" + shim, 1)
-    body_start = page.index("<body")
-    body_tag_end = page.index(">", body_start) + 1
-    page = page[:body_tag_end] + "\n" + BANNER + page[body_tag_end:]
+    assert page.count("<main>") == 1, "the demo banner goes first inside <main>"
+    page = page.replace("<main>", "<main>\n  " + BANNER, 1)
 
     out = DOCS / "index.html"
     out.write_text(page, encoding="utf-8")
     for target, name in ICONS.items():
         shutil.copyfile(ROOT / "icons" / name, DOCS / target)
+    (DOCS / "fonts").mkdir(exist_ok=True)
+    for name in FONTS:
+        shutil.copyfile(ROOT / "fonts" / name, DOCS / "fonts" / name)
     (DOCS / "manifest.webmanifest").write_text(json.dumps(MANIFEST, indent=2), encoding="utf-8")
     (DOCS / ".nojekyll").write_text("", encoding="utf-8")
     return out

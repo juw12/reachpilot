@@ -1548,7 +1548,7 @@ def patents_todo(section: dict | None) -> list[dict]:
         items.append({
             "priority": 3, "module": "Patents",
             "title": f"{len(quiet)} project{'' if len(quiet) == 1 else 's'} worth an attorney look, no decision yet",
-            "detail": f"{shown}. Read the evidence on the Patent screen card in Overview, then choose file, publish, licence only or skip.",
+            "detail": f"{shown}. Read the evidence on the Patents page, then choose file, publish, licence only or skip.",
             "action": None, "action_label": None, "links": [],
         })
     return items + patent_desk_todo(section.get("desk"))
@@ -1593,7 +1593,7 @@ def patent_desk_todo(desk: dict | None) -> list[dict]:
         shown = " ".join(f"{item['name']} ({item['score']}/100): {item['next_step']}" for item in gaps[:4])
         more = f" And {len(gaps) - 4} more." if len(gaps) > 4 else ""
         add(3, f"{len(gaps)} patent candidate{'' if len(gaps) == 1 else 's'} not ready to file yet",
-            f"{shown}{more} The dossier folders are on the Patent desk card in Overview.")
+            f"{shown}{more} The dossier folders are under Patent desk on the Patents page.")
     return items
 
 
@@ -1756,7 +1756,7 @@ def help_sections(tasks: dict, podcast: dict | None = None, launch: dict | None 
             "module": "Launch",
             "runs": "Read every 10 minutes from each project's public launch summary ("
                     + ", ".join(test["name"] for test in launch["tests"]) + "). The project's own workflow updates that file.",
-            "auto": "Shows the launch test on Overview: days to the start or the end, each count against what is needed and the stop line, "
+            "auto": "Shows the launch test on the Launch tests page: days to the start or the end, each count against what is needed and the stop line, "
                     "the verdict, and the steps that still need you. Offline it shows the last good answer and says so. "
                     "Steps that must stay private are read from launch_private.json on this PC (git-ignored). "
                     "Where launch_auto.py is installed, steps marked 'runs itself' are done by this PC every hour: it looks for the answer "
@@ -1782,7 +1782,7 @@ def help_sections(tasks: dict, podcast: dict | None = None, launch: dict | None 
                     "specification as PDF, the cover sheet fields, a filing checklist and notes for the attorney. After a "
                     "filing it counts the 12 months to the non-provisional or PCT application. "
                     "Results stay on this PC (data/patents, git-ignored).",
-            "you": "Read the candidates on the Overview card and record a decision on each: file, publish, licence only or skip. "
+            "you": "Read the candidates on the Patents page and record a decision on each: file, publish, licence only or skip. "
                    "On the Patent desk card: clear the ownership question, fill the gaps the checklist names (you or an agent "
                    "write the dossier; the desk checks it and says what is missing), then file the package yourself or through "
                    "an attorney and press Record filing. ReachPilot files nothing: a filing needs your identity check, your "
@@ -1795,7 +1795,7 @@ def help_sections(tasks: dict, podcast: dict | None = None, launch: dict | None 
             "module": "TradeBot",
             "runs": "TradeBot's round runs on Cloudflare every 5 minutes; the Indodax sender on a PC asks it once a minute. "
                     "This card re-reads TradeBot's public status page once a minute.",
-            "auto": "Shows the chain on Overview, step by step, with its state right now: the bot's round, the sender on the PC, "
+            "auto": "Shows the chain on the TradeBot page, step by step, with its state right now: the bot's round, the sender on the PC, "
                     "the copies at Indodax, the real-money gate and the Telegram control. Switches and counts only: no amount, "
                     "coin or result is on the status page or on this card. Offline it shows the last known answer, says so, "
                     "and raises no to-do. ReachPilot only reads: it cannot buy, sell, pause or change a setting.",

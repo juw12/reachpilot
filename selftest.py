@@ -1083,6 +1083,51 @@ if Path(node).exists():
 else:
     print("Skipping dashboard script check (Node not installed)")
 
+# Dashboard shell: every page in the sidebar has its section, and the fonts the page asks for are bundled and served
+shell_root = Path(__file__).parent
+shell_page = (shell_root / "dashboard.html").read_text(encoding="utf-8")
+shell_tabs = re.findall(r'<button role="tab" data-tab="([a-z]+)"', shell_page)
+shell_sections = re.findall(r'<section id="([a-z]+)"', shell_page)
+check(shell_tabs and len(set(shell_tabs)) == len(shell_tabs) and sorted(shell_tabs) == sorted(shell_sections),
+      f"dashboard: every sidebar page has one section and the other way round "
+      f"{sorted(set(shell_tabs) ^ set(shell_sections))}")
+shell_fonts = re.findall(r'url\("(/fonts/[^"]+)"\)', shell_page)
+check(len(shell_fonts) == 3
+      and all(path in dashboard.FONT_FILES and (dashboard.FONTS / dashboard.FONT_FILES[path]).is_file()
+              for path in shell_fonts),
+      f"dashboard: the three fonts in the page are in fonts/ and on the served list {shell_fonts}")
+check((dashboard.FONTS / "LICENSE.md").is_file(), "dashboard: the bundled fonts ship with their licence")
+check(not re.search(r"fonts\.googleapis|fonts\.gstatic|@import\s+url|<link[^>]+stylesheet", shell_page),
+      "dashboard: no font or stylesheet is loaded from another host")
+shell_style = shell_page.split("<style>", 1)[1].split("</style>", 1)[0]
+shell_tokens = dict(re.findall(r"--([a-z0-9-]+):\s*(#[0-9a-fA-F]{6})", shell_style))
+
+
+def shell_contrast(front: str, back: str) -> float:
+    def light(colour: str) -> float:
+        parts = [int(colour[index:index + 2], 16) / 255 for index in (1, 3, 5)]
+        red, green, blue = [part / 12.92 if part <= 0.03928 else ((part + 0.055) / 1.055) ** 2.4 for part in parts]
+        return 0.2126 * red + 0.7152 * green + 0.0722 * blue
+    high, low = sorted((light(front), light(back)), reverse=True)
+    return (high + 0.05) / (low + 0.05)
+
+
+shell_pairs = [("ink", "bg"), ("ink-2", "bg"), ("ink-2", "sunken"), ("muted", "bg"), ("muted", "surface"),
+               ("muted", "sunken"), ("blue", "bg"), ("blue", "surface"), ("blue", "blue-soft"),
+               ("green", "green-soft"), ("amber", "amber-soft"), ("red", "red-soft"), ("red", "bg")]
+shell_low = [f"{front} on {back} {shell_contrast(shell_tokens[front], shell_tokens[back]):.2f}"
+             for front, back in shell_pairs if shell_contrast(shell_tokens[front], shell_tokens[back]) < 4.5]
+check(not shell_low and shell_contrast("#ffffff", shell_tokens["blue"]) >= 4.5,
+      f"dashboard: every text colour reaches 4.5:1 on the fills it is used on {shell_low}")
+shell_scrim = re.search(r"\.scrim \{[^}]*z-index:\s*(\d+)", shell_style)
+shell_drawer = re.search(r"\.side\.open \{[^}]*z-index:\s*(\d+)", shell_style)
+check(shell_scrim and shell_drawer and int(shell_drawer.group(1)) > int(shell_scrim.group(1)),
+      "dashboard: the open phone drawer sits above its scrim, so its pages can be tapped")
+shell_demo = (shell_root / "docs" / "index.html").read_text(encoding="utf-8")
+check('url("fonts/' in shell_demo and 'url("/fonts/' not in shell_demo
+      and all((shell_root / "docs" / "fonts" / Path(path).name).is_file() for path in shell_fonts),
+      "demo: the public page loads the fonts from its own folder")
+
 # Self-updater: a failed direct fetch is retried through the fallback proxy; a timeout does not crash it
 import subprocess as _subprocess
 import selfupdate

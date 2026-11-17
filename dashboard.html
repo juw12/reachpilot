@@ -4,155 +4,220 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ReachPilot</title>
-<meta name="theme-color" content="#0a66c2">
+<meta name="theme-color" content="#f4f1ea">
 <link rel="icon" href="/icon.svg" type="image/svg+xml">
 <link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48">
 <link rel="apple-touch-icon" href="/icon-192.png">
 <link rel="manifest" href="/manifest.webmanifest">
 <style>
-  /* Design tokens: see design.md (editorial ledger: warm paper, serif headings, one blue accent) */
+  /* Design system: design.md. Paper, hairline rules, serif display, mono metadata, one blue accent.
+     Breakpoints: 900px (the sidebar becomes a top bar with a drawer) and 760px (phone). */
+  @font-face { font-family: "Instrument Serif"; src: url("/fonts/instrument-serif-normal.woff2") format("woff2"); font-weight: 400; font-style: normal; font-display: swap; }
+  @font-face { font-family: "Geist"; src: url("/fonts/geist-normal.woff2") format("woff2"); font-weight: 100 900; font-style: normal; font-display: swap; }
+  @font-face { font-family: "Geist Mono"; src: url("/fonts/geist-mono-normal.woff2") format("woff2"); font-weight: 400 600; font-style: normal; font-display: swap; }
   :root {
-    --bg: #faf9f6; --card: #faf9f6; --ink: #1f1d1a; --muted: #5f5a52; --line: #e4e0d8;
-    --blue: #0a5aa8; --blue-soft: #eaf1f8; --green: #057642; --green-soft: #e6f4ea;
-    --amber: #915907; --amber-soft: #fdf3e1; --red: #b42318; --red-soft: #fdecea;
-    --serif: Georgia, Cambria, "Times New Roman", ui-serif, serif;
-    --sans: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
+    --bg: #f4f1ea; --surface: #fffdf8; --sunken: #ebe6db;
+    --ink: #1b1a17; --ink-2: #4a463e; --muted: #5f5a52; --line: #e1dbcf; --line-strong: #cbc3b3;
+    --blue: #0a5aa8; --blue-soft: #dfe8f2; --green: #05693b; --green-soft: #dcebdf;
+    --amber: #7d4c05; --amber-soft: #f6e8c9; --red: #b42318; --red-soft: #f6dedb;
+    --serif: "Instrument Serif", "Iowan Old Style", Georgia, Cambria, serif;
+    --sans: "Geist", "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
+    --mono: "Geist Mono", "Cascadia Code", Consolas, ui-monospace, monospace;
+    --side: 232px;
   }
   * { box-sizing: border-box; }
-  body { margin: 0; font: 15px/1.6 var(--sans); background: var(--bg); color: var(--ink); }
-  header.top { position: sticky; top: 0; z-index: 2; background: var(--card); border-bottom: 1px solid var(--line); }
-  .bar { max-width: 1180px; margin: 0 auto; padding: 10px 20px; display: flex; align-items: center; gap: 18px; }
-  .brand { margin: 0; font-weight: 700; font-size: 16px; display: flex; align-items: center; gap: 8px; white-space: nowrap; }
-  .logo { width: 28px; height: 28px; display: block; }
-  nav { display: flex; gap: 2px; min-width: 0; }
-  nav button { border: 0; background: none; padding: 8px 12px; border-radius: 6px; font: inherit; color: var(--muted); cursor: pointer; white-space: nowrap; }
-  nav button:hover { background: #f1f3f4; color: var(--ink); }
-  nav button:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
-  nav button[aria-selected="true"] { color: var(--blue); background: var(--blue-soft); font-weight: 600; }
-  .updated { margin-left: auto; color: var(--muted); font-size: 12px; white-space: nowrap; }
-  @media (max-width: 760px) {
-    .bar { flex-wrap: wrap; gap: 4px 12px; padding: 8px 14px 0; }
-    .brand { font-size: 15px; }
-    .navrow { order: 3; flex: 1 0 100%; display: flex; gap: 4px; align-items: flex-start; padding: 0 0 6px; }
-    nav { flex: 0 1 auto; flex-wrap: wrap; gap: 4px; }
-    nav::-webkit-scrollbar { display: none; }
-    
-    nav button { min-height: 44px; padding: 8px 10px; background: #f1f3f5; border-radius: 8px; }
-    nav button[aria-selected="true"] { background: var(--blue-soft); }
-    nav:not(.open) button.sec:not([aria-selected="true"]) { display: none; }
-    .more { display: inline-flex; align-items: center; min-height: 44px; padding: 8px 10px; border: 0; border-radius: 8px;
-      background: #f1f3f5; font: inherit; color: var(--muted); cursor: pointer; white-space: nowrap; }
-    .more:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
-    .module h3 .btn { min-height: 44px; }
-    .help-btn { width: 44px; height: 44px; }
-    .btn { min-height: 44px; padding: 10px 16px; }
-    main { padding: 14px; }
-    td a, .todo li a, .launch-links a, details summary { display: inline-flex; align-items: center; min-height: 44px; min-width: 44px; }
-  }
-  main { max-width: 1180px; margin: 0 auto; padding: 20px; }
-  @media (min-width: 761px) { .navrow { display: contents; } .more { display: none; } nav { flex-wrap: wrap; } }
-  section[hidden] { display: none; }
-  nav button[hidden] { display: none !important; }
-  h2 { font-size: 18px; margin: 0 0 12px; }
-  h3 { font-size: 15px; margin: 0 0 10px; }
-  .grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(165px, 1fr)); margin-bottom: 18px; }
-  .card { background: var(--card); border-radius: 10px; padding: 16px; box-shadow: 0 1px 2px rgba(0,0,0,.08); }
-  .kpi .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
-  .kpi .value { font-size: 26px; font-weight: 700; margin-top: 2px; }
-  .kpi .value.long { font-size: 19px; line-height: 1.3; margin-top: 6px; }
-  .kpi .note { color: var(--muted); font-size: 12px; }
+  [hidden] { display: none !important; }
+  body { margin: 0; font: 14.5px/1.55 var(--sans); background: var(--bg); color: var(--ink); -webkit-font-smoothing: antialiased; }
+
+  /* Shell: a sidebar with grouped pages on the left, the page on the right */
+  .app { display: grid; grid-template-columns: var(--side) minmax(0, 1fr); align-items: start; }
+  .side { position: sticky; top: 0; height: 100vh; display: flex; flex-direction: column; padding: 20px 14px 16px;
+    border-right: 1px solid var(--line); background: var(--bg); overflow-y: auto; }
+  .brand { margin: 0; display: flex; align-items: center; gap: 10px; padding: 0 8px 18px; font: 400 25px/1 var(--serif);
+    letter-spacing: -.01em; white-space: nowrap; }
+  .logo { width: 26px; height: 26px; display: block; }
+  .status { display: flex; flex-direction: column; gap: 2px; padding: 10px 10px 11px; border-top: 1px solid var(--line);
+    border-bottom: 1px solid var(--line); }
+  .status b { font-size: 13.5px; font-weight: 600; }
+  .updated { color: var(--muted); font-size: 12px; }
+  .side-body { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+  nav { display: flex; flex-direction: column; gap: 1px; }
+  .nav-label { margin: 16px 10px 6px; font: 500 12px/1.4 var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+  nav button { position: relative; display: flex; align-items: center; gap: 10px; width: 100%; min-height: 32px; padding: 5px 10px;
+    border: 0; border-radius: 5px; background: transparent; font: inherit; color: var(--ink-2); text-align: left; cursor: pointer; }
+  nav button:hover { color: var(--ink); background: var(--sunken); }
+  nav button:focus-visible, .menu-btn:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
+  nav button[aria-selected="true"] { color: var(--ink); font-weight: 600; background: var(--surface); box-shadow: inset 0 0 0 1px var(--line); }
+  nav button[aria-selected="true"]::before { content: ""; position: absolute; left: -14px; top: 7px; bottom: 7px; width: 3px;
+    border-radius: 0 3px 3px 0; background: var(--blue); }
+  .tab-count { margin-left: auto; color: var(--muted); font: 400 12px/1.4 var(--mono); font-variant-numeric: tabular-nums; }
+  .tab-count.urgent { color: var(--red); font-weight: 600; }
+  .side-foot { margin-top: auto; padding-top: 14px; }
+  .help-btn { width: 100%; min-height: 34px; padding: 6px 10px; border: 1px solid var(--line-strong); border-radius: 6px;
+    background: var(--surface); font: 500 13px/1.3 var(--sans); color: var(--ink); cursor: pointer; }
+  .help-btn:hover { border-color: var(--ink-2); }
+  .menu-btn { display: none; }
+  .scrim { position: fixed; inset: 0; z-index: 3; background: rgba(27, 26, 23, .38); }
+  main { min-width: 0; max-width: 1180px; padding: 40px 40px 64px; }
+
+  /* Type */
+  h2, h3, h4, .next .title, .module .big { text-wrap: balance; }
+  h2 { margin: 0 0 14px; font: 400 30px/1.1 var(--serif); letter-spacing: -.01em; }
+  h3 { margin: 0 0 12px; padding-bottom: 9px; border-bottom: 1px solid var(--ink); font: 600 14px/1.4 var(--sans); }
+  h3 .hint { font-weight: 400; }
+  h4 { font: 600 14.5px/1.4 var(--sans); }
+  a { color: var(--blue); text-underline-offset: 2px; }
+  .hint { color: var(--muted); font-size: 13px; }
+  .hint code { padding: 1px 5px; border-radius: 4px; background: var(--sunken); font: 12px/1.4 var(--mono); }
+  code.feed { padding: 8px 10px; border-radius: 6px; background: var(--sunken); font: 13px/1.4 var(--mono); word-break: break-all; }
+  details summary { margin-top: 8px; color: var(--blue); font-weight: 500; cursor: pointer; }
+  pre.text { margin: 8px 0 0; padding: 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface);
+    font: inherit; white-space: pre-wrap; }
+  .empty { padding: 18px; border: 1px dashed var(--line-strong); border-radius: 6px; color: var(--muted); text-align: center; }
+
+  /* Page head: the group (or today's date), the page name, one line on what the page shows */
+  .page-head { margin: 0 0 28px; }
+  .page-head .eyebrow { margin: 0 0 10px; font: 500 12px/1.4 var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--blue); }
+  .page-head h2 { margin: 0; font-size: 44px; line-height: 1.02; letter-spacing: -.015em; }
+  .page-head p { margin: 10px 0 0; max-width: 68ch; color: var(--ink-2); font-size: 14.5px; text-wrap: pretty; }
+
+  /* Blocks: a block is a heading with an ink rule and what belongs to it; no boxes */
+  .card { margin: 0 0 36px; }
+  .two { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr)); gap: 32px 40px; margin-bottom: 36px; }
+  .two > .card { margin-bottom: 0; }
   .wide { grid-column: 1 / -1; }
-  .two { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr)); margin-bottom: 18px; }
-  .next { border-left: 5px solid var(--blue); }
-  .next .when { font-weight: 600; color: var(--blue); }
-  .next .title { font-size: 20px; font-weight: 700; margin: 2px 0; }
-  .badge { display: inline-block; padding: 1px 9px; border-radius: 12px; font-size: 12px; font-weight: 600; background: var(--blue-soft); color: var(--blue); }
+  .module h3 { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+  .module h3 .btn { min-height: 28px; padding: 2px 10px; font-size: 12.5px; }
+  .module .big { margin: 2px 0 6px; font: 400 30px/1.12 var(--serif); letter-spacing: -.01em; }
+
+  /* Numbers sit in one joined strip: hairlines between the cells, no boxes */
+  .grid { --cols: 4; display: grid; grid-template-columns: repeat(var(--cols), minmax(0, 1fr)); gap: 0 24px; margin: 0 0 36px;
+    overflow: hidden; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+  /* The column count follows the number of cells, so no row ends in a hole: up to four in one row, five and six
+     in rows of three, seven and eight in rows of four. With five or seven the first cell is double width. */
+  .grid:has(> .kpi:nth-child(1 of .kpi):nth-last-child(1 of .kpi)) { --cols: 1; }
+  .grid:has(> .kpi:nth-child(1 of .kpi):nth-last-child(2 of .kpi)) { --cols: 2; }
+  .grid:has(> .kpi:nth-child(1 of .kpi):nth-last-child(3 of .kpi)),
+  .grid:has(> .kpi:nth-child(1 of .kpi):nth-last-child(5 of .kpi)),
+  .grid:has(> .kpi:nth-child(1 of .kpi):nth-last-child(6 of .kpi)) { --cols: 3; }
+  .grid > .kpi:nth-child(1 of .kpi):nth-last-child(5 of .kpi),
+  .grid > .kpi:nth-child(1 of .kpi):nth-last-child(7 of .kpi) { grid-column: span 2; }
+  .grid > .card { position: relative; margin: -1px 0 0; padding: 17px 0 18px; }
+  /* The rule above each row runs through the column gap, so a row reads as one line, not as dashes */
+  .grid > .card::after { content: ""; position: absolute; left: -24px; right: 0; top: 0; height: 1px; background: var(--line); }
+  .grid > .card::before, .runs li::before { content: ""; position: absolute; left: -12px; top: 0; bottom: 0; width: 1px; background: var(--line); }
+  .kpi .label { font: 500 12px/1.4 var(--mono); letter-spacing: .05em; text-transform: uppercase; color: var(--muted); }
+  .kpi .value { margin-top: 6px; font: 400 38px/1 var(--serif); letter-spacing: -.01em; }
+  .kpi .value.long { margin-top: 8px; font-size: 23px; line-height: 1.2; }
+  .kpi .note { margin-top: 6px; color: var(--muted); font-size: 12.5px; }
+  .next .when { font: 500 12px/1.4 var(--mono); letter-spacing: .05em; text-transform: uppercase; color: var(--blue); }
+  .next .title { margin: 6px 0 4px; font: 400 30px/1.1 var(--serif); letter-spacing: -.01em; }
+
+  /* Scheduled automations: the same joined strip, one cell per task */
+  .runs { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0 24px; margin: -12px 0 0; padding: 0;
+    list-style: none; overflow: hidden; border-bottom: 1px solid var(--line); }
+  .runs li { position: relative; margin: -1px 0 0; padding: 11px 0 12px; border-top: 1px solid var(--line); font-size: 14px; }
+  .runs b { font-weight: 600; }
+  .runs .when { display: block; margin-top: 2px; font: 12px/1.5 var(--mono); color: var(--muted); }
+  .runs li.bad .when { color: var(--red); }
+
+  /* Badges and buttons */
+  .badge { display: inline-block; padding: 2px 7px; border-radius: 4px; font: 500 12px/1.5 var(--mono); background: var(--blue-soft); color: var(--blue); }
   .badge.good { background: var(--green-soft); color: var(--green); }
   .badge.warn { background: var(--amber-soft); color: var(--amber); }
   .badge.bad { background: var(--red-soft); color: var(--red); }
-  .badge.grey { background: #eef0f2; color: var(--muted); }
-  .note-badge { display: block; width: fit-content; max-width: 100%; white-space: normal; margin-top: 4px; line-height: 1.45; padding: 3px 9px; border-radius: 8px; }
-  .post { background: var(--card); border-radius: 10px; padding: 14px 16px; margin-bottom: 12px; box-shadow: 0 1px 2px rgba(0,0,0,.08); border-left: 5px solid var(--blue); }
-  .post.auto, .post.cap { border-left-color: #a9b3ba; background: #fafafa; }
-  .post.event { border-left-color: var(--green); }
+  .badge.grey { background: var(--sunken); color: var(--ink-2); }
+  .note-badge { display: block; width: fit-content; max-width: 100%; margin-top: 4px; white-space: normal; }
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 34px; padding: 6px 14px;
+    border: 1px solid var(--blue); border-radius: 6px; background: var(--blue); color: #fff; font: inherit; font-weight: 500;
+    text-decoration: none; white-space: nowrap; cursor: pointer; }
+  .btn:hover { filter: brightness(1.08); }
+  .btn.ghost { background: var(--surface); border-color: var(--line-strong); color: var(--ink); }
+  .btn.ghost:hover { border-color: var(--ink-2); filter: none; }
+  .btn:focus-visible, .help-btn:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+  .btn:disabled { opacity: .55; cursor: default; }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+
+  /* To-do rows: the text on the left, its buttons in a fixed column on the right */
+  .todo { display: grid; grid-template-columns: minmax(0, 1fr) 200px; gap: 8px 24px; align-items: start; padding: 14px 0;
+    border-top: 1px solid var(--line); }
+  h3 + .todo { border-top: 0; }
+  .todo.p1 { padding-left: 14px; box-shadow: inset 3px 0 0 var(--red); }
+  .todo .text { min-width: 0; overflow-wrap: anywhere; }
+  .todo h4 { display: inline; margin: 0 0 0 6px; font-size: 15px; }
+  .todo h4:first-child { margin-left: 0; }
+  .todo .hint { margin-top: 3px; max-width: 80ch; }
+  .todo ul { margin: 6px 0 0; padding-left: 18px; }
+  .todo li { margin: 2px 0; }
+  .todo .actions { flex-direction: column; align-items: stretch; gap: 6px; margin: 0; }
+  .todo .actions .btn { width: 100%; }
+  .todo + .btn { margin-top: 12px; }
+
+  /* Upcoming posts, and the creator e-mails waiting to go out */
+  .post, .mail { padding: 16px 0; border-top: 1px solid var(--line); }
+  h3 + .mail { padding-top: 4px; border-top: 0; }
+  .mail-head { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .mail-head .actions { margin-top: 0; }
+  .mail .subject { margin-top: 10px; font-weight: 600; }
+  /* An error message as the system gave it: wraps anywhere, so a long URL cannot widen the page */
+  .problem { margin-top: 8px; padding: 6px 10px; border-radius: 4px; background: var(--red-soft); color: var(--red);
+    font: 12.5px/1.5 var(--mono); overflow-wrap: anywhere; }
   .post .head { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; align-items: center; }
   .post .when { font-weight: 600; }
-  .post .num { display: inline-block; min-width: 26px; text-align: center; background: var(--ink); color: #fff; border-radius: 4px; margin-right: 8px; font-size: 12px; }
+  .post .num { display: inline-block; min-width: 26px; margin-right: 8px; border-radius: 4px; background: var(--ink); color: #fff;
+    font: 500 12px/1.6 var(--mono); text-align: center; }
   .post h4 { margin: 6px 0 0; font-size: 16px; }
-  .post .hook { color: #38434f; margin: 2px 0 8px; }
+  .post .hook { color: var(--ink-2); margin: 2px 0 8px; }
   .thumbs { display: flex; gap: 8px; overflow-x: auto; align-items: flex-start; }
   .thumbs video.reel { width: 152px; height: 190px; }
-  .thumbs img, .thumbs video { flex: none; width: 170px; height: 96px; object-fit: cover; border-radius: 6px; border: 1px solid var(--line); background: #eef0f2; }
-  details summary { cursor: pointer; color: var(--blue); font-weight: 600; margin-top: 8px; }
-  pre.text { white-space: pre-wrap; font: inherit; background: #f8f9fa; padding: 12px; border-radius: 6px; margin: 8px 0 0; }
+  .thumbs img, .thumbs video { flex: none; width: 170px; height: 96px; object-fit: cover; border-radius: 6px; border: 1px solid var(--line); background: var(--sunken); }
+
+  /* Tables */
   table { width: 100%; border-collapse: collapse; }
   .scroll { overflow-x: auto;
     background:
-      linear-gradient(to right, var(--card) 30%, rgba(255,255,255,0)) left / 32px 100% no-repeat local,
-      linear-gradient(to left, var(--card) 30%, rgba(255,255,255,0)) right / 32px 100% no-repeat local,
+      linear-gradient(to right, var(--bg) 30%, rgba(255,255,255,0)) left / 32px 100% no-repeat local,
+      linear-gradient(to left, var(--bg) 30%, rgba(255,255,255,0)) right / 32px 100% no-repeat local,
       radial-gradient(farthest-side at 0 50%, rgba(0,0,0,.16), transparent) left / 12px 100% no-repeat scroll,
       radial-gradient(farthest-side at 100% 50%, rgba(0,0,0,.16), transparent) right / 12px 100% no-repeat scroll; }
   .scroll:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
   .scroll table { min-width: 720px; }
+  .two .scroll table { min-width: 440px; }
+  td.state { width: 1%; white-space: nowrap; }
   .scroll td:first-child { white-space: nowrap; }
   .scroll td b { white-space: nowrap; }
-  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
-  th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .03em; }
+  th, td { padding: 9px 12px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+  th { border-bottom-color: var(--line-strong); color: var(--muted); font: 500 12px/1.4 var(--mono); letter-spacing: .05em; text-transform: uppercase; }
+  th:first-child, td:first-child { padding-left: 0; }
+  th:last-child, td:last-child { padding-right: 0; }
   td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  td.num:first-child, th.num:first-child { text-align: left; }
+  td.zero b { color: var(--muted); font-weight: 600; }
   tr.quiet td { color: var(--muted); }
   tr.quiet td a { color: var(--muted); }
-  .empty { color: var(--muted); padding: 18px; text-align: center; background: #fafafa; border-radius: 8px; }
-  .hint { color: var(--muted); font-size: 13px; }
-  .hint code { background: #eef0f2; padding: 1px 5px; border-radius: 4px; }
+
+  /* Charts, rankings, the log */
   svg.chart { width: 100%; height: auto; }
   svg.chart .axis { stroke: var(--line); }
-  svg.chart .line { fill: none; stroke: var(--blue); stroke-width: 2.5; }
+  svg.chart .line { fill: none; stroke: var(--blue); stroke-width: 2; }
   svg.chart .dot { fill: var(--blue); }
   svg.chart text { fill: var(--muted); font-size: 12px; }
+  .spark rect.on { fill: var(--blue); }
+  .spark rect.off { fill: currentColor; opacity: .15; }
   .rank { display: grid; grid-template-columns: 150px 1fr 60px; gap: 8px; align-items: center; padding: 4px 0; }
-  .rank .track { background: #eef0f2; border-radius: 4px; height: 12px; overflow: hidden; }
+  .rank .track { height: 8px; border-radius: 2px; background: var(--sunken); overflow: hidden; }
   .rank .fill { background: var(--blue); height: 100%; }
-  .log { font: 12px/1.6 Consolas, monospace; white-space: pre-wrap; margin: 0; max-height: 70vh; overflow: auto; }
+  .log { margin: 0; max-height: 70vh; overflow: auto; font: 12px/1.6 var(--mono); white-space: pre-wrap; }
   .log .t { color: var(--muted); }
   .log .w { color: var(--amber); }
   .log .e { color: var(--red); }
-  a { color: var(--blue); }
 
-  .btn { border: 0; border-radius: 6px; padding: 7px 14px; font: inherit; font-weight: 600; cursor: pointer; background: var(--blue); color: #fff; }
-  .btn:hover { filter: brightness(1.08); }
-  .btn.ghost { background: var(--blue-soft); color: var(--blue); }
-  .btn:focus-visible, .help-btn:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
-  .btn:disabled { opacity: .55; cursor: default; }
-  .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
-  .help-btn { border: 1px solid var(--line); background: var(--card); width: 32px; height: 32px; border-radius: 50%; font: 700 15px "Segoe UI", sans-serif; color: var(--blue); cursor: pointer; flex: none; }
-  .tab-count { display: inline-block; min-width: 18px; padding: 0 5px; margin-left: 4px; border-radius: 9px; background: var(--red); color: #fff; font-size: 12px; line-height: 18px; text-align: center; font-weight: 700; }
-  .todo { background: var(--card); border-radius: 10px; padding: 14px 16px; margin-bottom: 12px; box-shadow: 0 1px 2px rgba(0,0,0,.08); border-left: 5px solid var(--amber); }
-  .todo.p1 { border-left-color: var(--red); }
-  .todo.p3, .todo.p4 { border-left-color: #a9b3ba; }
-  .todo h4 { margin: 2px 0 2px; font-size: 15px; }
-  .todo ul { margin: 8px 0 0; padding-left: 18px; }
-  .todo li { margin: 2px 0; }
-  .todo.compact { display: flex; gap: 16px; align-items: center; justify-content: space-between; padding: 10px 14px; margin-bottom: 8px; }
-  .todo .text { overflow-wrap: anywhere; }
-  .todo.compact .text { min-width: 0; }
-  .todo.compact h4 { display: inline; margin: 0 0 0 6px; }
-  .todo.compact ul { margin: 4px 0 0; }
-  .todo.compact .actions { margin-top: 0; flex: none; }
-  @media (max-width: 760px) { .todo.compact { display: block; } .todo.compact .actions { margin-top: 8px; } }
-  .module { border-top: 4px solid var(--blue); }
-  .runs { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 18px; padding: 0; list-style: none; }
-  .runs li { display: flex; align-items: center; gap: 8px; background: var(--card); border-radius: 8px; padding: 8px 12px;
-    box-shadow: 0 1px 2px rgba(0,0,0,.08); font-size: 13px; }
-  .runs .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--green); flex: none; }
-  .runs li.bad .dot { background: var(--red); }
-  .runs b { font-weight: 600; }
-  @media (max-width: 760px) { .runs li { flex: 1 1 100%; } }
-  .module .big { font-size: 24px; font-weight: 700; }
+  /* Launch tests and automations */
   .launch-links { display: flex; flex-wrap: wrap; gap: 0 16px; margin-top: 4px; }
   .launch-links + .hint, td .badge + .hint { white-space: nowrap; }
   td .badge + .hint.step-detail { white-space: normal; overflow-wrap: anywhere; }
-  /* Patent screen card: long text cells wrap, and each project becomes a stacked block on a phone.
-     The stacked block uses the same 760px breakpoint as the phone rules above; change both together. */
+
+  /* Patent screen: long text cells wrap, and each project becomes a stacked block on a phone. */
   .patents .scroll td:first-child, .patents td .badge + .hint { white-space: normal; }
   .patents .scroll td:first-child { min-width: 220px; }
   .patents table.candidates th:nth-child(1) { width: 32%; }
@@ -172,7 +237,7 @@
   .patents .why q { display: block; color: var(--muted); font-size: 13px; quotes: "\201C" "\201D"; }
   .patents .why .hint { max-width: 80ch; }
   .patents .why .actions { margin-top: 10px; }
-  /* Patent desk card: same table rules; five columns, a checklist and a small filing form per project. */
+  /* Patent desk: same table rules; five columns, a checklist and a small filing form per project. */
   .patents table.desk th:nth-child(1) { width: 22%; }
   .patents table.desk th:nth-child(2) { width: 17%; }
   .patents table.desk th:nth-child(3) { width: 13%; }
@@ -184,14 +249,64 @@
   .patents ul.checks .hint { grid-column: 2; margin: 0; }
   .patents .filing { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: flex-end; margin-top: 10px; }
   .patents .filing label { display: grid; gap: 2px; color: var(--muted); font-size: 12px; font-weight: 600; }
-  .patents .filing input { font: inherit; min-height: 38px; padding: 6px 8px; border: 1px solid var(--muted); border-radius: 2px;
-    background: var(--card); color: var(--ink); max-width: 100%; }
+  .patents .filing input { min-height: 38px; max-width: 100%; padding: 6px 8px; border: 1px solid var(--line-strong); border-radius: 6px;
+    background: var(--surface); color: var(--ink); font: inherit; }
   .patents .filing input:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
-  @media (max-width: 760px) {
-    .patents .filing input { min-height: 44px; }
-    .patents td.ready b { display: inline; margin-right: 8px; }
+
+  /* Per day, every automation */
+  table.daily td.n, table.daily th.n { text-align: right; white-space: nowrap; }
+  table.daily tr.group-start td { border-top: 1px solid rgba(127,127,127,.25); }
+  table.daily td { vertical-align: middle; }
+  table.daily .repeat, table.daily .ph { display: none; }
+  table.daily a.goto { cursor: pointer; color: var(--ink); }
+
+  /* Toast and the help dialog */
+  .toast { position: fixed; right: 18px; bottom: 18px; z-index: 5; background: var(--ink); color: #fff; padding: 10px 16px; border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,.25); max-width: 380px; }
+  dialog.help { width: calc(100% - 32px); max-width: 720px; padding: 0; border: 0; border-radius: 10px; background: var(--bg); color: var(--ink);
+    box-shadow: 0 10px 40px rgba(0,0,0,.3); }
+  dialog.help::backdrop { background: rgba(0,0,0,.35); }
+  dialog.help .inner { padding: 20px 22px; max-height: 80vh; overflow: auto; }
+  dialog.help .mod { border-top: 1px solid var(--line); padding: 12px 0; }
+  dialog.help .mod h3 { margin: 0 0 4px; padding: 0; border: 0; }
+  dialog.help dt { margin-top: 6px; color: var(--muted); font: 500 12px/1.4 var(--mono); letter-spacing: .05em; text-transform: uppercase; }
+  dialog.help dd { margin: 0; }
+
+  /* Tablet and phone: the sidebar becomes a top bar with a menu button that opens the pages as a drawer */
+  @media (max-width: 900px) {
+    .app { display: block; }
+    .side { position: sticky; z-index: 2; height: auto; padding: 0; border-right: 0; border-bottom: 1px solid var(--line); overflow: visible; }
+    .side-head { display: flex; align-items: center; gap: 8px; padding: 6px 14px 6px 6px; }
+    .menu-btn { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 44px; height: 44px; border: 0;
+      border-radius: 6px; background: transparent; color: var(--ink); cursor: pointer; }
+    .brand { padding: 0; font-size: 22px; }
+    .status { margin-left: auto; padding: 0; border: 0; text-align: right; }
+    .status b { display: none; }
+    .side-body { position: fixed; z-index: 4; top: 0; bottom: 0; left: 0; width: min(300px, 86vw); padding: 8px 14px 16px;
+      border-right: 1px solid var(--line); background: var(--bg); overflow-y: auto; visibility: hidden; transform: translateX(-100%); }
+    /* The open drawer has to sit above the scrim (z-index 3), and .side is its stacking context */
+    .side.open { z-index: 4; }
+    .side.open .side-body { visibility: visible; transform: none; }
+    nav button { min-height: 44px; }
+    .help-btn { min-height: 44px; }
+    main { padding: 28px 24px 56px; }
   }
+  /* Phone: 44px targets, two-column number strips, tables that stack */
   @media (max-width: 760px) {
+    main { padding: 20px 16px 48px; }
+    .page-head { margin-bottom: 20px; }
+    .page-head h2 { font-size: 34px; }
+    .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .grid > .kpi:nth-child(1 of .kpi):nth-last-child(odd of .kpi) { grid-column: span 2; }
+    .kpi .value { font-size: 32px; }
+    .kpi .value.long { font-size: 20px; }
+    .btn { min-height: 44px; padding: 10px 16px; white-space: normal; }
+    .module h3 .btn { min-height: 44px; padding: 8px 14px; }
+    .todo { display: block; }
+    .todo .actions { flex-direction: row; flex-wrap: wrap; margin-top: 10px; }
+    .todo .actions .btn { width: auto; }
+    td a, .todo li a, .launch-links a, details summary { display: inline-flex; align-items: center; min-height: 44px; min-width: 44px; }
+    .patents .filing input { min-height: 44px; }
+    .patents td.ready b, .patents td.screen b { display: inline; margin-right: 8px; }
     .patents .scroll table { min-width: 0; }
     .patents .scroll thead { display: none; }
     .patents .scroll table, .patents .scroll tbody, .patents .scroll tr, .patents .scroll td { display: block; width: 100%; }
@@ -203,25 +318,14 @@
     .patents .scroll td:first-child { min-width: 0; }
     .patents .scroll td[data-label]::before { content: attr(data-label); display: block; color: var(--muted);
       font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .03em; }
-    .patents td.screen b { display: inline; margin-right: 8px; }
+    /* A table whose rows are instructions, not figures, reads as one block per row on a phone */
+    .scroll table.stack { min-width: 0; }
+    table.stack thead { display: none; }
+    table.stack, table.stack tbody, table.stack tr, table.stack td { display: block; width: 100%; }
+    table.stack tr { padding: 12px 0; border-top: 1px solid var(--line); }
+    table.stack tr:first-child { border-top: 0; }
+    .scroll table.stack td { padding: 3px 0; border: 0; text-align: left; white-space: normal; }
   }
-  .module h3 { display: flex; justify-content: space-between; align-items: center; }
-  .module h3 .btn { min-height: 38px; padding: 8px 18px; }
-  td.zero b { color: var(--muted); font-weight: 600; }
-  .toast { position: fixed; right: 18px; bottom: 18px; z-index: 5; background: var(--ink); color: #fff; padding: 10px 16px; border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,.25); max-width: 380px; }
-  .toast[hidden] { display: none; }
-  dialog.help { border: 0; border-radius: 12px; padding: 0; max-width: 720px; width: calc(100% - 32px); box-shadow: 0 10px 40px rgba(0,0,0,.3); }
-  dialog.help::backdrop { background: rgba(0,0,0,.35); }
-  dialog.help .inner { padding: 20px 22px; max-height: 80vh; overflow: auto; }
-  dialog.help .mod { border-top: 1px solid var(--line); padding: 12px 0; }
-  dialog.help dt { font-weight: 600; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .03em; margin-top: 6px; }
-  dialog.help dd { margin: 0; }
-  .spark rect.on { fill: var(--blue); }
-  .spark rect.off { fill: currentColor; opacity: .15; }
-  table.daily td.n, table.daily th.n { text-align: right; white-space: nowrap; }
-  table.daily tr.group-start td { border-top: 1px solid rgba(127,127,127,.25); }
-  table.daily td { vertical-align: middle; }
-  table.daily .repeat, table.daily .ph { display: none; }
   @media (max-width: 600px) {
     table.daily thead { display: none; }
     .scroll table.daily { min-width: 0; }
@@ -233,71 +337,54 @@
     table.daily td { display: block; padding: 0; border: 0; text-align: left; }
     table.daily td.mod, table.daily td.what, table.daily td.sp { grid-column: 1 / -1; }
     table.daily tr:not(.group-start) { border-top: 0; padding-top: 4px; }
-    table.daily td.what { color: var(--muted); margin-bottom: 4px; }
+    table.daily td.what { margin-bottom: 4px; color: var(--ink); font-weight: 600; }
     table.daily td[data-label]::before { content: attr(data-label) " "; color: var(--muted); font-weight: 400; }
     table.daily td.n, table.daily td.hint { white-space: normal; text-align: left; }
     table.daily td.sp { margin-top: 6px; }
     table.daily .dk { display: none; }
     table.daily .ph { display: inline; }
-    table.daily td.what { color: var(--ink); font-weight: 600; }
   }
-  table.daily a.goto { cursor: pointer; color: var(--ink); }
-
-  /* Editorial layer (design.md): rules instead of boxes, serif display type */
-  h1, h2, h3, h4, .kpi .value, .module .big, .next .title { font-family: var(--serif); font-weight: 700; letter-spacing: -.005em; }
-  header.top { background: var(--bg); border-bottom: 2px solid var(--ink); }
-  .brand { font-size: 19px; }
-  @media (min-width: 761px) {
-    nav button { border-radius: 0; padding: 8px 8px; }
-    nav button:hover { background: none; text-decoration: underline; text-underline-offset: 6px; }
-    nav button[aria-selected="true"] { background: none; color: var(--ink); text-decoration: underline 2px var(--blue); text-underline-offset: 8px; }
-  }
-  @media (max-width: 760px) {
-    nav button, .more { font-size: 14px; padding: 8px 9px; }
-    .bar { gap: 4px 10px; }
-  }
-  .card, .post, .todo, .runs li { box-shadow: none; border-radius: 0; background: transparent; }
-  .card { border-top: 1px solid var(--ink); padding: 14px 4px 10px; }
-  .grid { gap: 24px; }
-  .kpi .value { font-size: 34px; font-weight: 400; }
-  .kpi .label { letter-spacing: .07em; font-size: 12px; color: var(--muted); }
-  h2 { font-size: 26px; font-weight: 400; margin-bottom: 16px; }
-  .module { border-top: 1px solid var(--ink); }
-  .next { border-left: 0; border-top: 3px solid var(--blue); }
-  .post, .todo { border: 0; border-top: 1px solid var(--line); padding-left: 4px; }
-  .todo.p1 { border-top: 1px solid var(--line); box-shadow: inset 3px 0 0 var(--red); padding-left: 14px; }
-  .runs li { border: 1px solid var(--line); }
-  .btn { border-radius: 2px; }
-  .badge { border-radius: 2px; }
-  .empty { background: transparent; border: 1px dashed var(--line); }
-  h2, h3, h4, .next .title, .module .big { text-wrap: balance; }
 </style>
 </head>
 <body>
-<header class="top">
-  <div class="bar">
-    <h1 class="brand"><img class="logo" src="/icon.svg" alt="" width="28" height="28">ReachPilot</h1>
-    <div class="navrow">
-    <nav role="tablist" id="tabs">
+<div class="app">
+<aside class="side" id="side">
+  <div class="side-head">
+    <button type="button" class="menu-btn" id="nav-menu" aria-expanded="false" aria-controls="side-body" aria-label="Pages">
+      <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/></svg>
+    </button>
+    <h1 class="brand"><img class="logo" src="/icon.svg" alt="" width="26" height="26">ReachPilot</h1>
+    <div class="status"><b>This PC</b><span class="updated" id="updated">Loading…</span></div>
+  </div>
+  <div class="side-body" id="side-body">
+    <nav role="tablist" id="tabs" aria-orientation="vertical" aria-label="Pages">
+      <div class="nav-label" role="presentation">Today</div>
       <button role="tab" data-tab="overview" aria-selected="true">Overview</button>
       <button role="tab" data-tab="todo">To do<span class="tab-count" id="todo-count" hidden></span></button>
+      <div class="nav-label" role="presentation">Posting</div>
       <button role="tab" data-tab="linkedin">LinkedIn</button>
-      <button role="tab" class="sec" data-tab="schedule">Schedule</button>
-      <button role="tab" class="sec" data-tab="reach">Reach</button>
-      <button role="tab" class="sec" data-tab="github">GitHub</button>
-      <button role="tab" class="sec" data-tab="learning">Learning</button>
+      <button role="tab" data-tab="schedule">Schedule</button>
+      <button role="tab" data-tab="reach">Reach</button>
+      <button role="tab" data-tab="learning">Learning</button>
+      <div class="nav-label" role="presentation">Projects</div>
+      <button role="tab" data-tab="github">GitHub</button>
+      <button role="tab" data-tab="promote">Promote</button>
+      <button role="tab" data-tab="podcast" hidden>Podcast</button>
+      <button role="tab" data-tab="launch" hidden>Launch tests</button>
+      <button role="tab" data-tab="patents" hidden>Patents</button>
+      <div class="nav-label" role="presentation">Job search</div>
       <button role="tab" data-tab="jobs">Jobs</button>
-      <button role="tab" class="sec" data-tab="email">Email</button>
-      <button role="tab" class="sec" data-tab="promote">Promote</button>
-      <button role="tab" class="sec" data-tab="podcast" hidden>Podcast</button>
-      <button role="tab" class="sec" data-tab="log">Log</button>
+      <button role="tab" data-tab="email">Email</button>
+      <div class="nav-label" role="presentation">Other</div>
+      <button role="tab" data-tab="tradebot" hidden>TradeBot</button>
+      <button role="tab" data-tab="log">Log</button>
     </nav>
-    <button type="button" class="more" id="nav-more" aria-expanded="false" aria-controls="tabs">More ▾</button>
+    <div class="side-foot">
+      <button class="help-btn" id="help-open" aria-label="Help: what ReachPilot does and what it needs from you">How it works</button>
     </div>
-    <span class="updated" id="updated">Loading…</span>
-    <button class="help-btn" id="help-open" aria-label="Help: what ReachPilot does and what it needs from you" title="Help">?</button>
   </div>
-</header>
+</aside>
+<div class="scrim" id="scrim" hidden></div>
 
 <main>
   <section id="overview"></section>
@@ -305,14 +392,18 @@
   <section id="linkedin" hidden></section>
   <section id="schedule" hidden></section>
   <section id="reach" hidden></section>
-  <section id="github" hidden></section>
   <section id="learning" hidden></section>
+  <section id="github" hidden></section>
+  <section id="promote" hidden></section>
+  <section id="podcast" hidden></section>
+  <section id="launch" hidden></section>
+  <section id="patents" hidden></section>
   <section id="jobs" hidden></section>
   <section id="email" hidden></section>
-  <section id="promote" hidden></section>
-<section id="podcast" hidden></section>
+  <section id="tradebot" hidden></section>
   <section id="log" hidden></section>
 </main>
+</div>
 <div class="toast" id="toast" role="status" hidden></div>
 <dialog class="help" id="help"><div class="inner" id="help-body"></div></dialog>
 
@@ -399,6 +490,17 @@ function dailyTable(rows) {
     <tbody>${body}</tbody></table></div>`;
 }
 
+// The top of every page: the group it belongs to (or today's date), its name, and one line on what it shows.
+function pageHead(eyebrow, title, lead = "") {
+  return `<header class="page-head"><p class="eyebrow">${esc(eyebrow)}</p><h2>${esc(title)}</h2>${lead ? `<p>${lead}</p>` : ""}</header>`;
+}
+
+// Pages that belong to an optional module only show in the sidebar where that module is installed.
+function moduleTab(id, shown) {
+  const button = document.querySelector(`nav button[data-tab="${id}"]`);
+  if (button) button.hidden = !shown;
+}
+
 function kpi(label, value, note = "") {
   const plain = String(value).replace(/<[^>]*>/g, "");
   const size = plain.length > 9 ? " long" : "";
@@ -435,6 +537,7 @@ function renderLinkedin(d) {
   const tokenBadge = o.token_days_left === null ? "bad" : o.token_days_left < 7 ? "warn" : "good";
   const state = o.paused ? `<span class="badge warn">Paused</span>` : `<span class="badge good">Running</span>`;
   document.getElementById("linkedin").innerHTML = `
+    ${pageHead("Posting", "LinkedIn", `${num(o.posts_this_week)} of ${num(o.max_per_week)} posts this week. Slots: ${esc(o.slots.join(", "))} WIB.`)}
     <div class="grid">
       <div class="card next wide">
         ${next ? `<div class="when">Next post · ${esc(niceDate(next.slot))} WIB</div>
@@ -457,8 +560,7 @@ function renderLinkedin(d) {
 function renderSchedule(d) {
   const items = d.schedule;
   document.getElementById("schedule").innerHTML = `
-    <h2>Upcoming posts</h2>
-    <p class="hint">Every post goes out at the slot time, with links in the first comment. Prepared posts are fixed. “Picked on the day” is decided at 08:00 from what's new on GitHub and what has performed best so far.</p>
+    ${pageHead("Posting", "Upcoming posts", "Every post goes out at the slot time, with links in the first comment. Prepared posts are fixed. “Picked on the day” is decided at 08:00 from what's new on GitHub and what has performed best so far.")}
     ${items.length ? items.map(postCard).join("") : `<div class="empty">Nothing scheduled.</div>`}`;
 }
 
@@ -470,7 +572,7 @@ function renderReach(d) {
   const stars = posted.reduce((sum, p) => sum + (p.stars || 0), 0);
   const rows = d.history.map((p) => `<tr>
       <td>${esc(niceDate(p.slot))}</td>
-      <td><b>${esc(p.title)}</b><div class="hint">${esc(p.hook)}</div>${p.error ? `<div class="badge bad" title="${esc(p.error)}">Error: ${esc(p.error.slice(0, 80))}</div>` : ""}</td>
+      <td><b>${esc(p.title)}</b><div class="hint">${esc(p.hook)}</div>${p.error ? `<div class="problem" title="${esc(p.error)}">Error: ${esc(p.error.slice(0, 80))}</div>` : ""}</td>
       <td><span class="badge ${STATUS[p.status] || "grey"}">${esc(p.status)}</span></td>
       <td class="num">${num(p.impressions)}</td>
       <td class="num">${num(p.engagements)}</td>
@@ -495,6 +597,7 @@ function renderReach(d) {
       <div class="hint">${linkify(a.detail)}</div></td>
     </tr>`).join("");
   document.getElementById("reach").innerHTML = `
+    ${pageHead("Posting", "Reach", "What each post reached, on every platform, and where the numbers come from.")}
     <div class="grid">
       ${kpi("Posts published", num(posted.length))}
       ${kpi("Impressions", o.posts_with_linkedin_stats ? num(o.impressions) : "–", "From your LinkedIn export")}
@@ -503,19 +606,21 @@ function renderReach(d) {
       ${kpi("Stars after posts", num(stars), "Gained in the week after")}
       ${kpi("“Try it” clicks (30 days)", num(d.github.clicks_30d_total))}
     </div>
-    <div class="card" style="margin-bottom:18px">
+    <div class="card">
       <h3>Every post</h3>
       ${d.history.length ? `<div class="scroll" tabindex="0" role="region" aria-label="Scrollable table"><table>
         <thead><tr><th>Slot</th><th>Post</th><th>Status</th><th class="num">Impressions</th><th class="num">Engagements</th><th class="num">GitHub visitors</th><th class="num">Stars</th><th class="num">Try-it clicks</th><th></th></tr></thead>
         <tbody>${rows}</tbody></table></div>` : `<div class="empty">Nothing posted yet. The first post goes out ${esc(o.next_post ? niceDate(o.next_post.slot) : "soon")} WIB.</div>`}
     </div>
-    <div class="card" style="margin-bottom:18px">
+    <div class="card">
       <h3>Every platform</h3>
       <p class="hint">Followers are counted once a day${pl.counted_on ? ` (last: ${esc(pl.counted_on)})` : ""}. GitHub visitors are the last 14 days, as GitHub reports them. LinkedIn does not share follower counts with apps.</p>
       <div class="scroll" tabindex="0" role="region" aria-label="Scrollable table"><table>
         <thead><tr><th>Platform</th><th class="num">Followers</th><th class="num">7-day change</th><th class="num">Posts</th><th class="num">GitHub visitors</th></tr></thead>
-        <tbody>${platformRows}</tbody></table></div>
-      <h3 style="margin-top:16px">What ReachPilot changed on your accounts</h3>
+        <tbody>${platformRows || `<tr class="quiet"><td colspan="5">No platform is connected yet.</td></tr>`}</tbody></table></div>
+    </div>
+    <div class="card">
+      <h3>What ReachPilot changed on your accounts</h3>
       ${pl.actions.length ? `<div class="scroll" tabindex="0" role="region" aria-label="Scrollable table"><table>
         <thead><tr><th>When</th><th>Platform</th><th>Change</th></tr></thead>
         <tbody>${actionRows}</tbody></table></div>` : `<div class="empty">Nothing yet. Profiles, pins and follow-backs show up here.</div>`}
@@ -542,6 +647,7 @@ function renderGithub(d) {
       <td>${esc(r.last_posted ? niceDate(r.last_posted) : "–")}</td>
     </tr>`).join("");
   document.getElementById("github").innerHTML = `
+    ${pageHead("Projects", "GitHub", "Stars, visitors from LinkedIn and “Try it” clicks, per project.")}
     <div class="two">
       <div class="card"><h3>Visitors from LinkedIn (14-day window)</h3>${lineChart(g.visitors_series, "Collected daily.")}</div>
       <div class="card"><h3>“Try it” clicks per day</h3>${lineChart(g.clicks_series, "No clicks yet.")}</div>
@@ -566,7 +672,8 @@ function rankList(items) {
 function renderLearning(d) {
   const l = d.learning;
   document.getElementById("learning").innerHTML = `
-    <div class="card" style="margin-bottom:18px">
+    ${pageHead("Posting", "Learning", "Which projects and post styles have done best so far.")}
+    <div class="card">
       <h3>How the bot decides</h3>
       <p class="hint">After each post it measures the result: LinkedIn numbers if you've exported them, otherwise GitHub visitors, “Try it” clicks and stars (one star counts as three visitors).
       Projects and post styles that do better get picked more often, but untested ones still get a fair chance.
@@ -586,7 +693,7 @@ function renderLog(d) {
     return `<span class="${cls}">${stamp ? `<span class="t">${esc(stamp[0].slice(5, 16))}</span>` : ""}${esc(rest)}</span>`;
   }).join("\n");
   const emailLines = ((d.hub && d.hub.email && d.hub.email.log_tail) || []).map(esc).join("\n");
-  document.getElementById("log").innerHTML = `<div class="two">
+  document.getElementById("log").innerHTML = `${pageHead("Other", "Log", "Newest first.")}<div class="two">
     <div class="card"><h3>LinkedIn <span class="hint">(newest first)</span></h3><pre class="log">${lines || "No log yet."}</pre></div>
     <div class="card"><h3>E-mail applications <span class="hint">(newest first)</span></h3><pre class="log">${emailLines || "No log yet."}</pre></div></div>`;
 }
@@ -651,7 +758,10 @@ document.addEventListener("click", (event) => {
     }
   }
   const jump = event.target.closest("[data-goto]");
-  if (jump) showTab(jump.dataset.goto);
+  if (jump) {
+    showTab(jump.dataset.goto);
+    window.scrollTo(0, 0);
+  }
   const copy = event.target.closest("[data-copy]");
   if (copy) {
     navigator.clipboard.writeText(copy.dataset.copy)
@@ -669,6 +779,7 @@ document.addEventListener("click", (event) => {
     if (latest) {
       renderOverview(latest);
       renderTodo(latest);
+      renderPatents(latest);
     }
   }
 });
@@ -685,7 +796,7 @@ function link(url, label) {
   return url ? `<a href="${esc(url)}" target="_blank" rel="noopener">${esc(label)}</a>` : esc(label);
 }
 
-const MODULE_TAB = { jobs: "jobs", "job search": "jobs", "e-mail": "email", email: "email", linkedin: "linkedin", promote: "promote", "creator outreach": "promote", podcast: "podcast" };
+const MODULE_TAB = { jobs: "jobs", "job search": "jobs", "e-mail": "email", email: "email", linkedin: "linkedin", promote: "promote", "creator outreach": "promote", podcast: "podcast", patents: "patents", launch: "launch", tradebot: "tradebot" };
 
 function todoKey(item) {
   return `${item.module}|${item.title}|${item.detail}`;
@@ -709,8 +820,13 @@ function openTodos(items) {
 }
 
 function todoCard(item, compact = false) {
-  const links = item.links.length
-    ? `<ul>${item.links.map((l) => `<li>${link(l.url, l.label)}${l.note ? ` <span class="hint">· ${esc(l.note)}</span>` : ""}</li>`).join("")}</ul>` : "";
+  // Overview (compact) is a summary: the first four links with a short note. The To do page shows all of it.
+  const shown = compact ? item.links.slice(0, 4) : item.links;
+  const short = (note) => (compact && note.length > 90 ? `${note.slice(0, 88).trimEnd()}…` : note);
+  const more = item.links.length - shown.length;
+  const links = shown.length
+    ? `<ul>${shown.map((l) => `<li>${link(l.url, l.label)}${l.note ? ` <span class="hint">· ${esc(short(l.note))}</span>` : ""}</li>`).join("")}${
+      more > 0 ? `<li class="hint">and ${more} more in To do</li>` : ""}</ul>` : "";
   const tab = MODULE_TAB[String(item.module).toLowerCase()];
   const buttons = item.action
     ? actionButton(item.action, item.action_label)
@@ -731,12 +847,11 @@ function runStrip(tasks) {
   if (!items.length) return "";
   const time = (stamp) => (stamp && stamp.includes("·") ? stamp.split("·")[1].trim() : stamp || "–");
   const rows = items.map(([key, t]) => {
-    const state = t.ok ? `ran ${esc(time(t.last_run))}` : `<b>last run failed</b> (${esc(t.last_result || "error")})`;
-    const label = t.ok ? "OK" : "Failed";
-    return `<li class="${t.ok ? "ok" : "bad"}"><span class="dot" role="img" aria-label="${label}"></span>
-      <span><b>${esc(t.name)}</b> · ${state} · next ${esc(time(t.next_run))}</span></li>`;
+    const state = t.ok ? `ran ${esc(time(t.last_run))}` : `last run failed (${esc(t.last_result || "error")})`;
+    return `<li class="${t.ok ? "ok" : "bad"}"><b>${esc(t.name)}</b>${t.ok ? "" : ` <span class="badge bad">Failed</span>`}
+      <span class="when">${state} · next ${esc(time(t.next_run))}</span></li>`;
   }).join("");
-  return `<ul class="runs" aria-label="Scheduled automations">${rows}</ul>`;
+  return `<div class="card"><h3>Scheduled automations</h3><ul class="runs">${rows}</ul></div>`;
 }
 
 function launchCards(launch) {
@@ -746,7 +861,7 @@ function launchCards(launch) {
   return tests.map((t) => {
     const whenBadge = t.when ? ` <span class="badge ${t.phase === "final" ? "grey" : ""}">${esc(t.when)}</span>` : "";
     if (!t.available) {
-      return `<div class="card" style="margin-bottom:18px">
+      return `<div class="card">
         <h3>Launch test: ${esc(t.name)}</h3>
         <p class="hint">No answer yet from the project's status file. The next try is in a few minutes.</p>
       </div>`;
@@ -770,10 +885,10 @@ function launchCards(launch) {
         <td>${esc(s.title)}${stepTag(s)}
           ${s.automation && s.detail ? `<div class="hint step-detail">${esc(s.detail)}</div>` : ""}
           ${s.links.length ? linkRow(s.links) : ""}${stepButtons(s)}</td>
-        <td><span class="badge ${stateBadge[s.status] || "grey"}">${esc(s.status_label)}</span>
+        <td class="state"><span class="badge ${stateBadge[s.status] || "grey"}">${esc(s.status_label)}</span>
           ${s.due ? `<div class="hint">by ${esc(s.due)}</div>` : ""}</td>
       </tr>`).join("");
-    return `<div class="card module" style="margin-bottom:18px">
+    return `<div class="card module">
       <h3><span>Launch test: ${esc(t.name)}</span>${whenBadge}</h3>
       <div class="big">${esc(t.headline || "No verdict yet.")}</div>
       ${t.next_step ? `<div class="hint">${esc(t.next_step)}</div>` : ""}
@@ -796,7 +911,7 @@ function tradebotCard(t) {
   const links = (t.links || []).length
     ? `<div class="launch-links">${t.links.map((l) => link(l.url, l.label)).join("")}</div>` : "";
   if (!t.available) {
-    return `<div class="card" style="margin-bottom:18px">
+    return `<div class="card">
       <h3>TradeBot · Indodax</h3>
       <p class="hint">No answer yet from TradeBot's status page. The next try is in a few minutes.</p>
       ${links}
@@ -806,9 +921,9 @@ function tradebotCard(t) {
       <td><b>${index + 1}. ${esc(s.title)}</b>
         <div>${esc(s.detail)}</div>
         <div class="hint step-detail">${esc(s.how)}</div></td>
-      <td><span class="badge ${esc(s.state)}">${esc(s.state_label)}</span></td>
+      <td class="state"><span class="badge ${esc(s.state)}">${esc(s.state_label)}</span></td>
     </tr>`).join("");
-  return `<div class="card module" style="margin-bottom:18px">
+  return `<div class="card module">
     <h3><span>TradeBot · Indodax${t.version ? ` <span class="badge grey">version ${esc(t.version)}</span>` : ""}</span>${t.real ? `<span class="badge warn">real money</span>` : ""}</h3>
     <div class="big">${esc(t.headline)}</div>
     <div class="hint">How it works, step by step, with the state of each step right now. Read only: nothing here can trade.
@@ -821,11 +936,31 @@ function tradebotCard(t) {
   </div>`;
 }
 
+function patentHeadline(counts) {
+  return counts.look || counts.maybe
+    ? [counts.look ? `${num(counts.look)} worth an attorney look` : "", counts.maybe ? `${num(counts.maybe)} maybe` : ""].filter(Boolean).join(" · ")
+    : "Nothing that looks like patent material";
+}
+
+function patentDeskHeadline(desk) {
+  const c = desk.counts;
+  return desk.total
+    ? [
+        c.ready ? `${num(c.ready)} ready to file` : "",
+        c.filed ? `${num(c.filed)} filed` : "",
+        c.strengthen ? `${num(c.strengthen)} strengthening` : "",
+        c.disclosure ? `${num(c.disclosure)} disclosure${c.disclosure === 1 ? "" : "s"} to write` : "",
+        c.ownership ? `${num(c.ownership)} waiting on ownership` : "",
+        c.closed ? `${num(c.closed)} closed` : "",
+      ].filter(Boolean).join(" · ")
+    : "No candidates to follow";
+}
+
 function patentCard(p) {
   if (!p || !p.installed) return "";
   const scanNow = actionButton("patents_run_now", "Scan now", true);
   if (!p.has_scan) {
-    return `<div class="card module patents" style="margin-bottom:18px">
+    return `<div class="card module patents">
       <h3><span>Patent screen</span>${scanNow}</h3>
       <div class="big">No scan yet</div>
       <p class="hint">The daily task reads every repository you own and lists the ones worth showing to a patent attorney.</p>
@@ -834,9 +969,7 @@ function patentCard(p) {
   }
   const c = p.counts;
   const plural = (n, word) => `${num(n)} ${word}${n === 1 ? "" : "s"}`;
-  const headline = c.look || c.maybe
-    ? [c.look ? `${num(c.look)} worth an attorney look` : "", c.maybe ? `${num(c.maybe)} maybe` : ""].filter(Boolean).join(" · ")
-    : "Nothing that looks like patent material";
+  const headline = patentHeadline(c);
   const facts = [
     `${plural(p.total, "project")} read`,
     p.scanned_at ? `scanned ${esc(p.scanned_at)}` : "",
@@ -893,7 +1026,7 @@ function patentCard(p) {
       <td data-label="What protects it">${esc(r.route)}
         ${r.verdict ? `<div class="hint">Close read: ${esc(r.verdict)}</div>` : ""}</td>
     </tr>`).join("");
-  return `<div class="card module patents" style="margin-bottom:18px">
+  return `<div class="card module patents">
     <h3><span>Patent screen</span>${scanNow}</h3>
     <div class="big">${headline}</div>
     <div class="hint">${facts}</div>
@@ -918,16 +1051,7 @@ function patentDeskCard(p) {
   if (!desk) return "";
   const plural = (n, word) => `${num(n)} ${word}${n === 1 ? "" : "s"}`;
   const c = desk.counts;
-  const headline = desk.total
-    ? [
-        c.ready ? `${num(c.ready)} ready to file` : "",
-        c.filed ? `${num(c.filed)} filed` : "",
-        c.strengthen ? `${num(c.strengthen)} strengthening` : "",
-        c.disclosure ? `${plural(c.disclosure, "disclosure")} to write` : "",
-        c.ownership ? `${num(c.ownership)} waiting on ownership` : "",
-        c.closed ? `${num(c.closed)} closed` : "",
-      ].filter(Boolean).join(" · ")
-    : "No candidates to follow";
+  const headline = patentDeskHeadline(desk);
   const tones = { ready: "good", filed: "", strengthen: "warn", disclosure: "warn", ownership: "warn", closed: "grey" };
   const dateCell = (item) => {
     const d = item.deadline;
@@ -972,7 +1096,7 @@ function patentDeskCard(p) {
     </tr>
     <tr class="why-row"><td colspan="5">${detail(item)}</td></tr>`).join("");
   const moved = desk.history.slice(-8).reverse();
-  return `<div class="card module patents" style="margin-bottom:18px">
+  return `<div class="card module patents">
     <h3><span>Patent desk</span></h3>
     <div class="big">${headline}</div>
     <div class="hint">${desk.total ? `${plural(desk.total, "candidate")} followed every day` : "The desk follows projects the screen rates as worth an attorney look or maybe"}${desk.refreshed_at ? ` · refreshed ${esc(desk.refreshed_at)}` : " · not refreshed yet: press Scan now"}</div>
@@ -1008,18 +1132,30 @@ function drawOverview(d) {
   const next = o.next_post;
   const todo = openTodos(h.todo);
   const urgent = todo.filter((t) => t.priority === 1);
+  const promote = h.promote;
+  const dateLine = new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" });
+  const title = todo.length ? `${num(todo.length)} thing${todo.length === 1 ? " needs" : "s need"} you` : "Nothing needs you right now";
+  const lead = todo.length
+    ? `${urgent.length ? `${num(urgent.length)} urgent. ` : ""}Everything else is running on its own.`
+    : "Everything is running on its own.";
+  const tests = (h.launch && h.launch.tests) || [];
+  const patents = h.patents && h.patents.installed ? h.patents : null;
+  const tradebot = h.tradebot && h.tradebot.installed ? h.tradebot : null;
   document.getElementById("overview").innerHTML = `
-    ${todo.length ? `<div class="card" style="margin-bottom:18px">
+    ${pageHead(dateLine, title, lead)}
+    <div class="grid">
+      ${jobs.installed ? kpi("Ready to apply", num(jobs.today.length), `${num(jobs.applied_week)} applied this week`) : ""}
+      ${email.installed ? kpi("E-mails sent today", num(email.sent_today), `${num(email.sent_week)} this week`) : ""}
+      ${kpi("Posts this week", `${num(o.posts_this_week)} / ${num(o.max_per_week)}`, next ? `Next ${esc(niceDate(next.slot))} WIB` : "Nothing scheduled")}
+      ${promote.installed ? kpi("Creator e-mails today", `${num(promote.sent_today)} / ${num(promote.cap)}`, `${num(promote.replies)} replies so far`) : ""}
+    </div>
+    ${todo.length ? `<div class="card">
       <h3>What I need from you <span class="hint">· ${todo.length} item${todo.length === 1 ? "" : "s"}${urgent.length ? `, ${urgent.length} urgent` : ""}</span></h3>
       ${todo.slice(0, 5).map((item) => todoCard(item, true)).join("")}
       ${todo.length > 5 ? `<button class="btn ghost" data-goto="todo">See all ${todo.length} in To do ›</button>` : ""}
-    </div>` : `<div class="card" style="margin-bottom:18px"><h3>Nothing needs you right now</h3><p class="hint">Everything is running on its own.</p></div>`}
-    ${launchCards(h.launch)}
-    ${tradebotCard(h.tradebot)}
-    ${patentCard(h.patents)}
-    ${patentDeskCard(h.patents)}
+    </div>` : ""}
     ${runStrip(h.tasks)}
-    <div class="card" style="margin-bottom:18px">
+    <div class="card">
       <h3>Per day, every automation <span class="hint">· today, average of the last 7 days, best day and the daily limit</span></h3>
       ${dailyTable(h.daily)}
     </div>
@@ -1048,6 +1184,21 @@ function drawOverview(d) {
           <div class="hint">${num(h.promote.contacted)} creators contacted · ${num(h.promote.replies)} replies · ${num(h.promote.awaiting_approval)} waiting for your Send</div>
           ${lineChart(h.promote.series, "No e-mails yet.")}` : `<div class="hint">Not set up${h.promote.error ? `: ${esc(h.promote.error)}` : ""}.</div>`}
       </div>
+      ${tests.map((t) => `<div class="card module">
+        <h3>Launch test: ${esc(t.name)} <button class="btn ghost" data-goto="launch">Open</button></h3>
+        ${t.available ? `<div class="big">${esc(t.headline || "No verdict yet.")}</div>
+          ${t.next_step ? `<div class="hint">${esc(t.next_step)}</div>` : ""}` : `<div class="hint">No answer yet from the project's status file.</div>`}
+      </div>`).join("")}
+      ${patents ? `<div class="card module">
+        <h3>Patents <button class="btn ghost" data-goto="patents">Open</button></h3>
+        ${patents.has_scan ? `<div class="big">${patentHeadline(patents.counts)}</div>
+          ${patents.desk ? `<div class="hint">Desk: ${patentDeskHeadline(patents.desk)}</div>` : ""}` : `<div class="big">No scan yet</div>`}
+      </div>` : ""}
+      ${tradebot ? `<div class="card module">
+        <h3>TradeBot · Indodax <button class="btn ghost" data-goto="tradebot">Open</button></h3>
+        ${tradebot.available ? `<div class="big">${esc(tradebot.headline)}</div>
+          <div class="hint">Read only: nothing here can trade.</div>` : `<div class="hint">No answer yet from TradeBot's status page.</div>`}
+      </div>` : ""}
       ${(h.podcast && h.podcast.installed) ? (() => {
         const p = h.podcast;
         const held = p.held || [];
@@ -1077,14 +1228,43 @@ function drawOverview(d) {
     </div>`;
 }
 
+// Launch tests, the patent screen with its desk, and TradeBot each have their own page (they used to sit on Overview).
+function renderLaunch(d) {
+  const tests = (d.hub.launch && d.hub.launch.tests) || [];
+  moduleTab("launch", tests.length > 0);
+  document.getElementById("launch").innerHTML = `
+    ${pageHead("Projects", "Launch tests", "What each launch test has counted so far, what it needs, and the steps still open.")}
+    ${launchCards(d.hub.launch) || `<div class="empty">No launch test is running.</div>`}`;
+}
+
+function renderPatents(d) {
+  const p = d.hub.patents;
+  moduleTab("patents", Boolean(p && p.installed));
+  const section = document.getElementById("patents");
+  keepingState(section, () => {
+    section.innerHTML = `
+      ${pageHead("Projects", "Patents", "A keyword screen of every repository you own, and the desk that follows each candidate. Not legal advice; ReachPilot files nothing.")}
+      ${patentCard(p) || `<div class="empty">The patent screen isn't set up.</div>`}
+      ${patentDeskCard(p)}`;
+  });
+}
+
+function renderTradebot(d) {
+  const t = d.hub.tradebot;
+  moduleTab("tradebot", Boolean(t && t.installed));
+  document.getElementById("tradebot").innerHTML = `
+    ${pageHead("Other", "TradeBot", "The Indodax automation, step by step, with the state of each step.")}
+    ${tradebotCard(t) || `<div class="empty">TradeBot isn't set up.</div>`}`;
+}
+
 function renderTodo(d) {
   const items = openTodos(d.hub.todo);
   const counter = document.getElementById("todo-count");
   counter.hidden = !items.length;
   counter.textContent = items.length;
+  counter.classList.toggle("urgent", items.some((item) => item.priority === 1));
   document.getElementById("todo").innerHTML = `
-    <h2>What I need from you</h2>
-    <p class="hint">Only things a robot can't or shouldn't do for you. Red first. Everything else runs by itself.</p>
+    ${pageHead("Today", "What I need from you", "Only things a robot can't or shouldn't do for you. Red first. Everything else runs by itself.")}
     ${items.length ? items.map((item) => todoCard(item)).join("") : `<div class="empty">Nothing needs you right now. New items appear here when an automation gets stuck.</div>`}`;
 }
 
@@ -1109,7 +1289,7 @@ function autoApplyCard(a) {
   const results = a.results || [];
   const leftTotal = left.reduce((sum, group) => sum + group.jobs.length, 0);
   const tried = (run) => Object.values(run.counts || {}).reduce((sum, count) => sum + count, 0);
-  return `<div class="card" style="margin-bottom:18px">
+  return `<div class="card">
       <h3>Auto-apply</h3>
       <p class="hint">Runs by itself at 08:15, 13:15 and 19:15 and submits the jobs it can finish alone. What it could not finish is listed here with the reason.</p>
       <p><b>Last run</b> ${esc(niceDate(last.when))} ${badge(STATE[last.state] || [last.state, "grey"])}
@@ -1145,7 +1325,7 @@ function renderJobs(d) {
   const j = d.hub.jobs;
   const section = document.getElementById("jobs");
   if (!j.installed) {
-    section.innerHTML = `<div class="empty">Job search isn't set up${j.error ? `: ${esc(j.error)}` : ""}.</div>`;
+    section.innerHTML = `${pageHead("Job search", "Jobs")}<div class="empty">Job search isn't set up${j.error ? `: ${esc(j.error)}` : ""}.</div>`;
     return;
   }
   const row = (job) => `<tr>
@@ -1156,6 +1336,7 @@ function renderJobs(d) {
       <td>${link(job.link, "Open")}</td></tr>`;
   const task = d.hub.tasks.jobs || {};
   section.innerHTML = `
+    ${pageHead("Job search", "Jobs", "Jobs the search found, the ones ready to apply, and what has been sent.")}
     <div class="grid">
       ${kpi("Ready today", num(j.today.length), `${num(j.queue_total)} in the queue`)}
       ${kpi("Applied", num(j.applied_total), `${num(j.applied_week)} this week`)}
@@ -1163,15 +1344,15 @@ function renderJobs(d) {
       ${kpi("Last search", esc(j.last_run ? niceDate(j.last_run) : "–"), j.last_error ? `<span class="badge bad">Failed</span>` : esc(j.last_summary || ""))}
       ${kpi("Next search", esc(task.next_run || "–"), "07:30 and 12:30 daily")}
     </div>
-    <div class="card" style="margin-bottom:18px">
+    <div class="card">
       <h3>Apply</h3>
       <p class="hint">The apply session opens each job, fills the form (CV, cover letter, visa, salary, notice period) and waits for you to press Submit. It marks the job Applied when the site confirms.</p>
       <div class="actions">${actionButton("jobs_apply", "Start apply session")}${actionButton("jobs_search_now", "Search for new jobs now", true)}${actionButton("jobs_open_tracker", "Open tracker (Excel)", true)}${actionButton("open_answers", "Edit my answers", true)}</div>
     </div>
     ${autoApplyCard(j.auto_apply)}
-    ${j.needs_you.length ? `<div class="card" style="margin-bottom:18px"><h3>Stopped and waiting for you</h3><div class="scroll" tabindex="0" role="region" aria-label="Scrollable table"><table>
+    ${j.needs_you.length ? `<div class="card"><h3>Stopped and waiting for you</h3><div class="scroll" tabindex="0" role="region" aria-label="Scrollable table"><table>
       <thead><tr><th class="num">Score</th><th>Job</th><th>Location</th><th>Site</th><th></th></tr></thead><tbody>${j.needs_you.map(row).join("")}</tbody></table></div></div>` : ""}
-    <div class="card" style="margin-bottom:18px"><h3>Today's list</h3>
+    <div class="card"><h3>Today's list</h3>
       ${j.today.length ? `<div class="scroll" tabindex="0" role="region" aria-label="Scrollable table"><table><thead><tr><th class="num">Score</th><th>Job</th><th>Location</th><th>Site</th><th></th></tr></thead>
       <tbody>${j.today.map(row).join("")}</tbody></table></div>` : `<div class="empty">Nothing queued.</div>`}</div>
     <div class="card"><h3>Applied</h3>
@@ -1184,11 +1365,12 @@ function renderEmail(d) {
   const e = d.hub.email;
   const section = document.getElementById("email");
   if (!e.installed) {
-    section.innerHTML = `<div class="empty">E-mail applications aren't set up${e.error ? `: ${esc(e.error)}` : ""}.</div>`;
+    section.innerHTML = `${pageHead("Job search", "E-mail applications")}<div class="empty">E-mail applications aren't set up${e.error ? `: ${esc(e.error)}` : ""}.</div>`;
     return;
   }
   const task = d.hub.tasks.email || {};
   section.innerHTML = `
+    ${pageHead("Job search", "E-mail applications", "Applications sent by e-mail, and the leads that only take them on their own site.")}
     <div class="grid">
       ${kpi("Sent today", num(e.sent_today), `Cap ${num(e.max_per_day)} per day`)}
       ${kpi("This week", num(e.sent_week))}
@@ -1201,12 +1383,12 @@ function renderEmail(d) {
       <div class="card"><h3>Applications sent per day</h3>${lineChart(e.series, "No e-mails yet.")}</div>
       <div class="card"><h3>Where they went</h3>${e.regions.length ? e.regions.map(([name, count]) => `<div class="rank"><div>${esc(name)}</div><div class="track"><div class="fill" style="width:${(count / e.regions[0][1]) * 100}%"></div></div><div class="num hint">${count}</div></div>`).join("") : `<div class="empty">Nothing yet.</div>`}</div>
     </div>
-    <div class="card" style="margin-bottom:18px">
+    <div class="card">
       <h3>Controls</h3>
       <p class="hint">Sends from ${esc(e.report_to || "your Gmail")} with your CV; replies go to your personal inbox. ${e.followups_enabled ? `One follow-up after ${esc(e.followup_after_days)} days if nobody replied.` : "Follow-ups are off."}</p>
       <div class="actions">${actionButton("email_run_now", "Run now")}${actionButton("email_preview", "Preview next e-mails (sends nothing)", true)}${actionButton("email_open_leads", "Open site-only leads", true)}</div>
     </div>
-    <div class="card" style="margin-bottom:18px"><h3>Recently sent</h3><div class="scroll" tabindex="0" role="region" aria-label="Scrollable table"><table>
+    <div class="card"><h3>Recently sent</h3><div class="scroll" tabindex="0" role="region" aria-label="Scrollable table"><table>
       <thead><tr><th>Sent</th><th>Job</th><th>Region</th><th>Recruiter</th><th></th></tr></thead><tbody>
       ${e.recent.map((r) => `<tr><td>${esc(niceDate(r.at))}</td><td><b>${esc(r.company)}</b><div class="hint">${esc(r.title)}</div></td><td>${esc(r.region)}</td><td class="hint">@${esc(r.to_domain)}</td><td>${link(r.url, "View ad")}</td></tr>`).join("")}
       </tbody></table></div></div>
@@ -1256,7 +1438,7 @@ function listingsCard(l) {
       ${queue.map((q) => `<div>${q.url ? link(q.url, q.upstream) : esc(q.upstream)} <span class="badge ${queueBadge(q.status)}">${esc(q.status || "?")}</span>
         <span class="hint">· ${esc(q.project)}${q.status === "waiting" && q.waiting ? ` · ${esc(q.waiting)}` : ""}${q.reason ? ` · ${esc(q.reason)}` : ""}${q.error ? ` · ${esc(q.error)}` : ""}</span></div>`).join("")}` : "";
   return `
-    <div class="card" style="margin-bottom:18px">
+    <div class="card">
       <h3>Directory listings</h3>
       <p class="hint">Checked by itself every 6 hours (MCP Registry, M8ven, Glama, mcpservers.org, more directories, GitHub stars and PRs). Adds the Glama badge to a README when a listing goes live. Last check ${esc(l.checked_at ? niceDate(l.checked_at) : "never")} · stars counted from ${esc(l.baseline_date || "–")}.</p>
       <div class="scroll" tabindex="0" role="region" aria-label="Directory listings"><table><thead><tr><th>Project</th><th class="num">Stars</th><th>MCP Registry</th><th>M8ven</th><th>Glama</th><th>mcpservers.org</th><th>README badges</th></tr></thead><tbody>
@@ -1269,8 +1451,10 @@ function listingsCard(l) {
       ${queueBlock}
       ${platformsBlock}
       ${(l.steps || []).length ? `<h4 style="margin:14px 0 6px">Your steps (only the ones a script can't do)</h4>
-        ${l.steps.map((s) => `<div class="todo p${s.priority || 2}"><h4>${esc(s.title)}</h4><div class="hint">${esc(s.detail || "")}</div>
-          <div class="actions">${(s.links || []).map((x) => link(x.url, x.label)).join(" ")} ${actionButton(`promote:listingdone:${s.id}`, "Done")}</div></div>`).join("")}`
+        ${l.steps.map((s) => `<div class="todo p${s.priority || 2}">
+          <div class="text"><h4>${esc(s.title)}</h4><div class="hint">${esc(s.detail || "")}</div>
+            ${(s.links || []).length ? `<div class="launch-links">${s.links.map((x) => link(x.url, x.label)).join(" ")}</div>` : ""}</div>
+          <div class="actions">${actionButton(`promote:listingdone:${s.id}`, "Done")}</div></div>`).join("")}`
         : `<div class="empty" style="margin-top:10px">No listing steps waiting for you.</div>`}
       <div class="actions" style="margin-top:12px">${actionButton("promote:listings", "Check listings now", true)}</div>
     </div>`;
@@ -1280,7 +1464,7 @@ function renderPromote(d) {
   const p = d.hub.promote;
   const section = document.getElementById("promote");
   if (!p.installed) {
-    section.innerHTML = `<div class="empty">Creator outreach isn't set up${p.error ? `: ${esc(p.error)}` : ""}.</div>`;
+    section.innerHTML = `${pageHead("Projects", "Creator outreach")}<div class="empty">Creator outreach isn't set up${p.error ? `: ${esc(p.error)}` : ""}.</div>`;
     return;
   }
   const task = d.hub.tasks.promote || {};
@@ -1289,8 +1473,8 @@ function renderPromote(d) {
   const statusBadge = (m) => ({ queued: `<span class="badge warn">waiting for you</span>`, approved: `<span class="badge good">approved</span>`,
     held: `<span class="badge bad">held</span>`, failed: `<span class="badge bad">failed</span>` }[m.status] || "");
   const mailCard = (m) => `
-    <div class="card" style="margin-bottom:12px">
-      <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap">
+    <div class="mail">
+      <div class="mail-head">
         <div><b>${link(m.creator.url, m.creator.name)}</b> <span class="hint">· ${subs(m.creator)} · ${esc(m.creator.type || "")} · for <b>${esc(m.product)}</b> · ${esc(m.kind.replace("_", "-"))}</span> ${statusBadge(m)}
           <div class="hint">To ${esc(m.to_email)} · e-mail found on ${link(m.creator.email_source, "their channel")} · their video: ${link(m.creator.recent_url, m.creator.recent_title || "–")}</div></div>
         <div class="actions">
@@ -1300,15 +1484,16 @@ function renderPromote(d) {
           ${actionButton(`promote:mark:${m.creator.id}|suppressed`, "Never contact", true)}
         </div>
       </div>
-      ${m.error ? `<div class="badge bad" style="margin-top:8px;white-space:normal">${esc(m.error)}</div>` : ""}
-      <div style="margin-top:10px;font-weight:600">${esc(m.subject)} <span class="hint">· variant ${esc(m.variant)}</span></div>
-      <pre style="white-space:pre-wrap;font-family:inherit;font-size:13px;background:#f7f7f5;border-radius:8px;padding:12px;margin:8px 0 0">${esc(m.body)}</pre>
+      ${m.error ? `<div class="problem">${esc(m.error)}</div>` : ""}
+      <div class="subject">${esc(m.subject)} <span class="hint">· variant ${esc(m.variant)}</span></div>
+      <pre class="text">${esc(m.body)}</pre>
     </div>`;
   const statRows = (rows, label) => rows.length
     ? `<table><thead><tr><th>${label}</th><th class="num">E-mailed</th><th class="num">Replies</th><th class="num">Rate</th></tr></thead><tbody>
        ${rows.map((r) => `<tr><td>${esc(r.key || r.variant)}</td><td class="num">${num(r.sent)}</td><td class="num">${num(r.replies)}</td><td class="num">${pct(r.rate)}</td></tr>`).join("")}</tbody></table>`
     : `<div class="empty">Nothing sent yet.</div>`;
   section.innerHTML = `
+    ${pageHead("Projects", "Creator outreach", "E-mails to creators who might cover a project, and their replies.")}
     <div class="grid">
       ${kpi("Sent today", `${num(p.sent_today)} / ${num(p.cap)}`, "Warm-up cap grows to 20 a day")}
       ${kpi("Waiting for you", num(p.awaiting_approval), p.mode === "review" ? "Review mode: you press Send" : "Auto mode")}
@@ -1317,7 +1502,7 @@ function renderPromote(d) {
       ${kpi("Mode", p.paused ? "Paused" : p.mode === "auto" ? "Auto" : "Review", `Sends ${p.send_window[0]}:00–${p.send_window[1]}:00`)}
       ${kpi("Next run", esc(task.next_run || "–"), `Replies checked ${esc(p.last_reply_check ? niceDate(p.last_reply_check) : "–")}`)}
     </div>
-    <div class="card" style="margin-bottom:18px">
+    <div class="card">
       <h3>Controls</h3>
       <p class="hint">Sends from your Gmail relay with replies going to ${esc(p.reply_to)}. One e-mail per creator, one follow-up after 5 days, stops when they reply.
         ${p.youtube_ok ? "" : " <b>Add a YouTube API key so it can find creators.</b>"}</p>
@@ -1332,16 +1517,19 @@ function renderPromote(d) {
         ${actionButton("promote:openproducts", "Edit products", true)}
       </div>
     </div>
-    ${p.open_replies.length ? `<div class="card" style="margin-bottom:18px"><h3>Replies to answer</h3>
-      ${p.open_replies.map((r) => `<div class="todo p1"><h4>${esc(r.creator.name)} · ${esc(r.product)}</h4><div class="hint">${esc(r.snippet)}</div>
-        <div class="actions">${link(r.gmail, "Open in Gmail")} ${actionButton(`promote:mark:${r.creator.id}|interested`, "Interested")}${coveredButton(r.creator)}${actionButton(`promote:mark:${r.creator.id}|declined`, "Not a fit", true)}</div></div>`).join("")}</div>` : ""}
-    ${(p.coverage || []).length ? `<div class="card" style="margin-bottom:18px"><h3>Creators who covered a project</h3>
+    ${p.open_replies.length ? `<div class="card"><h3>Replies to answer</h3>
+      ${p.open_replies.map((r) => `<div class="todo p1">
+        <div class="text"><h4>${esc(r.creator.name)} · ${esc(r.product)}</h4><div class="hint">${esc(r.snippet)}</div>
+          <div class="launch-links">${link(r.gmail, "Open in Gmail")}</div></div>
+        <div class="actions">${actionButton(`promote:mark:${r.creator.id}|interested`, "Interested")}${coveredButton(r.creator)}${actionButton(`promote:mark:${r.creator.id}|declined`, "Not a fit", true)}</div></div>`).join("")}</div>` : ""}
+    ${(p.coverage || []).length ? `<div class="card"><h3>Creators who covered a project</h3>
       <p class="hint">Each one is thanked once in the next post about that project and listed on its watch page.</p>
       <div class="scroll"><table><thead><tr><th>Creator</th><th>Project</th><th>Their video</th><th>Thanked in a post</th></tr></thead><tbody>
       ${p.coverage.map((c) => `<tr><td>${link(c.creator_url, c.creator)}</td><td>${esc(c.product)}</td><td>${link(c.url, "open")}</td><td>${c.credited ? `<span class="badge good">yes</span>` : `<span class="badge warn">in the next post</span>`}</td></tr>`).join("")}
       </tbody></table></div></div>` : ""}
-    <h3>Today's e-mails</h3>
-    ${p.queue.length ? p.queue.map(mailCard).join("") : `<div class="empty" style="margin-bottom:18px">Queue is empty. It fills each morning from the creator pool${p.youtube_ok ? "" : " once a YouTube key is added"}.</div>`}
+    <div class="card"><h3>Today's e-mails</h3>
+      ${p.queue.length ? p.queue.map(mailCard).join("") : `<div class="empty">Queue is empty. It fills each morning from the creator pool${p.youtube_ok ? "" : " once a YouTube key is added"}.</div>`}
+    </div>
     <div class="two">
       <div class="card"><h3>E-mails sent per day</h3>${lineChart(p.series, "No e-mails yet.")}</div>
       <div class="card"><h3>Per project</h3><div class="scroll"><table><thead><tr><th>Project</th><th class="num">Found</th><th class="num">Ready</th><th class="num">E-mailed</th><th class="num">Replies</th></tr></thead><tbody>
@@ -1352,7 +1540,7 @@ function renderPromote(d) {
       <div class="card"><h3>Learning: e-mail wording</h3><p class="hint">Variants that get replies are picked more often.</p>${statRows(p.variants, "Variant")}</div>
       <div class="card"><h3>Learning: creator type</h3>${statRows(p.by_type, "Type")}</div>
     </div>
-    <div class="card" style="margin-bottom:18px"><h3>Recently sent</h3>${p.recent.length ? `<div class="scroll"><table><thead><tr><th>Sent</th><th>Creator</th><th>Project</th><th>Subject</th><th></th></tr></thead><tbody>
+    <div class="card"><h3>Recently sent</h3>${p.recent.length ? `<div class="scroll"><table><thead><tr><th>Sent</th><th>Creator</th><th>Project</th><th>Subject</th><th></th></tr></thead><tbody>
       ${p.recent.map((r) => `<tr><td>${esc(niceDate(r.at))}</td><td>${link(r.creator.url, r.creator.name)} <span class="badge grey">${esc(r.creator.stage)}</span></td><td>${esc(r.product)}</td><td class="hint">${esc(r.subject)}</td><td>${coveredButton(r.creator)}</td></tr>`).join("")}
       </tbody></table></div>` : `<div class="empty">Nothing sent yet.</div>`}</div>
     ${listingsCard(p.listings)}
@@ -1384,10 +1572,9 @@ function weekBars(weeks) {
 function renderPodcast(d) {
   const p = d.hub.podcast_promotion || {};
   const section = document.getElementById("podcast");
-  const tabButton = document.querySelector('nav button[data-tab="podcast"]');
-  if (tabButton) tabButton.hidden = !p.installed;
+  moduleTab("podcast", Boolean(p.installed));
   if (!p.installed) {
-    section.innerHTML = `<div class="empty">Podcast promotion isn't set up${p.error ? `: ${esc(p.error)}` : ""}.</div>`;
+    section.innerHTML = `${pageHead("Projects", "Podcast")}<div class="empty">Podcast promotion isn't set up${p.error ? `: ${esc(p.error)}` : ""}.</div>`;
     return;
   }
   const mmss = (s) => (s === null || s === undefined) ? "–" : `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")}`;
@@ -1460,30 +1647,31 @@ function renderPodcast(d) {
     </tr>`).join("");
 
   section.innerHTML = `
+    ${pageHead("Projects", "Podcast", "Where the show is listed, and its downloads.")}
     <div class="grid">
       ${kpi("Listed on", `${num(p.listed)} / ${num(directories.length)}`, p.todo && p.todo.length ? `To do: ${esc(p.todo.join(", "))}` : "Every directory done")}
       ${kpi("Downloads last week", dl.status === "ok" ? num(p.latest_week) : "–", dl.status === "ok" ? "From OP3" : esc(dl.status || "checking"))}
       ${kpi("Last 30 days", dl.status === "ok" ? num(dl.monthly) : "–", dl.counted_to ? `Counted to ${esc(when(dl.counted_to))}` : "")}
       ${kpi("Episodes announced", `${num(p.announced_episodes)} / ${num(episodes.length)}`, "Posted on at least one channel")}
     </div>
-    <div class="card" style="margin-bottom:18px">
+    <div class="card">
       <h3>Get listed</h3>
       <p class="hint">Paste the feed address once on each directory. Apple is checked by itself every 6 hours and Podcast Index once OP3 counts the show; for the others your "Mark as submitted" is the record.</p>
       <div class="actions" style="align-items:center">
-        <code style="font-size:14px;padding:8px 10px;background:#eef0f2;border-radius:6px;word-break:break-all">${esc(p.feed_url)}</code>
+        <code class="feed">${esc(p.feed_url)}</code>
         <button class="btn ghost" data-copy="${esc(p.feed_url)}">Copy feed address</button>
       </div>
-      <div class="scroll" style="margin-top:12px"><table>
+      <div class="scroll" style="margin-top:12px"><table class="stack">
         <thead><tr><th>Directory</th><th>Status</th><th>What it needs</th><th></th></tr></thead>
         <tbody>${directoryRows}</tbody></table></div>
     </div>
-    <div class="card" style="margin-bottom:18px">
+    <div class="card">
       <h3>Listeners <span class="hint">· downloads from OP3, checked ${esc(when((p.checked || {}).downloads))}${p.refreshing ? " · checking now" : ""}</span></h3>
       ${downloadsNotice ? `<p class="hint">${downloadsNotice}</p>` : ""}
       ${dl.status === "ok" ? weekBars(dl.weekly) : ""}
       <div class="actions">${actionButton("podcast:promo-refresh", "Check now", true)}${dl.stats_url ? link(dl.stats_url, "Full stats on OP3") : ""}</div>
     </div>
-    <div class="card" style="margin-bottom:18px">
+    <div class="card">
       <h3>Episodes <span class="hint">· most listened first, then newest</span></h3>
       ${episodes.length ? `<div class="scroll"><table>
         <thead><tr><th class="num">#</th><th>Episode</th><th class="num">7 days</th><th class="num">All time</th><th>Announced on</th></tr></thead>
@@ -1518,6 +1706,14 @@ function showTab(id) {
   } catch (error) {}
   document.querySelectorAll("nav button[data-tab]").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === id)));
   document.querySelectorAll("main section").forEach((s) => (s.hidden = s.id !== id));
+  setMenu(false);
+}
+
+// Phone and tablet: the menu button opens the pages as a drawer; a tap outside, Escape or picking a page closes it.
+function setMenu(open) {
+  document.getElementById("side").classList.toggle("open", open);
+  document.getElementById("scrim").hidden = !open;
+  document.getElementById("nav-menu").setAttribute("aria-expanded", String(open));
 }
 
 document.getElementById("help-open").addEventListener("click", () => {
@@ -1541,6 +1737,9 @@ async function load() {
     renderEmail(data);
     renderPromote(data);
     renderPodcast(data);
+    renderLaunch(data);
+    renderPatents(data);
+    renderTradebot(data);
     renderSchedule(data);
     renderReach(data);
     renderGithub(data);
@@ -1553,13 +1752,17 @@ async function load() {
 }
 
 document.querySelectorAll("nav button[data-tab]").forEach((button) => {
-  button.addEventListener("click", () => showTab(button.dataset.tab));
+  button.addEventListener("click", () => {
+    showTab(button.dataset.tab);
+    window.scrollTo(0, 0);
+  });
 });
-document.getElementById("nav-more").addEventListener("click", (event) => {
-  const nav = document.getElementById("tabs");
-  const open = nav.classList.toggle("open");
-  event.currentTarget.setAttribute("aria-expanded", String(open));
-  event.currentTarget.textContent = open ? "Less ▴" : "More ▾";
+document.getElementById("nav-menu").addEventListener("click", () => {
+  setMenu(!document.getElementById("side").classList.contains("open"));
+});
+document.getElementById("scrim").addEventListener("click", () => setMenu(false));
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") setMenu(false);
 });
 
 load();
