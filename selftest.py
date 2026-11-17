@@ -1105,6 +1105,41 @@ finally:
 check(proxy_fetch_ok and len(fetch_calls) == 2 and fetch_calls[0][0] == "fetch",
       "selfupdate: direct fetch timeout falls back to the local proxy")
 
+# Self-updater: packages a new version needs are installed once per requirements.txt; a failure waits a day
+import tempfile as _tempfile
+
+with _tempfile.TemporaryDirectory() as package_folder:
+    package_folder = Path(package_folder)
+    (package_folder / "requirements.txt").write_text("requests>=2.31\nnumpy>=1.26\n", encoding="utf-8")
+    pip_calls, pip_answers = [], [False, False, False, True]
+
+    def fake_pip(*args, cwd=None):
+        pip_calls.append(args)
+        return pip_answers.pop(0)
+
+    real_pip = selfupdate.run_pip
+    selfupdate.run_pip = fake_pip
+    try:
+        first_try = selfupdate.install_new_packages(package_folder, today="2026-11-17")
+        same_day = selfupdate.install_new_packages(package_folder, today="2026-11-17")
+        calls_after_failure = len(pip_calls)
+        next_day = selfupdate.install_new_packages(package_folder, today="2026-11-18")
+        settled = selfupdate.install_new_packages(package_folder, today="2026-11-19")
+        calls_when_settled = len(pip_calls)
+        (package_folder / "requirements.txt").write_text("requests>=2.31\nnumpy>=1.26\npypdf>=4.0\n", encoding="utf-8")
+        pip_answers.append(True)
+        changed_file = selfupdate.install_new_packages(package_folder, today="2026-11-19")
+    finally:
+        selfupdate.run_pip = real_pip
+    check("failed" in first_try and same_day == "" and calls_after_failure == 2 and pip_calls[1][:2] == ("--proxy", "http://localhost:3128"),
+          "selfupdate: a failed package install tries the proxy too, then waits for the next day")
+    check("installed" in next_day and settled == "" and calls_when_settled == 4,
+          "selfupdate: packages are installed once and not again while requirements.txt is unchanged")
+    check("installed" in changed_file and len(pip_calls) == 5 and pip_calls[4] == ("-r", "requirements.txt"),
+          "selfupdate: a changed requirements.txt is installed again")
+check(selfupdate.install_new_packages(Path("no-such-folder-for-selftest")) == "",
+      "selfupdate: no requirements.txt means nothing to install")
+
 # LinkedIn: when the comment API is refused, the links go into the post in place of the pointer line
 from linkedin_api import inline_links
 

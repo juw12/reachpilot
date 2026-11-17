@@ -433,7 +433,7 @@ function kpi(label, value, note = "") {
   return `<div class="card kpi"><div class="label">${esc(label)}</div><div class="value${size}">${value}</div><div class="note">${note}</div></div>`;
 }
 
-const REEL_FORMATS = { hook: "hook", pov: "POV", question: "question", listicle: "3 things", speedrun: "speedrun", roundup: "roundup" };
+const REEL_FORMATS = { hook: "hook", pov: "POV", question: "question", listicle: "3 things", speedrun: "speedrun", film: "product film", roundup: "roundup" };
 
 function postCard(entry, index) {
   const [kindLabel, kindClass] = KIND[entry.kind] || [entry.kind, ""];
@@ -1129,6 +1129,10 @@ function autoApplyCard(a) {
   const counts = digest.counts || {};
   const queued = digest.queued || [];
   const stuck = digest.needs_you || [];
+  // Settled jobs of the Big tech mail, read from the queue file itself: also the ones applied outside a scheduled run.
+  const SETTLED = { applied: ["Applied", "good"], already: ["Already applied", "grey"], skipped: ["Not applied", "grey"] };
+  const settled = digest.done || [];
+  const settledApplied = settled.filter((job) => job.status !== "skipped").length;
   const left = a.left || [];
   const results = a.results || [];
   const leftTotal = left.reduce((sum, group) => sum + group.jobs.length, 0);
@@ -1145,6 +1149,12 @@ function autoApplyCard(a) {
         <thead><tr><th>Run</th><th>Job</th><th>Result</th></tr></thead><tbody>
         ${results.map((row) => `<tr><td>${esc(niceDate(row.when))}</td><td><b>${esc(row.job)}</b>${row.detail ? `<div class="hint" style="white-space:normal">${esc(row.detail)}</div>` : ""}</td><td>${badge(RESULT[row.kind] || [row.kind, "grey"])}</td></tr>`).join("")}
         </tbody></table></div>` : `<div class="empty">No job was tried in the last runs.</div>`}
+      ${settled.length ? `<details open><summary>From the Big tech mail: ${num(settledApplied)} applied, ${num(settled.length - settledApplied)} not applied</summary>
+        <p class="hint">Every job of the mail that is settled, with the reason when it was not applied. Applications made outside a scheduled run are listed too. This list refreshes every minute.</p>
+        <div class="scroll" tabindex="0" role="region" aria-label="Scrollable table"><table>
+        <thead><tr><th>Date</th><th>Job</th><th>Result</th></tr></thead><tbody>
+        ${settled.map((job) => `<tr><td>${esc(niceDate(job.date))}</td><td><b>${esc(job.company)}</b> ${link(job.url, job.title)}${job.detail ? `<div class="hint" style="white-space:normal">${esc(job.detail)}</div>` : ""}</td><td>${badge(SETTLED[job.status] || [job.status, "grey"])}</td></tr>`).join("")}
+        </tbody></table></div></details>` : ""}
       ${stuck.length ? `<details open><summary>Needs you (${num(stuck.length)})</summary>
         ${stuck.map((job) => `<p><b>${esc(job.company)}</b> ${link(job.url, job.title)}<br><span class="hint">${esc(job.detail)}</span></p>`).join("")}</details>` : ""}
       ${left.length ? `<details><summary>Left for you (${num(leftTotal)})</summary>

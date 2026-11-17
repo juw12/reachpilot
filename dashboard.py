@@ -556,7 +556,7 @@ def update_from_github() -> None:
     """Keep the app on the newest version; watch_code() then restarts it and the page reloads."""
     time.sleep(60)
     while True:
-        selfupdate.log(selfupdate.pull_latest_version())
+        selfupdate.check_once()
         time.sleep(UPDATE_CHECK_SECONDS)
 
 

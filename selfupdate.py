@@ -3,6 +3,7 @@
 Runs from Task Scheduler (\\ReachPilot\\Updates, every 30 minutes and at sign-in) and from the open app.
 It only fast-forwards: on main, no local edits, nothing unpushed. It never merges, rebases or touches local work.
 A running app notices the new code by itself and restarts; scheduled tasks pick it up on their next run.
+When requirements.txt changes, the packages a new feature needs are installed too (missing ones only).
 
     python selfupdate.py            check once (what the scheduled task does)
     python selfupdate.py install    create / refresh the scheduled task
@@ -10,6 +11,7 @@ A running app notices the new code by itself and restarts; scheduled tasks pick 
 
 from __future__ import annotations
 
+import hashlib
 import os
 import shutil
 import subprocess
@@ -26,6 +28,9 @@ LOCAL_TIMEOUT = 180  # seconds; plain local git calls have taken over 60 s when 
 FETCH_TIMEOUT = 120
 FALLBACK_PROXIES = ("http://localhost:3128",)  # local proxy used on the office network when the direct route fails
 TASK_TIME_LIMIT_MINUTES = 20
+REQUIREMENTS_FILE = "requirements.txt"
+PACKAGES_STAMP = "packages.log"  # git-ignored (*.log): which requirements.txt was installed last, and how it went
+PIP_TIMEOUT = 420  # seconds per route; two routes stay inside the task's time limit
 
 
 def find_git() -> str:
@@ -87,6 +92,58 @@ def log(result: str) -> None:
     LOG_FILE.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def packages_due(requirements: str, stamp: str, today: str) -> bool:
+    """True when this requirements.txt was not installed yet, or the last try failed on an earlier day."""
+    digest = hashlib.sha256(requirements.encode("utf-8")).hexdigest()
+    recorded = stamp.split()
+    if recorded[:1] != [digest]:
+        return True
+    return recorded[1:2] == ["failed"] and recorded[2:3] != [today]
+
+
+def run_pip(*args: str, cwd: Path = CODE_DIR) -> bool:
+    """pip for the Python that runs ReachPilot (python.exe next to pythonw.exe). True when it succeeded."""
+    console_python = Path(sys.executable).with_name("python.exe")
+    python = console_python if console_python.exists() else Path(sys.executable)
+    command = [str(python), "-m", "pip", "install", "--quiet", "--disable-pip-version-check", "--no-input", *args]
+    try:
+        return subprocess.run(command, cwd=cwd, capture_output=True, text=True, timeout=PIP_TIMEOUT, creationflags=NO_WINDOW).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def install_new_packages(folder: Path = CODE_DIR, today: str = "") -> str:
+    """Install what requirements.txt asks for when it changed. Missing packages only, nothing is upgraded.
+
+    Returns "" when there was nothing to do. A failure never blocks the app: features that need a missing
+    package fall back by themselves (the film goes out silent), and the install is tried again the next day.
+    """
+    today = today or f"{datetime.now():%Y-%m-%d}"
+    requirements_file, stamp_file = folder / REQUIREMENTS_FILE, folder / PACKAGES_STAMP
+    try:
+        if not requirements_file.exists():
+            return ""
+        requirements = requirements_file.read_text(encoding="utf-8")
+        stamp = stamp_file.read_text(encoding="utf-8") if stamp_file.exists() else ""
+        if not packages_due(requirements, stamp, today):
+            return ""
+        routes = [()] + [("--proxy", proxy) for proxy in FALLBACK_PROXIES]
+        installed = any(run_pip(*route, "-r", REQUIREMENTS_FILE, cwd=folder) for route in routes)
+        digest = hashlib.sha256(requirements.encode("utf-8")).hexdigest()
+        stamp_file.write_text(f"{digest} {'ok' if installed else 'failed'} {today}\n", encoding="utf-8")
+        return "packages: installed what the new version needs" if installed else "packages: install failed, trying again tomorrow"
+    except Exception as error:
+        return f"packages: skipped: {error}"
+
+
+def check_once(folder: Path = CODE_DIR) -> None:
+    """One full check: newest code, then the packages it needs. Used by the scheduled task and the open app."""
+    log(pull_latest_version(folder))
+    packages = install_new_packages(folder)
+    if packages:
+        log(packages)
+
+
 def install_task() -> None:
     """Every 30 minutes plus at sign-in, hidden (pythonw), catching up if the PC was asleep."""
     pythonw = Path(sys.executable).with_name("pythonw.exe")
@@ -107,4 +164,4 @@ if __name__ == "__main__":
     if sys.argv[1:] == ["install"]:
         install_task()
     else:
-        log(pull_latest_version())
+        check_once()

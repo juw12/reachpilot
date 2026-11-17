@@ -256,6 +256,7 @@ python autopilot.py channels         # optional: connect Bluesky, Mastodon, Dev.
 python autopilot.py goatcounter      # optional: free GoatCounter site + token for "Try it" clicks
 python autopilot.py install          # scheduled task \ReachPilot\LinkedIn posts: every 30 min + at sign-in
 python selfupdate.py install         # optional: task \ReachPilot\Updates keeps the code current (fast-forward only)
+                                     # and installs the packages a new version needs (missing ones only)
 ```
 
 In `config.json`, `"mode": "auto"` posts by itself; set `"mode": "review"` to hold each draft until you run `approve`.
@@ -436,7 +437,7 @@ again on the next daily run. `python patent_desk.py show` prints the desk.
 | `patents.py` | daily patent screen of your GitHub projects: score, filing date, next step |
 | `patent_desk.py` | daily patent desk: readiness checklist per candidate, provisional draft package, filing follow-up |
 | `launch_auto.py` | hourly launch automations: an answer and one follow-up, invitations after approval, daily checks of a waiting document |
-| `selfupdate.py` | fast-forward updater used by the dashboard and the Updates task |
+| `selfupdate.py` | fast-forward updater used by the dashboard and the Updates task; installs newly required packages |
 | `leakcheck.py` | no private repository name in the files or the history (run in CI, names never printed) |
 | `selftest.py` | tests (run in CI) |
 
