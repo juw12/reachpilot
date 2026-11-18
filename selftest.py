@@ -4432,5 +4432,228 @@ phone_main = (Path(__file__).parent / "phone_snapshot.py").read_text(encoding="u
 check(phone_main.index("leave_low_priority()") < phone_main.index("build("),
       "phone page: the build fixes its priority first, so Task Scheduler answers it on a busy PC")
 
+# Shorts: finished short videos go to X one at a time through Buffer (shorts.py). Nothing here talks to Buffer.
+import time  # noqa: E402
+
+import shorts  # noqa: E402
+from datetime import timezone as shorts_timezone  # noqa: E402
+
+shorts_zone = shorts_timezone(timedelta(hours=7))
+shorts_now = datetime(2026, 11, 18, 18, 30, tzinfo=shorts_zone)  # a Wednesday evening
+shorts_cfg = {"name": "Demo", "order": ["k02", "k01"], "target": 21, "days": ["mon", "wed", "fri", "sun"], "hour": 12,
+              "tags": 2, "status_file": "status.json", "not_connected": ["YouTube"]}
+shorts_post = {
+    "id": "k01", "title": "Split a name from a code without retyping (Ctrl + E)", "video": "one.mp4",
+    "caption": ("Data from the system arrives glued together? Type one example, press Ctrl + E and the rest fills in. "
+                "It is called Flash Fill and it is in Excel 2013 and later. The result does not follow when the data "
+                "changes, so press Ctrl + E again. " + "This closing sentence is only here to be too long for one post. " * 2),
+    "hashtags": ["#excel", "#tips", "#third"],
+}
+shorts_text = shorts.x_text(shorts_post)
+check(channels.x_length(shorts_text) <= 280 and shorts_text.startswith(shorts_post["title"] + "\n\n")
+      and shorts_text.endswith("\n\n#excel #tips") and "#third" not in shorts_text
+      and shorts_text.count("Excel 2013 and later.") == 1 and "press Ctrl + E again" not in shorts_text,
+      "shorts: the X text is the title, whole sentences while they fit in 280, then the first two hashtags")
+check(shorts.x_text({"title": "Only a title", "caption": "", "hashtags": []}) == "Only a title"
+      and channels.x_length(shorts.x_text({"title": "word " * 90, "caption": "x"})) <= 280
+      and shorts.x_text({"title": "", "caption": ""}) == "",
+      "shorts: a post with no caption is its title, an endless title is cut at a word, an empty post is no post")
+check(shorts.next_slot(shorts_now, shorts_cfg) == datetime(2026, 11, 20, 12, 0, tzinfo=shorts_zone)
+      and shorts.next_slot(datetime(2026, 11, 20, 12, 0, tzinfo=shorts_zone), shorts_cfg) == datetime(2026, 11, 22, 12, 0, tzinfo=shorts_zone)
+      and shorts.next_time(shorts_cfg, datetime(2026, 11, 20, 11, 45, tzinfo=shorts_zone)) == datetime(2026, 11, 22, 12, 0, tzinfo=shorts_zone)
+      and shorts.next_time(shorts_cfg, datetime(2026, 11, 20, 11, 15, tzinfo=shorts_zone)) == datetime(2026, 11, 20, 12, 0, tzinfo=shorts_zone),
+      "shorts: the next posting time is the next configured day at noon, and never closer than the lead time")
+check(shorts.slots_text(shorts_cfg) == "Mon, Wed, Fri and Sun at 12:00" and shorts.slots_text({}) == "every day at 12:00",
+      "shorts: the posting days read as a plain line")
+
+
+class ShortsBuffer:
+    """Buffer as far as shorts.py uses it: one queue of posts, kept in memory."""
+
+    def __init__(self):
+        self.posts, self.created, self.lose_answer = {}, 0, False
+
+    def __call__(self, creds, query, variables, what):
+        post_id = (variables.get("input") or {}).get("id")
+        if what == "Buffer channel":
+            return {"channel": {"id": "c1", "organizationId": "o1", "isDisconnected": False}}
+        if what == "Buffer queue":
+            return {"posts": {"edges": [{"node": post} for post in self.posts.values() if post["status"] == "scheduled"]}}
+        if what == "Schedule via Buffer":
+            self.created += 1
+            post = {"id": f"p{self.created}", "text": variables["input"]["text"], "dueAt": variables["input"]["dueAt"],
+                    "status": "scheduled", "input": variables["input"]}
+            self.posts[post["id"]] = post
+            if self.lose_answer:
+                raise RuntimeError("Schedule via Buffer failed: timed out")
+            return {"createPost": {"post": post}}
+        if what == "Buffer post":
+            if post_id not in self.posts:
+                raise RuntimeError(f"Buffer post failed: Post not found for id: {post_id}")
+            return {"post": self.posts[post_id]}
+        if what == "Remove from Buffer":
+            return {"deletePost": {"id": self.posts.pop(post_id)["id"]}}
+        raise AssertionError(what)
+
+
+shorts_real = (shorts.DATA_DIR, shorts.PRIVATE_FILE, shorts.SECRETS_FILE)
+shorts_home = Path(tempfile.mkdtemp())
+try:
+    shorts.DATA_DIR = shorts_home / "data"
+    shorts.PRIVATE_FILE = shorts_home / "shorts_private.json"
+    shorts.SECRETS_FILE = shorts_home / "secrets.json"
+    check(shorts.card(shorts_now) == [] and hub.shorts_section() == {"installed": False, "channels": []}
+          and shorts.run(shorts_now) == "nothing configured",
+          "shorts: with no channel configured there is no card and a run does nothing")
+
+    shorts_source = shorts_home / "made"
+    shorts_source.mkdir()
+    old = time.time() - 3600
+    for episode_id, video_name, settled in (("k01", "one.mp4", True), ("k02", "two.mp4", True), ("k03", "three.mp4", True),
+                                            ("k04", "four.mp4", False), ("k05", "five.mp4", True)):
+        (shorts_source / f"demo_{episode_id}_post.json").write_text(json.dumps(
+            {**shorts_post, "id": episode_id, "title": f"Title {episode_id}", "caption": "One sentence.", "video": video_name}),
+            encoding="utf-8")
+        if episode_id != "k05":  # k05 has its text but no video yet
+            (shorts_source / video_name).write_bytes(b"video " + episode_id.encode())
+            if settled:
+                os.utime(shorts_source / video_name, (old, old))
+    (shorts_source / "status.json").write_text(json.dumps({"episodes": [
+        {"id": "k01", "finished": True, "problems": []}, {"id": "k02", "finished": True, "problems": []},
+        {"id": "k03", "finished": True, "problems": ["sound too quiet"]}, {"id": "k04", "finished": True, "problems": []},
+    ]}), encoding="utf-8")
+    shorts.PRIVATE_FILE.write_text(json.dumps({"demo": {**shorts_cfg, "source": str(shorts_source)},
+                                               "Bad Name": {"source": "x"}, "nosource": {}}), encoding="utf-8")
+    check(list(shorts.load_config()) == ["demo"], "shorts: only a channel with a plain id and a source folder is taken")
+
+    shorts_state = shorts.load_state("demo")
+    took = shorts.sync("demo", shorts.load_config()["demo"], shorts_state, shorts_now)
+    check(took == 2 and sorted(shorts_state["episodes"]) == ["k01", "k02"]
+          and (shorts.DATA_DIR / "demo" / "k01.mp4").read_bytes() == b"video k01"
+          and shorts_state["episodes"]["k01"]["text"] == "Title k01\n\nOne sentence.\n\n#excel #tips",
+          "shorts: a video is taken in when its maker calls it finished, it has no problems, it exists and it stopped changing")
+    check(shorts.sync("demo", shorts.load_config()["demo"], shorts_state, shorts_now) == 0
+          and shorts.next_episode(shorts_cfg, shorts_state) == "k02",
+          "shorts: a second look takes nothing twice, and the configured order decides which goes first")
+
+    shorts_creds = {"via": "buffer", "api_key": "key", "channel_id": "c1", "username": "someone"}
+    buffer = ShortsBuffer()
+    hosted = []
+
+    def shorts_host(channel_id, episode_id, video):
+        hosted.append(episode_id)
+        return f"https://example.github.io/demo/{channel_id}-{episode_id}.mp4"
+
+    no_address = shorts.schedule("demo", shorts_cfg, shorts_state, shorts_creds, shorts_now, ask=buffer, host=lambda *args: "")
+    check("no public address" in no_address and buffer.created == 0 and shorts_state["episodes"]["k02"]["status"] == "waiting",
+          "shorts: without a public address for the video nothing is handed to Buffer")
+    told = shorts.schedule("demo", shorts_cfg, shorts_state, shorts_creds, shorts_now, ask=buffer, host=shorts_host)
+    sent_input = buffer.posts["p1"]["input"]
+    check(told == "k02: scheduled in Buffer for 2026-11-20 12:00" and sent_input["mode"] == "customScheduled"
+          and sent_input["dueAt"] == "2026-11-20T05:00:00.000Z" and sent_input["channelId"] == "c1"
+          and sent_input["assets"] == [{"video": {"url": "https://example.github.io/demo/demo-k02.mp4"}}]
+          and sent_input["text"].startswith("Title k02") and shorts_state["episodes"]["k02"]["status"] == "scheduled",
+          "shorts: the next video is scheduled in Buffer for Friday noon local time, with its video and its text")
+    again = shorts.schedule("demo", shorts_cfg, shorts_state, shorts_creds, shorts_now, ask=buffer, host=shorts_host)
+    check(buffer.created == 1 and again.startswith("k02 waits in Buffer"), "shorts: never more than one post waits in Buffer")
+
+    shorts.save_state("demo", shorts_state)
+    shorts.SECRETS_FILE.write_text(json.dumps({"channels": {"x": shorts_creds}}), encoding="utf-8")
+    shorts_card = shorts.card(shorts_now)[0]
+    check(shorts_card["finished"] == 2 and shorts_card["target"] == 21 and shorts_card["sent"] == 0 and shorts_card["left"] == 2
+          and shorts_card["next"] == {"episode": "k02", "title": "Title k02", "due": "2026-11-20 12:00", "state": "scheduled"}
+          and shorts_card["covered_until"] == "2026-11-22" and shorts_card["account"] == "@someone"
+          and shorts_card["connected"] and shorts_card["not_connected"] == ["YouTube"] and not shorts_card["paused"],
+          "shorts: the card says what is finished, what goes out next and the day the finished videos run out")
+    check("key" not in json.dumps(shorts.card(shorts_now)), "shorts: the card never carries the Buffer key")
+
+    paused = shorts.action("shorts:pause:demo", ask=buffer)
+    check("removed from Buffer" in paused and buffer.posts == {} and shorts.load_state("demo")["paused"]
+          and shorts.load_state("demo")["episodes"]["k02"]["status"] == "waiting"
+          and shorts.schedule("demo", shorts_cfg, shorts.load_state("demo"), shorts_creds, shorts_now, ask=buffer, host=shorts_host) == "paused"
+          and shorts.card(shorts_now)[0]["next"] is None,
+          "shorts: Pause takes the waiting post out of Buffer and nothing is scheduled while paused")
+    shorts.action("shorts:resume:demo", ask=buffer)
+    refused = []
+    for bad_action in ("shorts:pause:other", "shorts:delete:demo", "shorts:pause:demo;x", None):
+        try:
+            shorts.action(bad_action, ask=buffer)
+        except ValueError:
+            refused.append(bad_action)
+    check(len(refused) == 4 and not shorts.load_state("demo").get("paused"),
+          "shorts: Resume lifts the pause, and a button for an unknown channel or verb is refused")
+
+    shorts_state = shorts.load_state("demo")
+    buffer.lose_answer = True
+    lost = shorts.schedule("demo", shorts_cfg, shorts_state, shorts_creds, shorts_now, ask=buffer, host=shorts_host)
+    buffer.lose_answer = False
+    found = shorts.schedule("demo", shorts_cfg, shorts_state, shorts_creds, shorts_now, ask=buffer, host=shorts_host)
+    check("FAILED" in lost and buffer.created == 2 and "scheduled in Buffer" in found
+          and shorts_state["episodes"]["k02"]["post_id"] == "p2" and len(buffer.posts) == 1,
+          "shorts: a post Buffer took while its answer was lost is found again, not created a second time")
+
+    buffer.posts["p2"].update({"status": "sent", "sentAt": "2026-11-20T05:00:07.000Z", "externalLink": "https://x.com/someone/status/1"})
+    friday = datetime(2026, 11, 20, 13, 0, tzinfo=shorts_zone)
+    notes = shorts.refresh(shorts_state, shorts_creds, friday, ask=buffer)
+    after = shorts.schedule("demo", shorts_cfg, shorts_state, shorts_creds, friday, ask=buffer, host=shorts_host)
+    check(notes == ["k02: sent"] and shorts_state["episodes"]["k02"]["link"] == "https://x.com/someone/status/1"
+          and shorts_state["episodes"]["k02"]["sent_at"] == "2026-11-20 12:00"
+          and after == "k01: scheduled in Buffer for 2026-11-22 12:00",
+          "shorts: a sent post keeps its link and its time, and the next video takes the next posting day")
+    check(shorts.sync("demo", {**shorts_cfg, "source": str(shorts_source)}, shorts_state, friday) == 0
+          and shorts_state["episodes"]["k02"]["status"] == "sent",
+          "shorts: an episode that went out is never taken in or sent again")
+
+    buffer.posts.clear()  # I delete the waiting post in Buffer myself
+    notes = shorts.refresh(shorts_state, shorts_creds, friday, ask=buffer)
+    check(shorts_state["paused"] and "removed in Buffer" in shorts_state["paused_why"]
+          and shorts_state["episodes"]["k01"]["status"] == "waiting"
+          and shorts.schedule("demo", shorts_cfg, shorts_state, shorts_creds, friday, ask=buffer, host=shorts_host) == "paused",
+          "shorts: a post I remove in Buffer pauses the channel instead of coming back")
+
+    shorts_state["paused"] = False
+    for attempt in (1, 2):
+        shorts.schedule("demo", shorts_cfg, shorts_state, shorts_creds, friday, ask=buffer, host=shorts_host)
+        buffer.posts[shorts_state["episodes"]["k01"]["post_id"]].update({"status": "error", "error": {"message": "Video refused"}})
+        shorts.refresh(shorts_state, shorts_creds, friday, ask=buffer)
+        check(shorts_state["episodes"]["k01"]["status"] == ("waiting" if attempt == 1 else "failed"),
+              f"shorts: a post X refused is {'tried once more' if attempt == 1 else 'left for me after the second refusal'}")
+    shorts.save_state("demo", shorts_state)
+    shorts_card = shorts.card(friday)[0]
+    check(shorts_card["failed"] == [{"episode": "k01", "title": "Title k01", "error": "Video refused"}]
+          and shorts_card["posts"][0]["link"] == "https://x.com/someone/status/1" and shorts_card["sent"] == 1
+          and shorts_card["left"] == 0 and shorts_card["next"] is None,
+          "shorts: the card lists what was posted with its link and what was refused with the reason")
+
+    def shorts_offline(*args):
+        raise OSError("no network")
+
+    shorts_state["episodes"]["k01"].update({"status": "scheduled", "post_id": "p9"})
+    check(shorts.refresh(shorts_state, shorts_creds, friday, ask=shorts_offline)[0].startswith("k01: Buffer did not answer")
+          and shorts_state["episodes"]["k01"]["status"] == "scheduled" and not shorts_state.get("paused"),
+          "shorts: when Buffer does not answer nothing is changed and nothing is scheduled on top")
+
+    shorts.SECRETS_FILE.write_text(json.dumps({"channels": {"x": {"client_id": "paid api"}}}), encoding="utf-8")
+    check(shorts.x_account() is None and shorts.card(friday)[0]["connected"] is False
+          and "X is not connected through Buffer" in shorts.run(friday),
+          "shorts: without X connected through Buffer videos are still taken in and nothing is posted")
+finally:
+    shorts.DATA_DIR, shorts.PRIVATE_FILE, shorts.SECRETS_FILE = shorts_real
+    shutil.rmtree(shorts_home, ignore_errors=True)
+
+check(shorts.PAGES_CHECKOUT == autopilot.PAGES_CHECKOUT, "shorts: videos are hosted through the same Pages checkout as the demo clips")
+shorts_ignored = (Path(__file__).parent / ".gitignore").read_text(encoding="utf-8").split()
+check("shorts_private.json" in shorts_ignored and "data/shorts/" in shorts_ignored,
+      "shorts: the channel settings and the copied videos stay out of the repository")
+shorts_page = (Path(__file__).parent / "dashboard.html").read_text(encoding="utf-8")
+shorts_hub = (Path(__file__).parent / "hub.py").read_text(encoding="utf-8")
+check("${shorts.map(shortsCard).join(\"\")}" in shorts_page and "shorts:${c.paused ? \"resume\" : \"pause\"}:${c.id}" in shorts_page
+      and '("shorts", shorts_section)' in shorts_hub and 'name == "shorts_run_now"' in shorts_hub
+      and 'TASKS["shorts"] = "Shorts"' in shorts_hub and shorts.TASK_NAME == "Shorts",
+      "shorts: the Overview draws the card with its Pause and Run now buttons, and the hourly task is listed")
+shorts_main = (Path(__file__).parent / "shorts.py").read_text(encoding="utf-8").split('if __name__ == "__main__":')[1]
+check(shorts_main.index("leave_low_priority()") < shorts_main.index("run()"),
+      "shorts: the hourly run fixes its priority before it starts working")
+
 print("\nALL PASSED" if not failures else f"\n{len(failures)} FAILED")
 sys.exit(1 if failures else 0)

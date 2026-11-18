@@ -67,6 +67,8 @@ if (ROOT / "data" / "patents").exists():  # only where `python patents.py instal
     TASKS["patents"] = "Patent screen"
 if (ROOT / "data" / "launch_auto").exists():  # only where `python launch_auto.py install` has been run
     TASKS["launch"] = "Launch automations"
+if (ROOT / "data" / "shorts").exists():  # only where `python shorts.py install` has been run
+    TASKS["shorts"] = "Shorts"
 PYTHONW = Path(sys.executable).with_name("pythonw.exe")
 PYTHON = Path(sys.executable).with_name("python.exe")
 NO_WINDOW = 0x08000000
@@ -1889,6 +1891,15 @@ def run_action(name: str) -> str:
         import launch_auto
 
         return launch_auto.action(name)
+    if name == "shorts_run_now":
+        runner = PYTHONW if PYTHONW.exists() else Path(sys.executable)
+        subprocess.Popen([str(runner), str(ROOT / "shorts.py")], cwd=ROOT, creationflags=NO_WINDOW)
+        _cache.pop("tasks", None)
+        return "Shorts run started; the card updates in a minute or two."
+    if name.startswith("shorts:"):
+        import shorts
+
+        return shorts.action(name)
     raise ValueError(f"Unknown action: {name}")
 
 
@@ -2065,6 +2076,16 @@ def readers_section(today: date | None = None) -> dict:
     return {"installed": any(product["available"] for product in products), "products": products}
 
 
+# ------------------------------------------------------------------ shorts (finished short videos, scheduled for X)
+
+def shorts_section() -> dict:
+    """What shorts.py is doing for each configured channel, read from its files on this PC. No network."""
+    import shorts
+
+    rows = shorts.card()
+    return {"installed": bool(rows), "channels": rows}
+
+
 # ------------------------------------------------------------------ everything for the dashboard
 
 def build(linkedin_overview: dict | None) -> dict:
@@ -2074,7 +2095,7 @@ def build(linkedin_overview: dict | None) -> dict:
                         ("channels", channels_section), ("podcast", podcast_section),
                         ("podcast_promotion", podcast_promotion_section), ("launch", launch_section),
                         ("patents", patents_section), ("tradebot", tradebot_section),
-                        ("readers", readers_section)):
+                        ("readers", readers_section), ("shorts", shorts_section)):
         try:
             sections[key] = reader()
         except Exception as error:  # one broken module must not take the dashboard down

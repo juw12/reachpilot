@@ -1161,6 +1161,36 @@ function readersCard(r) {
   </div>`;
 }
 
+// Shorts: a channel's finished short videos, scheduled for X one at a time (shorts.py). Read from this PC's files.
+function shortsCard(c) {
+  const next = c.next;
+  const big = !c.connected ? "X is not connected"
+    : c.paused ? "Paused"
+    : next ? `Next: ${esc(niceDate(next.due))}`
+    : "No finished video is waiting";
+  const nextLine = !c.connected ? "Finished videos are kept. They are scheduled once X is connected through Buffer."
+    : c.paused ? `${esc(c.paused_why)} Nothing goes out until Resume.`
+    : next ? `${esc(next.title)} <span class="badge ${next.state === "scheduled" ? "good" : "grey"}">${next.state === "scheduled" ? "Scheduled in Buffer" : "Goes to Buffer on the next run"}</span>`
+    : c.sent ? "Every finished video has been posted." : "A video is scheduled within the hour after it is finished.";
+  const supply = c.left
+    ? `${num(c.left)} waiting${c.covered_until && !c.paused ? `, enough until ${esc(niceDate(c.covered_until))}` : ""}`
+    : "none waiting";
+  const low = c.left <= 2 && c.finished < c.target ? `<span class="badge warn">Running low</span> ` : "";
+  return `<div class="card module shorts">
+    <h3>${esc(c.name)} shorts on X <span class="hint">${esc(c.account)}</span></h3>
+    <div class="big">${big}</div>
+    <div class="hint">${nextLine}</div>
+    ${meter(c.target ? (100 * c.finished) / c.target : 0, `${c.finished} of ${c.target} videos finished`)}
+    <div class="hint">${low}${num(c.finished)} of ${num(c.target)} videos finished &middot; ${num(c.sent)} posted &middot; ${supply}</div>
+    <div class="hint">One post ${esc(c.slots)}. Buffer publishes it at that time, also when this PC is off.</div>
+    ${c.trouble ? `<div class="hint"><span class="badge warn">Not scheduled yet</span> ${esc(c.trouble)}</div>` : ""}
+    ${c.failed.map((p) => `<div class="hint"><span class="badge bad">Refused twice</span> ${esc(p.title)}: ${esc(p.error)}</div>`).join("")}
+    ${c.posts.map((p) => `<div class="hint">${esc(niceDate(p.sent_at))} &middot; ${link(p.link, p.title)}</div>`).join("")}
+    ${c.not_connected.length ? `<div class="hint">Not connected: ${esc(c.not_connected.join(", "))}.</div>` : ""}
+    <div class="actions">${actionButton(`shorts:${c.paused ? "resume" : "pause"}:${c.id}`, c.paused ? "Resume" : "Pause", !c.paused)}${actionButton("shorts_run_now", "Run now", true)}</div>
+  </div>`;
+}
+
 function renderOverview(d) {
   keepingState(document.getElementById("overview"), () => drawOverview(d));
 }
@@ -1180,6 +1210,7 @@ function drawOverview(d) {
   const patents = h.patents && h.patents.installed ? h.patents : null;
   const tradebot = h.tradebot && h.tradebot.installed ? h.tradebot : null;
   const readers = (h.readers && h.readers.products) || [];
+  const shorts = (h.shorts && h.shorts.channels) || [];
   document.getElementById("overview").innerHTML = `
     ${pageHead(dateLine, title, lead)}
     <div class="grid">
@@ -1229,6 +1260,7 @@ function drawOverview(d) {
           ${t.next_step ? `<div class="hint">${esc(t.next_step)}</div>` : ""}` : `<div class="hint">No answer yet from the project's status file.</div>`}
       </div>`).join("")}
       ${readers.map(readersCard).join("")}
+      ${shorts.map(shortsCard).join("")}
       ${patents ? `<div class="card module">
         <h3>Patents <button class="btn ghost" data-goto="patents">Open</button></h3>
         ${patents.has_scan ? `<div class="big">${patentHeadline(patents.counts)}</div>

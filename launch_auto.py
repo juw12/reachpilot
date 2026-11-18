@@ -155,9 +155,9 @@ def save_state(test_id: str, state: dict, only: str | None = None) -> None:
 
 
 @contextmanager
-def _only_one(name: str, wait: float = 0.0):
+def _only_one(name: str, wait: float = 0.0, folder: Path | None = None):
     """True for the one holder of this lock on this PC, False for everyone else. The lock ends with its process,
-    so a crashed run can never block the next one."""
+    so a crashed run can never block the next one. Another automation (shorts.py) keeps its lock in its own folder."""
     try:
         import msvcrt
 
@@ -175,8 +175,9 @@ def _only_one(name: str, wait: float = 0.0):
         def give_back(handle):
             fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    handle = open(DATA_DIR / f"{name}.lock", "a+b")
+    folder = folder or DATA_DIR
+    folder.mkdir(parents=True, exist_ok=True)
+    handle = open(folder / f"{name}.lock", "a+b")
     deadline = time.monotonic() + wait
     held = False
     try:

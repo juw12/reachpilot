@@ -385,6 +385,23 @@ Settings live under `auto` in `launch_private.json`; contact lists, mail texts, 
 `data/launch_auto/` (both git-ignored). A send that may not have gone out is not retried, so nobody gets a mail
 twice. `python launch_auto.py show` prints what each row is doing.
 
+**Shorts.** `python shorts.py install` adds an hourly task (`\ReachPilot\Shorts`) for a channel of short videos
+that something else makes. Each finished video has a small post file next to it (`*_post.json`: id, title,
+caption, hashtags, video). The task copies finished videos into `data/shorts/`, gives the next one a public
+address on your Pages site and schedules it in Buffer for X on the next posting day you set (for example Monday,
+Wednesday, Friday and Sunday at 12:00). Buffer publishes it at that time, also when this PC is off.
+
+- **One at a time.** Never more than one post waits in Buffer. A post that went out is never sent again, and a
+  post Buffer already took is found again instead of being created twice.
+- **You can stop it in two places.** Pause on the card removes the waiting post from Buffer. Deleting the post in
+  Buffer yourself pauses the channel too. Nothing goes out until Resume.
+- **The card on Overview** shows the next post and its day, how many videos are finished against the target, how
+  many went out (with their links), the day the finished videos run out, and what X refused.
+
+Channels live in `shorts_private.json`, the copied videos and what was posted in `data/shorts/` (both
+git-ignored). X must be connected through Buffer (`python autopilot.py channels`). `python shorts.py show` prints
+what the card shows.
+
 **Patent screen.** `python patents.py install` adds a daily task (`\ReachPilot\Patent screen`, every day 09:00) and a
 **Patents** page. Each run reads the description and README of every repository you own, private ones included
 when `gh` is signed in, and answers three questions per project:
@@ -453,6 +470,7 @@ again on the next daily run. `python patent_desk.py show` prints the desk.
 | `patents.py` | daily patent screen of your GitHub projects: score, filing date, next step |
 | `patent_desk.py` | daily patent desk: readiness checklist per candidate, provisional draft package, filing follow-up |
 | `launch_auto.py` | hourly launch automations: an answer and one follow-up, invitations after approval, daily checks of a waiting document |
+| `shorts.py` | hourly: a channel's finished short videos, scheduled for X through Buffer one at a time |
 | `selfupdate.py` | fast-forward updater used by the dashboard and the Updates task; installs newly required packages |
 | `leakcheck.py` | no private repository name in the files or the history (run in CI, names never printed) |
 | `selftest.py` | tests (run in CI) |

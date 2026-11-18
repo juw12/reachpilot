@@ -43,3 +43,7 @@ data/patents/
 # Launch automations: contact lists, mail texts, answers and run state (launch_auto.py)
 data/launch_auto/
 launch_auto.log
+
+# Shorts: which channels, where their videos are made, the copied videos and what was posted (shorts.py)
+shorts_private.json
+data/shorts/
