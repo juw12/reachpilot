@@ -1388,7 +1388,18 @@ def never_asked(url):
     raise AssertionError(f"{url} was looked up although the project has its own site")
 
 
+research = copy.copy(facts)
+research.homepage = "https://doi.org/10.5281/zenodo.24338429"
 landing_page = "https://juw12.github.io/p/watt-reserve/"
+check(composer.links_for(research) == "Source: https://github.com/juw12/watt-reserve\n"
+      "Citable archive (DOI): https://doi.org/10.5281/zenodo.24338429" and "Try it" in composer.links_for(facts),
+      "research: a repo whose homepage is a DOI gets its repo and the citable archive in the comment, not 'Try it'")
+check(channels.split_post("", composer.links_for(research))[2]
+      == [("Source", research.html_url), ("Citable archive (DOI)", research.homepage)]
+      and channels.primary_link(composer.links_for(research)) == research.html_url,
+      "research: the channels read both links, and the repo is the one a short post carries")
+check(showcase.target("juw12", "launch", [research], is_live=lambda url: url == landing_page) == (landing_page, {}),
+      "research: the video is recorded on the landing page, not on the archive record behind the DOI")
 built_page = "https://juw12.github.io/reachpilot-showcase/watt-reserve/"
 roundup_page = "https://juw12.github.io/reachpilot-showcase/roundup/"
 check(showcase.target("juw12", "launch", [facts], is_live=never_asked) == (facts.homepage, {}),

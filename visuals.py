@@ -115,10 +115,11 @@ def images_for_post(user: str, angle: str, subjects: list[RepoFacts], out_dir: P
     out_dir.mkdir(parents=True, exist_ok=True)
     urls = {}
     for facts in subjects:
-        if angle == "behind_the_build" or not facts.homepage:
+        site = "" if facts.doi_url else facts.homepage  # a DOI page is an archive record: show the repo instead
+        if angle == "behind_the_build" or not site:
             urls[f"{facts.name}_repo"] = facts.html_url
-        if facts.homepage:
-            urls[f"{facts.name}_site"] = facts.homepage
+        if site:
+            urls[f"{facts.name}_site"] = site
     shots = capture(urls, out_dir / "raw")
 
     framed: list[Path] = []

@@ -185,6 +185,11 @@ class RepoFacts:
             return self.name.capitalize()
         return self.name.replace("-", " ")
 
+    @property
+    def doi_url(self) -> str:
+        """The homepage when it is a DOI link: a research repo whose "site" is its citable archive, not a product."""
+        return self.homepage if self.homepage.startswith("https://doi.org/") else ""
+
     def source_text(self) -> str:
         """All grounded text, used to check generated posts don't invent numbers."""
         return " ".join(

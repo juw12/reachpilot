@@ -61,6 +61,11 @@ Every 30 minutes, Windows Task Scheduler runs one pass:
 It also repairs garbled characters in READMEs (text saved in the wrong encoding), skips install/run steps when picking
 feature bullets, and puts links in the first comment.
 
+A research repo is told apart by its homepage: when that is a DOI link (`https://doi.org/...`, e.g. a Zenodo
+archive), the first comment carries the repo and "Citable archive (DOI)" instead of "Try it", and the video and
+pictures show the project page rather than the archive record. Each new GitHub release of such a repo is archived by
+Zenodo under the same DOI and announced here like any other release.
+
 ### Short videos that open with a hook
 
 A plain screen recording gets scrolled past. So the recording is taken again at phone size, placed in a phone

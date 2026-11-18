@@ -172,7 +172,7 @@ def target(user: str, angle: str, subjects: list[RepoFacts], is_live=None) -> tu
     name = subject_name(angle, subjects)
     if name != "roundup":
         facts = subjects[0]
-        if facts.homepage and "//github.com/" not in facts.homepage:
+        if facts.homepage and "//github.com/" not in facts.homepage and not facts.doi_url:
             return facts.homepage, {}
         landing = landing_url(user, facts.name)
         if (is_live or trylinks._is_live)(landing):

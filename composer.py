@@ -61,6 +61,8 @@ def hashtags_for(facts: RepoFacts | None, defaults: list[str], rng: random.Rando
 
 
 def links_for(facts: RepoFacts) -> str:
+    if facts.doi_url:  # research: there is nothing to "try"; readers get the repo first, then the archive to cite
+        return f"Source: {facts.html_url}\nCitable archive (DOI): {facts.doi_url}"
     lines = []
     if facts.homepage:
         lines.append(f"Try it: {facts.homepage}")
