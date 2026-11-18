@@ -1783,6 +1783,31 @@ with tempfile.TemporaryDirectory() as temp_dir:
         check(reused_url == demo_link and reuse_git == [], "demo hosting: a recent live clip is reused without a new commit")
         check(never_live == "" and push_failed == "" and no_checkout == "",
               "demo hosting: no link is handed out unless the clip is really live")
+
+        # A copy that is ahead and behind at once is rebased, so the next push is accepted
+        pull_calls = []
+        pull_codes = {}
+
+        def fake_pull_git(args, cwd):
+            pull_calls.append(" ".join(args[:2]))
+            return subprocess.CompletedProcess(args, pull_codes.get(" ".join(args[:2]), 0), "", "")
+
+        with mock.patch("trylinks._git", fake_pull_git):
+            up_to_date = trylinks._pages_checkout("juw12", pages, quiet)
+            clean_pull = list(pull_calls)
+            pull_calls.clear()
+            pull_codes["pull --ff-only"] = 1
+            diverged = trylinks._pages_checkout("juw12", pages, quiet)
+            diverged_pull = list(pull_calls)
+            pull_calls.clear()
+            pull_codes["pull --rebase"] = 1
+            stuck = trylinks._pages_checkout("juw12", pages, quiet)
+            stuck_pull = list(pull_calls)
+        check(up_to_date and clean_pull == ["pull --ff-only"], "pages checkout: a clean copy is only fast-forwarded")
+        check(diverged and diverged_pull == ["pull --ff-only", "pull --rebase"],
+              f"pages checkout: a diverged copy is rebased onto the site ({diverged_pull})")
+        check(stuck and stuck_pull == ["pull --ff-only", "pull --rebase", "rebase --abort"],
+              f"pages checkout: a rebase that cannot finish is undone, not left half done ({stuck_pull})")
     finally:
         logging.disable(logging.NOTSET)
 

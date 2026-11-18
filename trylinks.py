@@ -132,7 +132,12 @@ def _pages_checkout(user: str, checkout: Path, log) -> bool:
         if result.returncode != 0:
             log.warning("Could not clone %s.github.io: %s", user, result.stderr[-300:])
             return False
-    _git(["pull", "--ff-only", "--quiet"], checkout)
+    if _git(["pull", "--ff-only", "--quiet"], checkout).returncode != 0:
+        # A page committed here whose push never arrived leaves this copy ahead of the site and behind it at once.
+        # Every later push is then rejected, so put the local commits on top of the site instead.
+        if _git(["pull", "--rebase", "--quiet"], checkout).returncode != 0:
+            _git(["rebase", "--abort"], checkout)
+            log.warning("The local copy of %s.github.io could not be brought up to date", user)
     return True
 
 
