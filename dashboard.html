@@ -1154,6 +1154,7 @@ function readersCard(r) {
     <div class="hint">${num(r.views)} typical view${r.views === 1 ? "" : "s"} a post &middot; ${num(r.per_100)} views per 100 readers &middot; ${trend}</div>
     ${meter(r.progress, `${r.progress}% of the ${num(r.target)} target`)}
     <div class="hint">${pace}</div>
+    ${r.forecast ? `<div class="hint">${esc(r.forecast)}</div>` : ""}
     ${r.series.length > 2 ? lineChart(r.series, "") : ""}
     <div class="hint">${read} ${link(r.link, "Source")}</div>
   </div>`;

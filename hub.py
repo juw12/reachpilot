@@ -1930,11 +1930,19 @@ def parse_metrics(text: str) -> list[dict]:
     return rows
 
 
+def readers_day(iso: str, with_year: bool = False) -> str:
+    """'2026-11-17' as the card writes it: 'Tue 17 Nov', or 'Tue 17 Nov 2026' when the year matters."""
+    try:
+        return date.fromisoformat(iso).strftime("%a %d %b %Y" if with_year else "%a %d %b")
+    except ValueError:
+        return iso
+
+
 def readers_view(rows: list[dict], target: int, target_date: str, today: date | None = None) -> dict:
-    """Where a project stands against its own target, and the pace the remaining days need."""
+    """Where a project stands against its own target, the pace the remaining days need, and where its own pace leads."""
     today = today or date.today()
     days_left = max((date.fromisoformat(target_date) - today).days, 0)
-    view = {"available": False, "target": target, "target_date": target_date, "days_left": days_left}
+    view = {"available": False, "target": target, "target_date": target_date, "days_left": days_left, "forecast": ""}
     if not rows:
         return view
     first, latest = rows[0], rows[-1]
@@ -1943,13 +1951,30 @@ def readers_view(rows: list[dict], target: int, target_date: str, today: date | 
     reached = subscribers >= target
     needed = max(target - subscribers, 0)
     per_day = 0 if reached or not days_left else math.ceil(needed / days_left)
+    gained = subscribers - first["subscribers"]
+    span = (date.fromisoformat(latest["date"]) - date.fromisoformat(first["date"])).days
+    pace = round(gained / span, 1) if span > 0 else None  # subscribers a day, from the rows themselves
+    finish = (date.fromisoformat(latest["date"]) + timedelta(days=math.ceil(needed / pace))
+              if pace and pace > 0 and needed else None)
+    if reached:
+        forecast = ""
+    elif pace is None:
+        forecast = ""  # one row: no pace to speak of yet
+    elif gained <= 0:
+        forecast = f"At this pace: no gain since {readers_day(first['date'])}, so {target} never arrives."
+    else:
+        late = (finish - date.fromisoformat(target_date)).days
+        forecast = (f"At +{pace:g} a day since {readers_day(first['date'])}: {target} around "
+                    f"{readers_day(finish.isoformat(), with_year=True)}"
+                    + (f", {late} days late." if late > 0 else ", before the target."))
     view.update({
         "available": True, "date": latest["date"], "subscribers": subscribers, "views": views,
         "per_100": latest["per_100"] or (round(100 * views / subscribers) if subscribers else 0),
         "posts": latest["posts"], "needed": needed, "reached": reached, "per_day": per_day,
         "per_week": per_day * 7 if per_day else 0,
         "progress": 100 if reached else max(0, min(100, round(100 * subscribers / target))) if target else 0,
-        "gained": subscribers - first["subscribers"], "since": first["date"], "days_counted": len(rows),
+        "gained": gained, "pace": pace, "finish": finish.isoformat() if finish else None, "forecast": forecast,
+        "since": first["date"], "days_counted": len(rows),
         "headline": f"{subscribers} subscriber{'s' if subscribers != 1 else ''}, "
                     f"{views} typical view{'s' if views != 1 else ''} a post",
         "series": [{"x": row["date"], "y": row["subscribers"]} for row in rows],

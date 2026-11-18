@@ -726,6 +726,23 @@ check(readers_view["needed"] == 248 and readers_view["per_day"] == 6 and readers
 check(readers_view["progress"] == 1 and readers_view["gained"] == 0 and readers_view["reached"] is False
       and readers_view["headline"] == "2 subscribers, 2 typical views a post",
       "readers: progress against the target, the change since the first row, and a plain headline")
+check(readers_view["pace"] == 0 and readers_view["finish"] is None
+      and readers_view["forecast"] == "At this pace: no gain since Tue 17 Nov, so 250 never arrives.",
+      "readers: no gain so far says the target will not arrive at this pace, instead of a made-up date")
+readers_climbing = hub.parse_metrics(
+    "date,subscribers,posts_counted,median_views,views_per_100_subscribers\n"
+    "2026-11-10,100,5,2,2\n2026-11-17,107,5,2,2\n")
+readers_climb = hub.readers_view(readers_climbing, 250, "2026-12-31", readers_today)
+check(readers_climb["pace"] == 1 and readers_climb["finish"] == "2027-04-09"
+      and readers_climb["forecast"] == "At +1 a day since Tue 10 Nov: 250 around Fri 09 Apr 2027, 99 days late.",
+      "readers: the project's own pace is projected into a date, and how late that date is against the target")
+readers_fast = hub.readers_view(hub.parse_metrics(
+    "date,subscribers,posts_counted,median_views,views_per_100_subscribers\n"
+    "2026-11-10,100,5,2,2\n2026-11-17,200,5,2,2\n"), 250, "2026-12-31", readers_today)
+check(readers_fast["forecast"] == "At +14.3 a day since Tue 10 Nov: 250 around Sat 21 Nov 2026, before the target.",
+      "readers: a pace that beats the target says so, instead of inventing lateness")
+check(hub.readers_view(readers_rows[:1], 250, "2026-12-31", readers_today)["forecast"] == "",
+      "readers: one row has no pace to project, so there is no forecast line yet")
 readers_done = hub.readers_view(
     [{"date": "2026-12-20", "subscribers": 260, "views": 40, "posts": 5, "per_100": 15}], 250, "2026-12-31",
     date(2026, 12, 20))
