@@ -1942,7 +1942,8 @@ def readers_view(rows: list[dict], target: int, target_date: str, today: date | 
     """Where a project stands against its own target, the pace the remaining days need, and where its own pace leads."""
     today = today or date.today()
     days_left = max((date.fromisoformat(target_date) - today).days, 0)
-    view = {"available": False, "target": target, "target_date": target_date, "days_left": days_left, "forecast": ""}
+    view = {"available": False, "target": target, "target_date": target_date, "days_left": days_left, "forecast": "",
+            "age_days": None, "note": ""}
     if not rows:
         return view
     first, latest = rows[0], rows[-1]
@@ -1953,6 +1954,7 @@ def readers_view(rows: list[dict], target: int, target_date: str, today: date | 
     per_day = 0 if reached or not days_left else math.ceil(needed / days_left)
     gained = subscribers - first["subscribers"]
     span = (date.fromisoformat(latest["date"]) - date.fromisoformat(first["date"])).days
+    age_days = max((today - date.fromisoformat(latest["date"])).days, 0)  # a future-dated row is not 'late'
     pace = round(gained / span, 1) if span > 0 else None  # subscribers a day, from the rows themselves
     finish = (date.fromisoformat(latest["date"]) + timedelta(days=math.ceil(needed / pace))
               if pace and pace > 0 and needed else None)
@@ -1974,6 +1976,8 @@ def readers_view(rows: list[dict], target: int, target_date: str, today: date | 
         "per_week": per_day * 7 if per_day else 0,
         "progress": 100 if reached else max(0, min(100, round(100 * subscribers / target))) if target else 0,
         "gained": gained, "pace": pace, "finish": finish.isoformat() if finish else None, "forecast": forecast,
+        "age_days": age_days,
+        "note": f"nothing new since {readers_day(latest['date'])}" if age_days >= 2 else "",
         "since": first["date"], "days_counted": len(rows),
         "headline": f"{subscribers} subscriber{'s' if subscribers != 1 else ''}, "
                     f"{views} typical view{'s' if views != 1 else ''} a post",

@@ -743,6 +743,15 @@ check(readers_fast["forecast"] == "At +14.3 a day since Tue 10 Nov: 250 around S
       "readers: a pace that beats the target says so, instead of inventing lateness")
 check(hub.readers_view(readers_rows[:1], 250, "2026-12-31", readers_today)["forecast"] == "",
       "readers: one row has no pace to project, so there is no forecast line yet")
+check(readers_view["age_days"] == 0 and readers_view["note"] == ""
+      and hub.readers_view(readers_rows, 250, "2026-12-31", date(2026, 11, 19))["note"] == "",
+      "readers: today's or yesterday's numbers are current, so the card says nothing about age")
+readers_old = hub.readers_view(readers_rows, 250, "2026-12-31", date(2026, 11, 24))
+check(readers_old["age_days"] == 6 and readers_old["note"] == "nothing new since Wed 18 Nov",
+      "readers: a file that stopped six days ago is called out, instead of the same numbers passing for today's")
+check(hub.readers_view([{"date": "2026-11-20", "subscribers": 9, "views": 3, "posts": 5, "per_100": 33}],
+                       250, "2026-12-31", readers_today)["note"] == "",
+      "readers: a row dated ahead of this PC's clock is not reported as late")
 readers_done = hub.readers_view(
     [{"date": "2026-12-20", "subscribers": 260, "views": 40, "posts": 5, "per_100": 15}], 250, "2026-12-31",
     date(2026, 12, 20))

@@ -1156,6 +1156,7 @@ function readersCard(r) {
     <div class="hint">${pace}</div>
     ${r.forecast ? `<div class="hint">${esc(r.forecast)}</div>` : ""}
     ${r.series.length > 2 ? lineChart(r.series, "") : ""}
+    ${r.note ? `<div class="hint"><span class="badge warn">${num(r.age_days)} day${r.age_days === 1 ? "" : "s"} old</span> ${esc(r.note)}</div>` : ""}
     <div class="hint">${read} ${link(r.link, "Source")}</div>
   </div>`;
 }
