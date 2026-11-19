@@ -51,5 +51,6 @@ launch_auto.log
 shorts_private.json
 data/shorts/
 
-# Inbox card: what a mailbox holds that only I can deal with (hub.py inbox_section)
+# Inbox card: what a mailbox holds that only I can deal with (hub.py inbox_section), and what I answered there
 inbox_private.json
+inbox_answers.json

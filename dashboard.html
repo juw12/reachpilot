@@ -157,6 +157,25 @@
   .todo .actions { flex-direction: column; align-items: stretch; gap: 6px; margin: 0; }
   .todo .actions .btn { width: 100%; }
   .todo + .btn { margin-top: 12px; }
+  /* A mail that can be answered: its answers sit beside it, an answered mail is one quiet line, a note is typed
+     in a field that opens under the mail */
+  .todo.answered { padding: 8px 0; }
+.todo.mail { grid-template-columns: minmax(0, 1fr) 230px; padding: 12px 0; }
+.todo.mail.p1 { padding-left: 14px; }
+.todo.mail .actions { flex-direction: row; flex-wrap: wrap; }
+.todo.mail .actions .btn { flex: 1 1 0; width: auto; padding-left: 8px; padding-right: 8px; white-space: nowrap; }
+.todo.mail .actions a { flex: 1 0 100%; }
+.mail-group { margin: 16px 0 2px; }
+.btn.small { min-height: 28px; margin-left: 8px; padding: 2px 10px; font-size: 13px; }
+  .todo.answered h4 { color: var(--muted); font-weight: 500; }
+.todo.answered .actions { align-items: flex-end; }
+.todo.answered .actions .btn { width: auto; }
+  .todo li .btn { min-height: 28px; margin: 2px 0 2px 6px; padding: 2px 10px; font-size: 13px; }
+.todo li .answers { display: inline-block; white-space: nowrap; }
+  .note-form { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+  .note-form input { flex: 1 1 260px; min-height: 34px; max-width: 100%; padding: 6px 8px; border: 1px solid var(--line-strong);
+    border-radius: 6px; background: var(--surface); color: var(--ink); font: inherit; }
+  .note-form input:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
 
   /* Upcoming posts, and the creator e-mails waiting to go out */
   .post, .mail { padding: 16px 0; border-top: 1px solid var(--line); }
@@ -309,6 +328,7 @@
     .todo { display: block; }
     .todo .actions { flex-direction: row; flex-wrap: wrap; margin-top: 10px; }
     .todo .actions .btn { width: auto; }
+    .todo li .btn, .btn.small, .note-form input { min-height: 44px; }
     td a, .todo li a, .launch-links a, details summary { display: inline-flex; align-items: center; min-height: 44px; min-width: 44px; }
     .patents .filing input { min-height: 44px; }
     .patents td.ready b, .patents td.screen b { display: inline; margin-right: 8px; }
@@ -728,7 +748,8 @@ async function act(name, button) {
     });
     const reply = await response.json().catch(() => ({ message: "Done." }));
     toast(reply.message || (response.ok ? "Done." : "That didn't work."));
-    setTimeout(load, 1500);
+    // data-now: the action has already written its result (an answer on the inbox card), nothing runs in the background
+    setTimeout(load, button && "now" in button.dataset ? 0 : 1500);
   } catch (error) {
     toast("Couldn't reach ReachPilot: " + error.message);
   } finally {
@@ -761,6 +782,13 @@ document.addEventListener("click", (event) => {
       form.querySelectorAll("input").forEach((input) => { input.value = ""; });
       act(`patents:filed:${filed.dataset.filed}:${day}:${number}`, filed);
     }
+  }
+  const note = event.target.closest("[data-inbox-note]");
+  if (note) {
+    const field = note.closest(".note-form").querySelector("input");
+    field.blur();  // the page is not redrawn under a field that has the keyboard
+    note.closest("details").open = false;
+    act(`inbox:note:${note.dataset.inboxNote}|${field.value.replace(/\s+/g, " ").trim()}`, note);
   }
   const jump = event.target.closest("[data-goto]");
   if (jump) {
@@ -818,7 +846,7 @@ function dismissed() {
 function openTodos(items) {
   const done = dismissed();
   return items
-    .filter((item) => !done.includes(todoKey(item)))
+    .filter((item) => item.links.some((l) => l.actions) || !done.includes(todoKey(item)))
     .map((item, index) => [item, index])
     .sort((a, b) => a[0].priority - b[0].priority || a[1] - b[1])
     .map(([item]) => item);
@@ -829,13 +857,19 @@ function todoCard(item, compact = false) {
   const shown = compact ? item.links.slice(0, 4) : item.links;
   const short = (note) => (compact && note.length > 90 ? `${note.slice(0, 88).trimEnd()}…` : note);
   const more = item.links.length - shown.length;
+  // A link can carry its own answers (a mail of the inbox card). They are kept on the PC, so such a row has no
+  // "Mark done" of its own: it leaves To do when its last mail is answered. Overview only lists; To do answers.
+  const answers = (l) => (compact || !(l.actions || []).length ? "" : `<span class="answers">${l.actions.map((a) =>
+    `<button class="btn ghost" data-action="${esc(a.name)}" data-now>${esc(a.label)}</button>`).join("")}</span>`);
+  const answered = item.links.some((l) => l.actions);
   const links = shown.length
-    ? `<ul>${shown.map((l) => `<li>${link(l.url, l.label)}${l.note ? ` <span class="hint">· ${esc(short(l.note))}</span>` : ""}</li>`).join("")}${
+    ? `<ul>${shown.map((l) => `<li>${link(l.url, l.label)}${l.note ? ` <span class="hint">· ${esc(short(l.note))}</span>` : ""}${answers(l)}</li>`).join("")}${
       more > 0 ? `<li class="hint">and ${more} more in To do</li>` : ""}</ul>` : "";
   const tab = MODULE_TAB[String(item.module).toLowerCase()];
   const buttons = item.action
     ? actionButton(item.action, item.action_label)
-    : `${tab ? `<button class="btn ghost" data-goto="${tab}">Open ${esc(item.module)}</button>` : ""}<button class="btn ghost" data-done="${esc(todoKey(item))}">Mark done</button>`;
+    : `${tab ? `<button class="btn ghost" data-goto="${tab}">Open ${esc(item.module)}</button>` : ""}${
+      answered ? "" : `<button class="btn ghost" data-done="${esc(todoKey(item))}">Mark done</button>`}`;
   return `<div class="todo p${item.priority}${compact ? " compact" : ""}">
     <div class="text">
       <span class="badge ${item.priority === 1 ? "bad" : item.priority === 2 ? "warn" : "grey"}">${esc(item.module)}${item.priority === 1 ? " · urgent" : ""}</span>
@@ -1486,6 +1520,8 @@ function renderJobs(d) {
 
 // What a mailbox holds that only I can deal with (hub.inbox_section reads inbox_private.json). Not drawn where that
 // file is missing. Every word comes from mail, so every word goes through esc(); links are built by the hub.
+// A mail with a key can be answered here: the buttons are hub.inbox_action names, the answer is kept on the PC
+// (inbox_answers.json) and To do follows it. No mail is opened, answered or changed by an answer.
 function inboxCard(inbox) {
   if (!inbox || !inbox.installed) return "";
   const groups = inbox.groups || [];
@@ -1495,29 +1531,74 @@ function inboxCard(inbox) {
     inbox.still_unread ? `${num(inbox.still_unread)} not looked at yet` : "",
     inbox.checked_at ? `checked ${esc(niceDate(inbox.checked_at))}` : "",
   ].filter(Boolean).join(" · ");
-  const mail = (item, urgent) => `<div class="todo${urgent ? " p1" : ""}">
+  const settled = (item) => Boolean(item.key) && !item.open;
+  const progress = inbox.open || inbox.answered
+    ? `<p><b>${num(inbox.open || 0)}</b> waiting for your answer · <b>${num(inbox.answered || 0)}</b> answered</p>` : "";
+  const about = (item) => `${[item.sender, item.date ? niceDate(item.date) : ""].filter(Boolean).map(esc).join(" · ")}${
+    item.detail ? `${item.sender || item.date ? " · " : ""}${esc(item.detail)}` : ""}`;
+  const undo = (item) => (item.answer ? `<button class="btn ghost" data-action="${esc(`inbox:reopen:${item.key}`)}" data-now>Undo</button>` : "");
+  const answeredMail = (item) => `<div class="todo answered">
       <div class="text">
-        <h4>${esc(item.title)}</h4>${item.unread ? ` <span class="badge warn">unread</span>` : ""}
-        <div class="hint">${[item.sender, item.date ? niceDate(item.date) : ""].filter(Boolean).map(esc).join(" · ")}${
-          item.detail ? `${item.sender || item.date ? " · " : ""}${esc(item.detail)}` : ""}</div>
+        <h4>${esc(item.title)}</h4> <span class="badge ${["mine", "done", "secured"].includes(item.answer.choice) ? "good" : "grey"}">${esc(item.answer.label)}</span>
+        <div class="hint">${item.answer.at ? `answered ${esc(niceDate(item.answer.at))}` : "answered"}${item.note ? ` · your note: ${esc(item.note)}` : ""}</div>
       </div>
-      <div class="actions">${item.url ? link(item.url, "Open in Gmail") : ""}</div>
+      <div class="actions">${undo(item).replace("btn ghost", "btn ghost small")}</div>
     </div>`;
+  // Quiet buttons: no answer is suggested. Only "Secured", the step that ends a "Not me" alarm, is filled.
+  const choices = (item) => (item.choices || []).map((choice) =>
+    `<button class="btn${item.answer ? "" : " ghost"}" data-action="${esc(choice.name)}" data-now>${esc(choice.label)}</button>`).join("");
+  const noteField = (item) => `${item.note ? `<div class="hint">Your note: ${esc(item.note)}</div>` : ""}
+        <details data-keep="${esc(`inbox-note:${item.key}`)}"><summary>${item.note ? "Change the note" : "Add a note"}</summary>
+          <div class="note-form">
+            <input type="text" maxlength="300" value="${esc(item.note)}" placeholder="What should happen with this mail" aria-label="${esc(`Note about ${item.title}`)}" data-keep="${esc(`inbox-note-text:${item.key}`)}">
+            <button class="btn ghost" data-inbox-note="${esc(item.key)}" data-now>Save note</button>
+          </div>
+        </details>`;
+  const openMail = (item, urgent) => `<div class="todo mail${urgent || (item.answer && item.open) ? " p1" : ""}">
+      <div class="text">
+        <h4>${esc(item.title)}</h4>${item.unread ? ` <span class="badge warn">unread</span>` : ""}${
+          item.answer ? ` <span class="badge bad">${esc(item.answer.label)}: change that password</span>` : ""}
+        <div class="hint">${about(item)}</div>
+        ${item.key ? noteField(item) : ""}
+      </div>
+      <div class="actions">${choices(item)}${undo(item)}${item.url ? link(item.url, "Open in Gmail") : ""}</div>
+    </div>`;
+  const heading = (group) => {
+    const canAnswer = group.items.filter((item) => item.key);
+    const open = canAnswer.filter((item) => item.open).length;
+    const allAnswered = canAnswer.length === group.items.length && !open;
+    const word = allAnswered ? "answered" : group.priority === 1 ? "needs you" : group.priority === 2 ? "worth knowing" : "for the record";
+    const count = !canAnswer.length || allAnswered ? num(group.items.length) : `${num(open)} of ${num(group.items.length)} open`;
+    // Mails that are only to know can be ticked off together; a mail that asks something is answered one by one.
+    const toKnow = canAnswer.filter((item) => item.open && item.ask === "know" && !item.answer).length;
+    const seenAll = toKnow > 1 && group.seen_all
+      ? ` <button class="btn ghost small" data-action="${esc(group.seen_all)}" data-now>Mark ${toKnow === open ? "all" : "the"} ${num(toKnow)} seen</button>` : "";
+    return `<h4 class="mail-group">${esc(group.title)} <span class="badge ${allAnswered ? "good" : group.priority === 1 ? "bad" : group.priority === 2 ? "warn" : "grey"}">${word} · ${count}</span>${seenAll}</h4>`;
+  };
+  // Inside a group: what still waits for me first, what I answered after it, each in the order of the file.
+  const rows = (group) => [...group.items.filter((item) => !settled(item)).map((item) => openMail(item, group.priority === 1)),
+    ...group.items.filter(settled).map(answeredMail)].join("");
   return `
     <div class="card" id="inbox-card">
       <h3>Inbox${inbox.account ? ` · ${esc(inbox.account)}` : ""}</h3>
       <p class="hint">What needs you from this mailbox. Everything else was read and needs nothing. ${facts}</p>
       ${inbox.note ? `<p class="hint">${esc(inbox.note)}</p>` : ""}
+      ${progress}
+      ${inbox.open || inbox.answered ? `<p class="hint">Answer a mail here or in To do: the answer is kept on this PC and both pages follow it. An answer sends nothing and changes no mail.</p>` : ""}
       ${groups.length ? groups.map((group) => `
-        <h4 style="margin:16px 0 2px">${esc(group.title)} <span class="badge ${group.priority === 1 ? "bad" : group.priority === 2 ? "warn" : "grey"}">${
-          group.priority === 1 ? "needs you" : group.priority === 2 ? "worth knowing" : "for the record"} · ${num(group.items.length)}</span></h4>
+        ${heading(group)}
         ${group.note ? `<p class="hint" style="margin:0 0 4px">${esc(group.note)}</p>` : ""}
-        ${group.items.map((item) => mail(item, group.priority === 1)).join("")}`).join("")
+        ${rows(group)}`).join("")
         : `<div class="empty">Nothing in this mailbox needs you.</div>`}
     </div>`;
 }
 
+// The page reloads its data every minute: a half-typed note and an opened note field survive that.
 function renderEmail(d) {
+  keepingState(document.getElementById("email"), () => drawEmail(d));
+}
+
+function drawEmail(d) {
   const e = d.hub.email;
   const section = document.getElementById("email");
   if (!e.installed) {
@@ -1920,6 +2001,7 @@ document.getElementById("nav-menu").addEventListener("click", () => {
 document.getElementById("scrim").addEventListener("click", () => setMenu(false));
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") setMenu(false);
+  if (event.key === "Enter" && event.target.matches(".note-form input")) event.target.nextElementSibling.click();
 });
 
 load();

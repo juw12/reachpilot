@@ -66,6 +66,10 @@ Change a colour and these numbers must be computed again, not estimated.
   is odd.
 - To-do rows: text on the left, buttons in a fixed column on the right; urgent rows carry a red rule on the left edge
   and the word "urgent". On Overview a row shows at most four links with short notes; the To do page shows all of it.
+  A mail of the inbox card is answered where it is listed: two quiet buttons side by side (no answer is suggested;
+  only "Secured", which ends a "Not me" alarm, is filled), a note field behind "Add a note", and "Undo". An
+  answered mail shrinks to one muted line with its answer as a badge. The same buttons sit small behind each
+  mail's link in To do.
 
 ## Space, radius, shadow, motion
 

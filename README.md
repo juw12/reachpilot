@@ -392,7 +392,7 @@ it writes `inbox_private.json` (git-ignored, next to the code), and the card is 
   "groups": [{"title": "Money", "priority": 1, "note": "Check on the site itself, not through the mail's link.",
               "items": [{"title": "Update your account to receive your funds", "detail": "Third reminder.",
                          "from": "Shop", "date": "2026-11-17", "unread": true,
-                         "search": "subject:\"Update your account\""}]}]
+                         "search": "subject:\"Update your account\"", "key": "shop-payout", "ask": "do"}]}]
 }
 ```
 
@@ -400,6 +400,19 @@ it writes `inbox_private.json` (git-ignored, next to the code), and the card is 
 come from strangers' mail, so each one is cut to a length and shown as plain text, and a link is never taken from
 the file: **Open in Gmail** is built from the account and the item's `search` words and only ever opens Gmail's
 own search. The card stays on your own dashboard and in the phone snapshot; the public demo has none.
+
+A mail with a `key` (lower-case letters, digits, `-`, `_`) can be **answered on the card**. `ask` says what it
+wants: `"confirm"` gives *It was me* / *Not me*, `"do"` gives *Done* / *Won't do*, anything else gives *Seen*.
+*Not me* settles nothing: the mail turns urgent and waits until you changed that password and press *Secured*.
+Each mail also takes one line of your own words (a note), an answer can be taken back with *Undo*, and a group's
+only-to-know mails can be marked seen with one press. The card counts what still waits and what is answered; an
+answered mail shrinks to one quiet line. **To do** shows the same mails with the same buttons: every unanswered
+mail of a priority-1 group, and from the other groups the mails that ask for something.
+
+The answers are kept in `inbox_answers.json` (git-ignored, next to the code), so the card, To do, Overview and
+the phone snapshot always agree, and whatever goes through the mailbox next can read them. An answer belongs to
+one mail: a later mail under the same key (another date or title) is open again. Answering **sends nothing and
+changes no mail**. The phone snapshot shows the answers but cannot give one.
 
 **Launch automations.** `python launch_auto.py install` adds an hourly task (`\ReachPilot\Launch automations`)
 that takes over steps of a launch test which only wait on a date or on somebody else. Its rows appear on the same

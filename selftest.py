@@ -1030,9 +1030,10 @@ check("tradebot_private.json" in (Path(__file__).parent / ".gitignore").read_tex
 
 # hub: the inbox card - reads a private file written from strangers' mail, so nothing in it is trusted
 inbox_home = Path(tempfile.mkdtemp(prefix="rp-inbox-"))
-inbox_real = hub.INBOX_PRIVATE
+inbox_real, inbox_answers_real = hub.INBOX_PRIVATE, hub.INBOX_ANSWERS
 try:
     hub.INBOX_PRIVATE = inbox_home / "inbox_private.json"
+    hub.INBOX_ANSWERS = inbox_home / "inbox_answers.json"
     check(hub.inbox_section() == {"installed": False} and hub.inbox_todo(hub.inbox_section()) == [],
           "hub inbox: no file means no card and nothing in To do")
     for odd in ("not json", "[1, 2]", '{"groups": "many"}', '{"account": "a@b.co"}'):
@@ -1072,8 +1073,94 @@ try:
     hub.INBOX_PRIVATE.write_text(json.dumps({"account": "not an address", "groups": [{"items": [{"title": "T", "search": "x"}]}]}), encoding="utf-8")
     check(hub.inbox_section()["groups"][0]["items"][0]["url"] is None and hub.inbox_section()["groups"][0]["title"] == "Other",
           "hub inbox: without a real account address there is no link")
+
+    # answers: a mail with a key can be answered on the card or in To do; the answer is kept in a file of its own
+    def inbox_card_file(signin_day="2026-11-18"):
+        hub.INBOX_PRIVATE.write_text(json.dumps({"account": "me@example.com", "groups": [
+            {"title": "Was it you", "priority": 1, "items": [
+                {"title": "New sign-in", "date": signin_day, "key": "signin", "ask": "confirm"},
+                {"title": "For the record", "key": "record"},
+                {"title": "No key"}]},
+            {"title": "Asked", "priority": 2, "items": [
+                {"title": "Apply on the site", "date": "2026-11-15", "key": "apply", "ask": "do"},
+                {"title": "Phone changed", "key": "phone", "ask": "confirm"},
+                {"title": "A no", "key": "no-1", "ask": ["odd"]},
+                {"title": "Bad key", "key": "Not A Key!", "ask": "do"}]}]}), encoding="utf-8")
+
+    def inbox_mail(title):
+        return next(item for group in hub.inbox_section()["groups"] for item in group["items"] if item["title"] == title)
+
+    def inbox_offers(title):
+        return [choice["name"] for choice in inbox_mail(title)["choices"]]
+
+    def inbox_rows():
+        return {row["title"]: (row["priority"], [link["label"] for link in row["links"]]) for row in hub.inbox_todo(hub.inbox_section())}
+
+    def inbox_refuses(name):
+        before = hub.INBOX_ANSWERS.read_text(encoding="utf-8") if hub.INBOX_ANSWERS.exists() else None
+        try:
+            hub.run_action(name)
+        except ValueError:
+            return (hub.INBOX_ANSWERS.read_text(encoding="utf-8") if hub.INBOX_ANSWERS.exists() else None) == before
+        return False
+
+    inbox_card_file()
+    inbox = hub.inbox_section()
+    check(inbox["open"] == 5 and inbox["answered"] == 0
+          and inbox_offers("New sign-in") == ["inbox:answer:signin:mine", "inbox:answer:signin:not_mine"]
+          and inbox_offers("Apply on the site") == ["inbox:answer:apply:done", "inbox:answer:apply:skip"]
+          and inbox_offers("For the record") == ["inbox:answer:record:seen"] and inbox_mail("A no")["ask"] == "know"
+          and all(inbox_mail(title)["key"] == "" and not inbox_mail(title)["open"] and inbox_offers(title) == []
+                  for title in ("No key", "Bad key")),
+          "hub inbox: a mail with a key can be answered, by what it asks; without a real key it is only shown")
+    check(inbox_rows() == {"Inbox: Was it you": (1, ["New sign-in", "For the record", "No key"]),
+                           "Inbox: Asked": (2, ["Apply on the site", "Phone changed"])}
+          and hub.inbox_todo(inbox)[1]["links"][0]["actions"] == inbox_mail("Apply on the site")["choices"],
+          "hub inbox: To do lists what still waits for me, with the same answers: all of an urgent group, elsewhere only what asks")
+    check(hub.run_action("inbox:answer:apply:done") == "Saved: Done." and not inbox_mail("Apply on the site")["open"]
+          and inbox_mail("Apply on the site")["answer"]["label"] == "Done"
+          and hub.INBOX_MOMENT.fullmatch(inbox_mail("Apply on the site")["answer"]["at"])
+          and inbox_offers("Apply on the site") == [] and inbox_rows()["Inbox: Asked"] == (2, ["Phone changed"])
+          and json.loads(hub.INBOX_ANSWERS.read_text(encoding="utf-8"))["answers"]["apply"]["choice"] == "done"
+          and hub.inbox_section()["answered"] == 1 and not list(inbox_home.glob("*.tmp")),
+          "hub inbox: an answer is written to inbox_answers.json and the mail leaves To do")
+    check("password" in hub.run_action("inbox:answer:phone:not_mine") and inbox_mail("Phone changed")["open"]
+          and inbox_offers("Phone changed") == ["inbox:answer:phone:secured"] and inbox_rows()["Inbox: Asked"] == (1, ["Phone changed"]),
+          "hub inbox: 'Not me' settles nothing: the mail stays open, becomes urgent and waits for 'Secured'")
+    check(hub.run_action("inbox:answer:phone:secured") == "Saved: Secured." and "Inbox: Asked" not in inbox_rows()
+          and hub.run_action("inbox:reopen:phone") == "Open again."
+          and inbox_offers("Phone changed") == ["inbox:answer:phone:mine", "inbox:answer:phone:not_mine"],
+          "hub inbox: 'Secured' settles it, and an answer can be taken back")
+    check(hub.run_action("inbox:note:record|Keep: it is mine:  yes\n ok") == "Note saved."
+          and inbox_mail("For the record")["note"] == "Keep: it is mine: yes ok" and inbox_mail("For the record")["open"]
+          and hub.run_action("inbox:answer:record:seen") and hub.run_action("inbox:reopen:record")
+          and inbox_mail("For the record")["note"] == "Keep: it is mine: yes ok"
+          and hub.run_action("inbox:note:record|" + "n" * 900) and len(inbox_mail("For the record")["note"]) == hub.INBOX_NOTE
+          and hub.run_action("inbox:note:record|") == "Note removed." and inbox_mail("For the record")["note"] == ""
+          and "record" not in json.loads(hub.INBOX_ANSWERS.read_text(encoding="utf-8"))["answers"],
+          "hub inbox: a note is one line of my own words, cut to a length; it stays when the answer is taken back")
+    check(all(inbox_refuses(name) for name in (
+        "inbox:answer:signin:done", "inbox:answer:signin:secured", "inbox:answer:apply:done", "inbox:answer:nokey:mine",
+        "inbox:answer:Not A Key!:done", "inbox:answer::mine", "inbox:reopen:signin", "inbox:reopen:apply:x", "inbox:erase:apply",
+        "inbox:note:nokey|text", "inbox:", "inbox")),
+          "hub inbox: only an answer the card offers for that mail right now is taken; anything else changes nothing")
+    hub.run_action("inbox:answer:signin:mine")
+    inbox_card_file(signin_day="2026-11-25")
+    check(inbox_mail("New sign-in")["open"] and inbox_mail("New sign-in")["answer"] is None and not inbox_mail("Apply on the site")["open"],
+          "hub inbox: an answer belongs to one mail; a later mail under the same key is open again")
+    hub.run_action("inbox:note:no-1|kept")
+    check(hub.inbox_section()["groups"][1]["seen_all"] == "inbox:seen:1"
+          and hub.run_action("inbox:seen:0") == "Saved: 1 mail(s) seen." and hub.run_action("inbox:seen:1") == "Saved: 1 mail(s) seen."
+          and inbox_mail("For the record")["answer"]["label"] == "Seen" and inbox_mail("A no")["answer"]["label"] == "Seen"
+          and inbox_mail("A no")["note"] == "kept" and inbox_mail("New sign-in")["open"] and inbox_mail("Phone changed")["open"]
+          and all(inbox_refuses(name) for name in ("inbox:seen:0", "inbox:seen:1", "inbox:seen:2", "inbox:seen:-1", "inbox:seen:x", "inbox:seen:")),
+          "hub inbox: one press marks a group's only-to-know mails as seen; a mail that asks something is never answered that way")
+    for odd in ("not json", "[1]", '{"answers": [1]}', '{"answers": {"apply": "done", "signin": {"choice": "paid", "about": "2026-11-25|New sign-in"}}}'):
+        hub.INBOX_ANSWERS.write_text(odd, encoding="utf-8")
+        check(hub.inbox_section()["open"] == 5 and hub.inbox_section()["answered"] == 0,
+              f"hub inbox: an answers file that is not the right shape answers nothing ({odd[:12]})")
 finally:
-    hub.INBOX_PRIVATE = inbox_real
+    hub.INBOX_PRIVATE, hub.INBOX_ANSWERS = inbox_real, inbox_answers_real
     shutil.rmtree(inbox_home, ignore_errors=True)
 
 inbox_page = (Path(__file__).parent / "dashboard.html").read_text(encoding="utf-8")
@@ -1083,8 +1170,17 @@ check(inbox_page.count("${inboxCard(d.hub.inbox)}") == 2 and '("inbox", inbox_se
 check(all(f"${{esc({word})}}" in inbox_card for word in ("item.title", "item.detail", "group.title", "group.note", "inbox.note", "inbox.account"))
       and "innerHTML" not in inbox_card and "item.url ? link(item.url" in inbox_card,
       "dashboard inbox: every word from a mail is escaped, and a link goes through link()")
-check("inbox_private.json" in (Path(__file__).parent / ".gitignore").read_text(encoding="utf-8").splitlines(),
-      "hub inbox: the private file is git-ignored")
+check(all(name in (Path(__file__).parent / ".gitignore").read_text(encoding="utf-8").splitlines()
+          for name in ("inbox_private.json", "inbox_answers.json")),
+      "hub inbox: the private file and my answers are git-ignored")
+check(all(words in inbox_card for words in ('data-action="${esc(choice.name)}" data-now', "${esc(`inbox:reopen:${item.key}`)}",
+                                            'data-action="${esc(group.seen_all)}" data-now',
+                                            'data-inbox-note="${esc(item.key)}"', 'value="${esc(item.note)}"', "${esc(item.answer.label)}"))
+      and 'data-action="${esc(a.name)}" data-now' in inbox_page.split("function todoCard(item, compact = false) {")[1].split("\nfunction ")[0]
+      and 'keepingState(document.getElementById("email"), () => drawEmail(d));' in inbox_page
+      and 'item.links.some((l) => l.actions) || !done.includes(todoKey(item))' in inbox_page,
+      "dashboard inbox: the answers are buttons on the card and in To do, a half-typed note survives the reload, "
+      "and a row with answers is not hidden by this browser's 'Mark done'")
 
 # hub: the podcast tile - the reader mirrors podcast.py's own rules (published + audio on the site; pending = held for review)
 podcast_home = Path(tempfile.mkdtemp(prefix="rp-podcast-"))

@@ -20,6 +20,8 @@ candidates from there: readiness, the filing package, and the dates before and a
 
 The inbox card (inbox_section) shows what a mailbox holds that only I can deal with. It reads
 inbox_private.json (git-ignored), written by whatever went through that mailbox; it shows only where that file exists.
+What I answer to a mail on the card or in To do (inbox_action) is kept in inbox_answers.json (git-ignored): the card,
+To do and whatever went through the mailbox all read that one file.
 
 This file only reads their files, builds the "what I need from you" list, and runs a short whitelist of actions.
 Every reader is defensive: a missing or half-written file shows as "not set up" instead of breaking the dashboard.
@@ -34,6 +36,7 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import time
 import urllib.parse
 from datetime import date, datetime, timedelta
@@ -463,7 +466,16 @@ def email_section() -> dict:
 # ------------------------------------------------------------------ the inbox card (Email page)
 
 INBOX_PRIVATE = ROOT / "inbox_private.json"
+INBOX_ANSWERS = ROOT / "inbox_answers.json"
 INBOX_GROUPS, INBOX_ITEMS = 12, 40
+INBOX_KEY = re.compile(r"[a-z0-9][a-z0-9_-]{0,39}")
+INBOX_NOTE = 300
+# What a mail asks decides what I can answer. "Not me" settles nothing: the mail stays open until I press "Secured".
+INBOX_ASKS = {"confirm": ("mine", "not_mine"), "do": ("done", "skip"), "know": ("seen",)}
+INBOX_NEXT = {"not_mine": ("secured",)}
+INBOX_LABELS = {"mine": "It was me", "not_mine": "Not me", "secured": "Secured", "done": "Done", "skip": "Won't do",
+                "seen": "Seen"}
+_inbox_lock = threading.Lock()
 INBOX_ADDRESS = re.compile(r"[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+")
 INBOX_DAY = re.compile(r"\d{4}-\d{2}-\d{2}")
 INBOX_MOMENT = re.compile(r"\d{4}-\d{2}-\d{2}( \d{2}:\d{2})?")
@@ -484,17 +496,43 @@ def _inbox_count(value) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
 
 
+def _inbox_answers() -> dict:
+    """What I answered, from inbox_answers.json (git-ignored):
+    {"answers": {"<key>": {"choice": "mine", "note": "...", "about": "<date>|<title>", "at": "2026-11-19 10:31"}}}"""
+    try:
+        answers = json.loads(INBOX_ANSWERS.read_text(encoding="utf-8-sig")).get("answers")
+    except (OSError, ValueError, AttributeError):
+        return {}
+    return {key: answer for key, answer in answers.items() if isinstance(answer, dict)} if isinstance(answers, dict) else {}
+
+
+def _inbox_save(answers: dict) -> None:
+    """Whatever reads the answers never sees a half-written file."""
+    temporary = INBOX_ANSWERS.with_suffix(".tmp")
+    temporary.write_text(json.dumps({"answers": answers}, indent=1, ensure_ascii=False), encoding="utf-8")
+    temporary.replace(INBOX_ANSWERS)
+
+
+def _inbox_about(item: dict) -> str:
+    """An answer belongs to one mail. A later mail under the same key has another date or title, so it is open again."""
+    return f"{item['date']}|{item['title']}"
+
+
 def inbox_section() -> dict:
     """What a mailbox holds that only I can deal with, from inbox_private.json (git-ignored):
 
     {"account": "me@gmail.com", "checked_at": "2026-11-19 10:05", "read": 168, "still_unread": 0, "note": "...",
      "groups": [{"title": "Money", "priority": 1, "note": "...",
                  "items": [{"title": "...", "detail": "...", "from": "...", "date": "2026-11-17",
-                            "unread": true, "search": "subject:(...)"}]}]}
+                            "unread": true, "search": "subject:(...)", "key": "shop-payout", "ask": "do"}]}]}
 
     Whatever went through the mailbox writes that file; this only reads it. Every text is cut to a length and shown
     as text. A link is never taken from the file: it is built here, from the account and the item's own search words,
     and always opens Gmail's search. Not set up where the file is missing or is not this shape.
+
+    A mail with a "key" can be answered (inbox_action). "ask" says what it wants: "confirm" (was this you?), "do"
+    (something only I can do), anything else is only to know. Each mail comes back with my answer and note, "open"
+    (still waits for me) and the answers that can be given now, as action names.
     """
     try:
         data = json.loads(INBOX_PRIVATE.read_text(encoding="utf-8-sig"))
@@ -506,6 +544,7 @@ def inbox_section() -> dict:
     opens = "https://mail.google.com/mail/?authuser=" + urllib.parse.quote(account, safe="@") + "#search/" \
         if INBOX_ADDRESS.fullmatch(account) else None
 
+    answers = _inbox_answers()
     groups = []
     for group in data["groups"][:INBOX_GROUPS]:
         if not isinstance(group, dict) or not isinstance(group.get("items"), list):
@@ -516,20 +555,38 @@ def inbox_section() -> dict:
             if not title:
                 continue
             search = _inbox_text(item.get("search"), 200)
-            items.append({
+            key = _inbox_text(item.get("key"), 40)
+            key = key if INBOX_KEY.fullmatch(key) else ""
+            ask = item.get("ask") if item.get("ask") in ("confirm", "do") else "know"
+            mail = {
                 "title": title,
                 "detail": _inbox_text(item.get("detail"), 500),
                 "sender": _inbox_text(item.get("from"), 80),
                 "date": _inbox_when(item.get("date"), INBOX_DAY),
                 "unread": item.get("unread") is True,
                 "url": opens + urllib.parse.quote(search, safe="") if opens and search else None,
+                "key": key,
+                "ask": ask,
+            }
+            mine = answers.get(key) or {}
+            mine = mine if key and mine.get("about") == _inbox_about(mail) else {}
+            choice = mine.get("choice") if mine.get("choice") in INBOX_LABELS else None
+            can_answer = () if not key else INBOX_NEXT.get(choice, ()) if choice else INBOX_ASKS[ask]
+            mail.update({
+                "answer": {"choice": choice, "label": INBOX_LABELS[choice],
+                           "at": _inbox_when(mine.get("at"), INBOX_MOMENT)} if choice else None,
+                "note": _inbox_text(mine.get("note"), INBOX_NOTE),
+                "open": bool(key) and (choice is None or choice in INBOX_NEXT),
+                "choices": [{"name": f"inbox:answer:{key}:{name}", "label": INBOX_LABELS[name]} for name in can_answer],
             })
+            items.append(mail)
         if items:
             groups.append({
                 "title": _inbox_text(group.get("title"), 80) or "Other",
                 "priority": group.get("priority") if group.get("priority") in (1, 2, 3) else 2,
                 "note": _inbox_text(group.get("note"), 300),
                 "items": items,
+                "seen_all": f"inbox:seen:{len(groups)}",
             })
     return {
         "installed": True,
@@ -540,19 +597,85 @@ def inbox_section() -> dict:
         "note": _inbox_text(data.get("note"), 400),
         "groups": groups,
         "kept_unread": sum(item["unread"] for group in groups for item in group["items"]),
+        "open": sum(item["open"] for group in groups for item in group["items"]),
+        "answered": sum(bool(item["key"]) and not item["open"] for group in groups for item in group["items"]),
     }
 
 
 def inbox_todo(section: dict | None) -> list[dict]:
-    """One line in To do per urgent group of the inbox card, with the mails as links. Nothing for the other groups."""
+    """One line in To do per group of the inbox card that still holds a mail for me, with those mails as links and
+    their answers as buttons. An urgent group: every mail I have not answered. Another group: only the unanswered mails
+    that ask for something. A mail I said was not me is urgent wherever it sits."""
     if not section or not section.get("installed"):
         return []
-    return [{
-        "priority": 1, "module": "Email", "title": f"Inbox: {group['title']}",
-        "detail": group["note"] or f"{len(group['items'])} mail(s) in {section['account'] or 'the inbox'} that only you can deal with.",
-        "action": None, "action_label": None,
-        "links": [{"label": item["title"], "url": item["url"], "note": item["detail"]} for item in group["items"]],
-    } for group in section["groups"] if group["priority"] == 1]
+    todo = []
+    for group in section["groups"]:
+        urgent = group["priority"] == 1
+        waiting = [item for item in group["items"]
+                   if (item["open"] and (urgent or item["ask"] != "know")) or (urgent and not item["key"])]
+        if not waiting:
+            continue
+        alarm = any(item["answer"] and item["answer"]["choice"] == "not_mine" for item in waiting)
+        todo.append({
+            "priority": 1 if urgent or alarm else 2, "module": "Email", "title": f"Inbox: {group['title']}",
+            "detail": group["note"] or f"{len(waiting)} mail(s) in {section['account'] or 'the inbox'} that only you can deal with.",
+            "action": None, "action_label": None,
+            "links": [{"label": item["title"], "url": item["url"], "note": item["detail"], "actions": item["choices"]}
+                      for item in waiting],
+        })
+    return todo
+
+
+def inbox_action(name: str) -> str:
+    """name = 'inbox:answer:<key>:<choice>', 'inbox:reopen:<key>', 'inbox:note:<key>|<text>' (the text keeps its
+    own colons) or 'inbox:seen:<group number>' (every mail of that group that is only to know). Only an answer that
+    the card offers for that mail right now is taken. It writes inbox_answers.json and nothing else: no mail is
+    opened, answered, moved or deleted by an answer."""
+    _, _, rest = name.partition(":")
+    verb, _, argument = rest.partition(":")
+    key, _, value = argument.partition("|" if verb == "note" else ":")
+    with _inbox_lock:
+        groups = inbox_section().get("groups", [])
+        answers = _inbox_answers()
+        now = datetime.now().strftime("%Y-%m-%d %H:%M")
+        if verb == "seen":
+            if not argument.isdigit() or int(argument) >= len(groups):
+                raise ValueError(f"Unknown action: {name}")
+            seen = [item for item in groups[int(argument)]["items"]
+                    if item["open"] and item["ask"] == "know" and not item["answer"]]
+            if not seen:
+                raise ValueError(f"Unknown action: {name}")
+            for item in seen:
+                answers[item["key"]] = {"choice": "seen", **({"note": item["note"]} if item["note"] else {}),
+                                        "about": _inbox_about(item), "at": now}
+            _inbox_save(answers)
+            return f"Saved: {len(seen)} mail(s) seen."
+        mail = next((item for group in groups for item in group["items"] if key and item["key"] == key), None)
+        if mail is None:
+            raise ValueError(f"Unknown action: {name}")
+        mine = {field: text for field, text in (("choice", mail["answer"] and mail["answer"]["choice"]), ("note", mail["note"]))
+                if text}
+        if verb == "answer" and f"inbox:answer:{key}:{value}" in [choice["name"] for choice in mail["choices"]]:
+            mine["choice"] = value
+            message = f"Saved: {INBOX_LABELS[value]}."
+            if value in INBOX_NEXT:
+                message += " Change that account's password now, then press Secured."
+        elif verb == "reopen" and not value and mail["answer"]:
+            del mine["choice"]
+            message = "Open again."
+        elif verb == "note":
+            mine["note"] = _inbox_text(value, INBOX_NOTE)
+            message = "Note saved." if mine["note"] else "Note removed."
+            if not mine["note"]:
+                del mine["note"]
+        else:
+            raise ValueError(f"Unknown action: {name}")
+        if mine:
+            answers[key] = {**mine, "about": _inbox_about(mail), "at": now}
+        else:
+            answers.pop(key, None)
+        _inbox_save(answers)
+    return message
 
 
 def tail(path: Path, lines: int) -> list[str]:
@@ -2075,6 +2198,8 @@ def run_action(name: str) -> str:
         import shorts
 
         return shorts.action(name)
+    if name.startswith("inbox:"):
+        return inbox_action(name)
     raise ValueError(f"Unknown action: {name}")
 
 
