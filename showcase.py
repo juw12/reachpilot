@@ -210,6 +210,18 @@ def publish_watch(user: str, facts: RepoFacts, video_url: str, checkout: Path, l
     return ""
 
 
+def published(index_path: Path, checkout: Path) -> set[str]:
+    """The projects that already have a watch page: the ones noted as live, and the ones in the Pages checkout."""
+    names: set[str] = set()
+    if index_path.exists():
+        try:
+            names.update(json.loads(index_path.read_text(encoding="utf-8")))
+        except ValueError:
+            pass
+    names.update(path.parent.name for path in (checkout / "watch").glob("*/index.html"))
+    return names
+
+
 def remember(index_path: Path, name: str, url: str) -> None:
     """Note a watch page that answered, where the outreach module looks for a project's video link."""
     known = {}

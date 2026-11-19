@@ -39,6 +39,7 @@
   "video_music": true,
   "picture_every": 5,
   "watch_pages": true,
+  "watch_backfill_per_day": 2,
   "linkedin_api_version": "202609",
   "ollama_model": "",
   "exclude_repos": [
