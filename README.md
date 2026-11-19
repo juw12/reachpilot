@@ -364,6 +364,23 @@ pause or open real money. Pausing and resuming are done in Telegram, and real mo
 PC that runs the sender. A silent sender or a tripped safety stop becomes a to-do, urgent when real money is in
 play. When the status page can't be reached, the card shows the last known answer and raises no to-do from it.
 
+Above the steps the page can also show **TradeBot's own page**: free rupiah, coins held, the plan, what it needs
+before a buy or a sale, and the history. TradeBot makes that page itself (`TradeBot.exe --phone-file FILE`);
+ReachPilot only reads the file and asks for a new one when it is more than four minutes old. It is shown only where
+`tradebot_private.json` (git-ignored, next to the code) says where the file is:
+
+```json
+{
+  "page_file": "C:\\path\\to\\tradebot\\phone_page.html",
+  "page_command": ["C:\\path\\to\\tradebot\\TradeBot.exe", "--phone-file", "C:\\path\\to\\tradebot\\phone_page.html"],
+  "page_cwd": "C:\\path\\to\\tradebot"
+}
+```
+
+The page carries amounts, so it stays on your own dashboard and in the phone snapshot (a private place); the public
+demo has none. It sits in a frame that has no rights over the dashboard, says when the copy was made and warns
+in red when no newer copy has come for 20 minutes. Without `page_command` the file is only read.
+
 **Launch automations.** `python launch_auto.py install` adds an hourly task (`\ReachPilot\Launch automations`)
 that takes over steps of a launch test which only wait on a date or on somebody else. Its rows appear on the same
 card, marked *automatic*, and replace the public steps they cover:
