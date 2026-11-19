@@ -4898,5 +4898,48 @@ shorts_main = (Path(__file__).parent / "shorts.py").read_text(encoding="utf-8").
 check(shorts_main.index("leave_low_priority()") < shorts_main.index("run()"),
       "shorts: the hourly run fixes its priority before it starts working")
 
+# ---- the bulk buttons of the Promote page, failed work on Overview, and folding / arranging the dashboard
+check({"retryall", "sendall"} <= hub.PROMOTE_VERBS and "sendall" not in hub.PROMOTE_BACKGROUND
+      and hub.PROMOTE_SEND_ALL_SECONDS > 240,
+      "promote: 'Retry all' and 'Send all now' are whitelisted, and Send all now is waited for longer than the module sends")
+failed_linkedin = {"token_days_left": 40, "failed_total": 2, "paused": True, "failed_posts": [
+    {"slot": "2026-11-18 08:00", "repo": "cairn", "error": "HTTP 422: duplicate content"},
+    {"slot": "2026-11-17 08:00", "repo": "", "error": ""}]}
+failed_todo = hub.todo_items(failed_linkedin, {"installed": False}, {"installed": False}, {})
+failed_post = next(item for item in failed_todo if "post(s) failed" in item["title"])
+check(failed_post["failed"] is True
+      and [(link["label"], link["note"]) for link in failed_post["links"]]
+      == [("2026-11-18 08:00 · cairn", "HTTP 422: duplicate content"), ("2026-11-17 08:00 · post", "no reason recorded")]
+      and all(item["failed"] is False for item in failed_todo if item is not failed_post) and len(failed_todo) == 2,
+      "to do: failed LinkedIn posts are marked failed and listed one by one with the reason; a paused switch is not a failure")
+check([item.get("failed", False) for item in todo] == [False, True],
+      "to do: a platform that failed three times is marked failed, one that is only not connected is not")
+refused = hub.shorts_todo({"channels": [
+    {"name": "Demo Channel", "failed": [{"title": "Episode 1", "error": "quota exceeded"}, {"episode": "k02", "error": ""}]},
+    {"name": "Quiet Channel", "failed": []}]})
+check(len(refused) == 1 and refused[0]["failed"] is True and refused[0]["module"] == "Shorts"
+      and refused[0]["title"] == "2 short video(s) of Demo Channel were refused twice"
+      and [(link["label"], link["note"]) for link in refused[0]["links"]] == [("Episode 1", "quota exceeded"), ("k02", "no reason recorded")]
+      and hub.shorts_todo(None) == [] and hub.shorts_todo({}) == [] and 'shorts_todo(sections.get("shorts"))' in shorts_hub,
+      "to do: short videos that were refused twice are listed as failed, one by one")
+layout_page = shorts_page
+check("index < 5 || item.failed" in layout_page and "compact && !item.failed ? item.links.slice(0, 4)" in layout_page
+      and '${item.failed ? " · failed" : ""}' in layout_page,
+      "overview: the first five to-dos and every failed one are shown, and a failed one lists all of its entries")
+check('actionButton("promote:retryall"' in layout_page and 'actionButton("promote:sendall"' in layout_page
+      and "data-confirm" in layout_page and "confirm(button.dataset.confirm)" in layout_page
+      and "so this goes past it" in layout_page,
+      "promote: the page has Retry all and Send all now, and Send all now asks first and says when it passes the cap")
+nav_groups = re.findall(r'<div class="nav-group folded" data-group="([a-z]+)" role="presentation">\s*<button type="button" class="nav-label" aria-expanded="false">', layout_page)
+check(nav_groups == ["posting", "projects", "jobsearch", "other"]
+      and '.nav-group.folded > button[role="tab"]:not([aria-selected="true"]) { display: none; }' in layout_page
+      and all(key in layout_page for key in ('"rp-nav-open"', '"rp-folded"', '"rp-order"')),
+      "layout: the four sidebar groups start folded, a folded group keeps the selected page, and the state is remembered")
+check(all(mark in layout_page for mark in ("data-fold-all", "data-arrange", "data-reset-order", 'data-move="-1"', 'data-move="1"',
+                                           ".card.folded > :not(h3):not(.arrange-bar) { display: none; }",
+                                           'const NO_ARRANGE = ["todo", "tradebot"]', "new MutationObserver(dress)"))
+      and "nav button, nav button.nav-label, .tool { min-height: 44px; }" in layout_page,
+      "layout: every block folds, a page's blocks can be moved with Up and Down, and the controls are 44px on a phone")
+
 print("\nALL PASSED" if not failures else f"\n{len(failures)} FAILED")
 sys.exit(1 if failures else 0)

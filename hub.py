@@ -692,8 +692,9 @@ def tail(path: Path, lines: int) -> list[str]:
 # ------------------------------------------------------------------ promote module
 
 PROMOTE_SCRIPT = PROMOTE / "promote.py"
-PROMOTE_VERBS = {"approve", "approveall", "send", "skip", "retry", "mark", "mode", "pause", "resume", "plan", "inbox", "discover", "tick",
-                 "listings", "listingdone", "covered", "credited"}
+PROMOTE_VERBS = {"approve", "approveall", "send", "sendall", "skip", "retry", "retryall", "mark", "mode", "pause", "resume", "plan", "inbox",
+                 "discover", "tick", "listings", "listingdone", "covered", "credited"}
+PROMOTE_SEND_ALL_SECONDS = 420  # 'Send all now' sends one e-mail after another; the module starts no new one after 240 s
 PROMOTE_BACKGROUND = {"discover", "inbox", "tick", "listings"}  # slow (network): run without blocking the dashboard
 
 
@@ -741,7 +742,8 @@ def promote_action(name: str) -> str:
                 "inbox": "Checking for replies in the background.",
                 "tick": "Promotion run started in the background.",
                 "listings": "Checking the directory listings in the background; refresh in a minute."}[verb]
-    output = subprocess.run(command, cwd=PROMOTE, capture_output=True, text=True, encoding="utf-8", timeout=180, creationflags=NO_WINDOW)
+    output = subprocess.run(command, cwd=PROMOTE, capture_output=True, text=True, encoding="utf-8",
+                            timeout=PROMOTE_SEND_ALL_SECONDS if verb == "sendall" else 180, creationflags=NO_WINDOW)
     if output.returncode != 0:
         raise RuntimeError((output.stderr or "promote action failed").strip().splitlines()[-1])
     return (output.stdout.strip().splitlines() or ["Done."])[-1]
@@ -1161,7 +1163,7 @@ def channels_todo(section: dict) -> list[dict]:
             "priority": 2, "module": "Platforms",
             "title": f"{failure['channel']} post failed ({failure['slot']})",
             "detail": f"Tried 3 times. Last error: {failure['error']}",
-            "action": "channels_setup", "action_label": "Check connection", "links": [],
+            "action": "channels_setup", "action_label": "Check connection", "links": [], "failed": True,
         })
     return items
 
@@ -1921,9 +1923,10 @@ def patents_action(name: str) -> str:
 def todo_items(linkedin: dict | None, jobs: dict, email: dict, tasks: dict, podcast: dict | None = None) -> list[dict]:
     items: list[dict] = []
 
-    def add(priority, module, title, detail, action=None, action_label=None, links=None):
+    def add(priority, module, title, detail, action=None, action_label=None, links=None, failed=False):
+        # failed: something broke (not merely waiting for you). Overview never cuts such an item off.
         items.append({"priority": priority, "module": module, "title": title, "detail": detail,
-                      "action": action, "action_label": action_label, "links": links or []})
+                      "action": action, "action_label": action_label, "links": links or [], "failed": failed})
 
     if linkedin:
         days = linkedin.get("token_days_left")
@@ -1936,7 +1939,11 @@ def todo_items(linkedin: dict | None, jobs: dict, email: dict, tasks: dict, podc
             add(2, "LinkedIn", "LinkedIn posting is paused", "No posts go out while the PAUSE switch is on.",
                 "linkedin_toggle_pause", "Resume posting")
         if linkedin.get("failed_total"):
-            add(2, "LinkedIn", f"{linkedin['failed_total']} LinkedIn post(s) failed", "See the Log tab for the reason.")
+            posts = linkedin.get("failed_posts") or []
+            add(2, "LinkedIn", f"{linkedin['failed_total']} LinkedIn post(s) failed",
+                "The reason is next to each one; the Log tab has the full line." if posts else "See the Log tab for the reason.",
+                links=[{"label": f"{post['slot']} · {post['repo'] or 'post'}", "url": "", "note": post["error"] or "no reason recorded"}
+                       for post in posts], failed=True)
         if linkedin.get("mode") == "review" and linkedin.get("awaiting"):
             add(1, "LinkedIn", "A LinkedIn draft is waiting for your OK", "Mode is 'review', so it won't post until approved.",
                 "linkedin_approve", "Approve draft")
@@ -1944,7 +1951,7 @@ def todo_items(linkedin: dict | None, jobs: dict, email: dict, tasks: dict, podc
     if jobs.get("installed"):
         if jobs.get("last_error"):
             add(1, "Jobs", "Today's job search failed", jobs["last_error"] + " It retries at the next slot, or run it now.",
-                "jobs_search_now", "Search now")
+                "jobs_search_now", "Search now", failed=True)
         if jobs["needs_you"]:
             add(1, "Jobs", f"{len(jobs['needs_you'])} application(s) stopped and need you",
                 "Usually an e-mail verification code or a question only you can answer. Open the apply session to finish them.",
@@ -1987,12 +1994,12 @@ def todo_items(linkedin: dict | None, jobs: dict, email: dict, tasks: dict, podc
         if (podcast.get("last_run") or {}).get("ok") is False:
             add(2, "Podcast", "The last podcast run failed",
                 "The episode didn't build. It retries on the next slot, or look at the module's log.",
-                "open_modules", "Open modules")
+                "open_modules", "Open modules", failed=True)
 
     for key, task in tasks.items():
         if task.get("installed") and not task.get("ok") and task.get("last_result") not in ("", None):
             add(2, "System", f"'{task['name']}' last run reported an error (code {task['last_result']})",
-                "Check the module's log; it will retry on its next run.")
+                "Check the module's log; it will retry on its next run.", failed=True)
         if not task.get("installed") and not task.get("unknown"):
             add(2, "System", f"Scheduled task '{task['name']}' is missing", "That automation won't run on its own until it's re-installed.")
     unchecked = sum(1 for task in tasks.values() if task.get("unknown"))
@@ -2386,6 +2393,23 @@ def shorts_section() -> dict:
     return {"installed": bool(rows), "channels": rows}
 
 
+def shorts_todo(section: dict | None) -> list[dict]:
+    """A short video that was refused twice is not tried again by itself, so it is listed until it is dealt with."""
+    items = []
+    for channel in (section or {}).get("channels") or []:
+        refused = channel.get("failed") or []
+        if refused:
+            items.append({
+                "priority": 2, "module": "Shorts",
+                "title": f"{len(refused)} short video(s) of {channel.get('name', 'a channel')} were refused twice",
+                "detail": "They are not tried again by themselves. The reason is next to each one.",
+                "action": None, "action_label": None, "failed": True,
+                "links": [{"label": video.get("title") or video.get("episode", ""), "url": "",
+                           "note": (video.get("error") or "no reason recorded")[:200]} for video in refused],
+            })
+    return items
+
+
 # ------------------------------------------------------------------ everything for the dashboard
 
 def build(linkedin_overview: dict | None) -> dict:
@@ -2417,6 +2441,7 @@ def build(linkedin_overview: dict | None) -> dict:
             + launch_todo(sections.get("launch"))
             + patents_todo(sections.get("patents"))
             + tradebot_todo(sections.get("tradebot"))
+            + shorts_todo(sections.get("shorts"))
             + inbox_todo(sections.get("inbox")),
             key=lambda item: item["priority"],
         ),

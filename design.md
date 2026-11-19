@@ -55,9 +55,19 @@ Change a colour and these numbers must be computed again, not estimated.
   works" at the bottom) and the page on the right, at most 1180px wide with 40px padding.
 - Sidebar groups: Today (Overview, To do), Posting, Projects, Job search, Other. A page is listed only when its module
   is installed. The selected page has a surface fill, a hairline outline and a 3px blue marker at the sidebar edge.
+  Today is always open. Each other group is a button that folds to its label, with the number of its pages and a
+  chevron; all four start folded, and a folded group still lists the page you are on. What is open is remembered in
+  this browser (`rp-nav-open`).
 - Every page starts with a page head: a mono label (the group, or today's date on Overview), the page title in serif,
   and one line saying what the page shows.
 - A block is a heading with an ink rule and what belongs to it. No boxes, no shadows, no fills behind blocks.
+- Folding and arranging: every block with a heading has a chevron in front of it; the chevron or the heading folds
+  the block to its heading. Under the page head sit small mono tools: "Fold all" / "Open all" and "Arrange". Arrange
+  turns the page into a list of its blocks, each a dashed row with Up and Down (a side-by-side row moves as one and
+  its two blocks swap inside it), plus "Reset order". Both are remembered in this browser (`rp-folded`, `rp-order`)
+  and put back each time the page is drawn. To do (sorted by urgency) and TradeBot are not arranged.
+- A button for a whole list ("Retry all", "Send all now") sits first in its block with one line on what it does. A
+  button that cannot be taken back asks once before it runs (`data-confirm`).
 - One rule system: an ink rule under a block heading, a hairline between rows and between cells. Each block brings
   its own top rule; nothing draws a rule for its neighbour.
 - Number strips: figures sit in one joined strip with hairlines between cells. The column count follows the number of
@@ -66,6 +76,8 @@ Change a colour and these numbers must be computed again, not estimated.
   is odd.
 - To-do rows: text on the left, buttons in a fixed column on the right; urgent rows carry a red rule on the left edge
   and the word "urgent". On Overview a row shows at most four links with short notes; the To do page shows all of it.
+  Something that failed (a post, a send, a run) carries the word "failed" and is never cut off: Overview shows the
+  first five rows and every failed one after them, with all of its entries.
   A mail of the inbox card is answered where it is listed: two quiet buttons side by side (no answer is suggested;
   only "Secured", which ends a "Not me" alarm, is filled), a note field behind "Add a note", and "Undo". An
   answered mail shrinks to one muted line with its answer as a badge. The same buttons sit small behind each

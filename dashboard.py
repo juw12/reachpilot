@@ -317,6 +317,8 @@ def overview(db, config: dict, now: datetime, plan: list[dict]) -> dict:
         "max_per_week": config["max_posts_per_week"],
         "posted_total": db.execute("SELECT COUNT(*) FROM posts WHERE status='posted'").fetchone()[0],
         "failed_total": db.execute("SELECT COUNT(*) FROM posts WHERE status='failed'").fetchone()[0],
+        "failed_posts": [{"slot": slot, "repo": repo or "", "error": (error or "")[:200]} for slot, repo, error in db.execute(
+            "SELECT slot, repo, error FROM posts WHERE status='failed' ORDER BY slot DESC LIMIT 20")],
         "prepared_left": db.execute("SELECT COUNT(*) FROM queue WHERE used=0").fetchone()[0],
         "next_post": next_post,
         "last_tick": last_tick,

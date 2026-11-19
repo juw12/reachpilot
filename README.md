@@ -333,7 +333,15 @@ which is git-ignored and never committed; the dashboard only shows a module that
 Task Scheduler under `\ReachPilot\`, dashboard actions are whitelisted and need a per-session token from the same origin,
 and **How it works** in the sidebar explains per module when it runs, what it does by itself and what it needs from you.
 The pages are listed in a sidebar on the left (Today, Posting, Projects, Job search, Other); on a phone the sidebar
-opens from the menu button. A page is listed only when its module is installed.
+opens from the menu button. A page is listed only when its module is installed. Each group folds to its label, so the
+menu starts as Overview, To do and four group names. On every page a block folds to its heading (the chevron in front
+of it, or **Fold all**), and **Arrange** moves a page's blocks up and down; what you fold and move is remembered in the
+browser. Anything that failed (a post, a send, a run) is listed in To do with its reason and is never cut off on
+Overview.
+
+When the promotion module is installed, the **Promote** page has one button for each list: **Retry all** puts every
+held or failed e-mail back in the queue if it passes the rules again, and **Send all now** sends every waiting e-mail
+one after another, after asking once.
 
 When the promotion module ships `listings.py`, the **Promote** page also tracks where each GitHub project is listed.
 One config file names the projects and the places. Each place is either checked by itself (a public page or index

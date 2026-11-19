@@ -52,6 +52,13 @@
     border-radius: 0 3px 3px 0; background: var(--blue); }
   .tab-count { margin-left: auto; color: var(--muted); font: 400 12px/1.4 var(--mono); font-variant-numeric: tabular-nums; }
   .tab-count.urgent { color: var(--red); font-weight: 600; }
+  /* A group of pages folds to its label (with the number of pages in it); the page you are on stays listed */
+  .nav-group { display: flex; flex-direction: column; gap: 1px; }
+  nav button.nav-label { gap: 6px; min-height: 28px; margin: 12px 0 2px; padding: 4px 10px; font: 500 12px/1.4 var(--mono);
+    letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+  .nav-group.folded > button[role="tab"]:not([aria-selected="true"]) { display: none; }
+  .chev { flex: none; }
+  [aria-expanded="false"] > .chev { transform: rotate(-90deg); }
   .side-foot { margin-top: auto; padding-top: 14px; }
   .help-btn { width: 100%; min-height: 34px; padding: 6px 10px; border: 1px solid var(--line-strong); border-radius: 6px;
     background: var(--surface); font: 500 13px/1.3 var(--sans); color: var(--ink); cursor: pointer; }
@@ -142,6 +149,9 @@
   .btn:focus-visible, .help-btn:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
   .btn:disabled { opacity: .55; cursor: default; }
   .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+  /* One button for a whole list, with one line on what it does */
+  .actions.bulk { align-items: center; gap: 8px 14px; margin: 0 0 6px; }
+  .actions.bulk .hint { flex: 1 1 280px; }
 
   /* To-do rows: the text on the left, its buttons in a fixed column on the right */
   .todo { display: grid; grid-template-columns: minmax(0, 1fr) 200px; gap: 8px 24px; align-items: start; padding: 14px 0;
@@ -295,6 +305,31 @@
   dialog.help dt { margin-top: 6px; color: var(--muted); font: 500 12px/1.4 var(--mono); letter-spacing: .05em; text-transform: uppercase; }
   dialog.help dd { margin: 0; }
 
+  /* Folding and arranging. A block folds to its heading; "Arrange" turns a page into a list of its blocks with
+     Up and Down. Both are remembered in this browser (design.md: Layout). */
+  .page-tools { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+  .tool { min-height: 28px; padding: 3px 10px; border: 1px solid var(--line-strong); border-radius: 6px; background: transparent;
+    color: var(--ink-2); font: 500 12px/1.4 var(--mono); letter-spacing: .05em; text-transform: uppercase; cursor: pointer; }
+  .tool:hover { border-color: var(--ink-2); color: var(--ink); }
+  .tool[aria-pressed="true"] { border-color: var(--ink); background: var(--ink); color: var(--bg); }
+  .tool:disabled { opacity: .45; cursor: default; }
+  .tool:focus-visible, .fold:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
+  .foldable > h3 { position: relative; padding-left: 24px; cursor: pointer; }
+  .fold { position: absolute; left: -4px; top: -2px; display: inline-flex; align-items: center; justify-content: center; width: 24px;
+    height: 24px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--ink-2); cursor: pointer; }
+  .fold::after { content: ""; position: absolute; inset: -10px; }
+  .fold:hover { background: var(--sunken); color: var(--ink); }
+  .card.folded { margin-bottom: 20px; }
+  .card.folded > h3 { margin-bottom: 0; }
+  .card.folded > :not(h3):not(.arrange-bar) { display: none; }
+  .arrange-bar { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; padding: 6px 8px 6px 12px;
+    border: 1px dashed var(--line-strong); border-radius: 6px; }
+  .arrange-bar .name { flex: 1; min-width: 0; overflow: hidden; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+  .arranging .unit { display: block; margin: 0 0 8px; padding: 0; border: 0; }
+  .arranging .unit:not(.two) > :not(.arrange-bar) { display: none; }
+  .arranging .two > .arrange-bar { margin-bottom: 8px; }
+  .arranging .two > .unit { margin-left: 24px; }
+
   /* Tablet and phone: the sidebar becomes a top bar with a menu button that opens the pages as a drawer */
   @media (max-width: 900px) {
     .app { display: block; }
@@ -310,7 +345,7 @@
     /* The open drawer has to sit above the scrim (z-index 3), and .side is its stacking context */
     .side.open { z-index: 4; }
     .side.open .side-body { visibility: visible; transform: none; }
-    nav button { min-height: 44px; }
+    nav button, nav button.nav-label, .tool { min-height: 44px; }
     .help-btn { min-height: 44px; }
     main { padding: 28px 24px 56px; }
   }
@@ -386,23 +421,31 @@
       <div class="nav-label" role="presentation">Today</div>
       <button role="tab" data-tab="overview" aria-selected="true">Overview</button>
       <button role="tab" data-tab="todo">To do<span class="tab-count" id="todo-count" hidden></span></button>
-      <div class="nav-label" role="presentation">Posting</div>
-      <button role="tab" data-tab="linkedin">LinkedIn</button>
-      <button role="tab" data-tab="schedule">Schedule</button>
-      <button role="tab" data-tab="reach">Reach</button>
-      <button role="tab" data-tab="learning">Learning</button>
-      <div class="nav-label" role="presentation">Projects</div>
-      <button role="tab" data-tab="github">GitHub</button>
-      <button role="tab" data-tab="promote">Promote</button>
-      <button role="tab" data-tab="podcast" hidden>Podcast</button>
-      <button role="tab" data-tab="launch" hidden>Launch tests</button>
-      <button role="tab" data-tab="patents" hidden>Patents</button>
-      <div class="nav-label" role="presentation">Job search</div>
-      <button role="tab" data-tab="jobs">Jobs</button>
-      <button role="tab" data-tab="email">Email</button>
-      <div class="nav-label" role="presentation">Other</div>
-      <button role="tab" data-tab="tradebot" hidden>TradeBot</button>
-      <button role="tab" data-tab="log">Log</button>
+      <div class="nav-group folded" data-group="posting" role="presentation">
+        <button type="button" class="nav-label" aria-expanded="false">Posting<span class="tab-count group-count"></span><svg class="chev" viewBox="0 0 12 12" width="12" height="12" aria-hidden="true"><path d="M3 4.5 6 7.5 9 4.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+        <button role="tab" data-tab="linkedin">LinkedIn</button>
+        <button role="tab" data-tab="schedule">Schedule</button>
+        <button role="tab" data-tab="reach">Reach</button>
+        <button role="tab" data-tab="learning">Learning</button>
+      </div>
+      <div class="nav-group folded" data-group="projects" role="presentation">
+        <button type="button" class="nav-label" aria-expanded="false">Projects<span class="tab-count group-count"></span><svg class="chev" viewBox="0 0 12 12" width="12" height="12" aria-hidden="true"><path d="M3 4.5 6 7.5 9 4.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+        <button role="tab" data-tab="github">GitHub</button>
+        <button role="tab" data-tab="promote">Promote</button>
+        <button role="tab" data-tab="podcast" hidden>Podcast</button>
+        <button role="tab" data-tab="launch" hidden>Launch tests</button>
+        <button role="tab" data-tab="patents" hidden>Patents</button>
+      </div>
+      <div class="nav-group folded" data-group="jobsearch" role="presentation">
+        <button type="button" class="nav-label" aria-expanded="false">Job search<span class="tab-count group-count"></span><svg class="chev" viewBox="0 0 12 12" width="12" height="12" aria-hidden="true"><path d="M3 4.5 6 7.5 9 4.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+        <button role="tab" data-tab="jobs">Jobs</button>
+        <button role="tab" data-tab="email">Email</button>
+      </div>
+      <div class="nav-group folded" data-group="other" role="presentation">
+        <button type="button" class="nav-label" aria-expanded="false">Other<span class="tab-count group-count"></span><svg class="chev" viewBox="0 0 12 12" width="12" height="12" aria-hidden="true"><path d="M3 4.5 6 7.5 9 4.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+        <button role="tab" data-tab="tradebot" hidden>TradeBot</button>
+        <button role="tab" data-tab="log">Log</button>
+      </div>
     </nav>
     <div class="side-foot">
       <button class="help-btn" id="help-open" aria-label="Help: what ReachPilot does and what it needs from you">How it works</button>
@@ -764,7 +807,8 @@ async function act(name, button) {
 
 document.addEventListener("click", (event) => {
   const button = event.target.closest("[data-action]");
-  if (button) act(button.dataset.action, button);
+  // data-confirm: a button that cannot be taken back (Send all now) asks once before it runs
+  if (button && (!button.dataset.confirm || confirm(button.dataset.confirm))) act(button.dataset.action, button);
   const ask = event.target.closest("[data-ask]");
   if (ask) {
     const answer = (prompt(ask.dataset.question) || "").trim();
@@ -817,8 +861,8 @@ document.addEventListener("click", (event) => {
   }
 });
 
-function actionButton(name, label, ghost = false) {
-  return name ? `<button class="btn ${ghost ? "ghost" : ""}" data-action="${esc(name)}">${esc(label)}</button>` : "";
+function actionButton(name, label, ghost = false, ask = "") {
+  return name ? `<button class="btn ${ghost ? "ghost" : ""}" data-action="${esc(name)}"${ask ? ` data-confirm="${esc(ask)}"` : ""}>${esc(label)}</button>` : "";
 }
 
 function coveredButton(creator) {
@@ -854,7 +898,8 @@ function openTodos(items) {
 
 function todoCard(item, compact = false) {
   // Overview (compact) is a summary: the first four links with a short note. The To do page shows all of it.
-  const shown = compact ? item.links.slice(0, 4) : item.links;
+  // Something that failed is never cut short: Overview lists every one of them too.
+  const shown = compact && !item.failed ? item.links.slice(0, 4) : item.links;
   const short = (note) => (compact && note.length > 90 ? `${note.slice(0, 88).trimEnd()}…` : note);
   const more = item.links.length - shown.length;
   // A link can carry its own answers (a mail of the inbox card). They are kept on the PC, so such a row has no
@@ -872,7 +917,7 @@ function todoCard(item, compact = false) {
       answered ? "" : `<button class="btn ghost" data-done="${esc(todoKey(item))}">Mark done</button>`}`;
   return `<div class="todo p${item.priority}${compact ? " compact" : ""}">
     <div class="text">
-      <span class="badge ${item.priority === 1 ? "bad" : item.priority === 2 ? "warn" : "grey"}">${esc(item.module)}${item.priority === 1 ? " · urgent" : ""}</span>
+      <span class="badge ${item.priority === 1 ? "bad" : item.priority === 2 ? "warn" : "grey"}">${esc(item.module)}${item.priority === 1 ? " · urgent" : ""}${item.failed ? " · failed" : ""}</span>
       <h4>${esc(item.title)}</h4>
       <div class="hint">${esc(item.detail)}</div>
       ${links}
@@ -1272,6 +1317,9 @@ function drawOverview(d) {
   const next = o.next_post;
   const todo = openTodos(h.todo);
   const urgent = todo.filter((t) => t.priority === 1);
+  // The first five, and after them everything that failed: a failure is never hidden behind "See all".
+  const failed = todo.filter((t) => t.failed);
+  const shownTodo = todo.filter((item, index) => index < 5 || item.failed);
   const promote = h.promote;
   const dateLine = new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" });
   const title = todo.length ? `${num(todo.length)} thing${todo.length === 1 ? " needs" : "s need"} you` : "Nothing needs you right now";
@@ -1292,9 +1340,9 @@ function drawOverview(d) {
       ${promote.installed ? kpi("Creator e-mails today", `${num(promote.sent_today)} / ${num(promote.cap)}`, `${num(promote.replies)} replies so far`) : ""}
     </div>
     ${todo.length ? `<div class="card">
-      <h3>What I need from you <span class="hint">· ${todo.length} item${todo.length === 1 ? "" : "s"}${urgent.length ? `, ${urgent.length} urgent` : ""}</span></h3>
-      ${todo.slice(0, 5).map((item) => todoCard(item, true)).join("")}
-      ${todo.length > 5 ? `<button class="btn ghost" data-goto="todo">See all ${todo.length} in To do ›</button>` : ""}
+      <h3>What I need from you <span class="hint">· ${todo.length} item${todo.length === 1 ? "" : "s"}${urgent.length ? `, ${urgent.length} urgent` : ""}${failed.length ? `, ${failed.length} failed` : ""}</span></h3>
+      ${shownTodo.map((item) => todoCard(item, true)).join("")}
+      ${todo.length > shownTodo.length ? `<button class="btn ghost" data-goto="todo">See all ${todo.length} in To do ›</button>` : ""}
     </div>` : ""}
     ${runStrip(h.tasks)}
     <div class="card">
@@ -1722,7 +1770,7 @@ function renderPromote(d) {
           ${actionButton(`promote:mark:${m.creator.id}|suppressed`, "Never contact", true)}
         </div>
       </div>
-      ${m.error ? `<div class="problem">${esc(m.error)}</div>` : ""}
+      ${m.error ? `<div class="problem">${esc(m.error)}${m.unsure ? " · The connection broke while sending, so it may have arrived: check Sent in Gmail before a retry." : ""}</div>` : ""}
       <div class="subject">${esc(m.subject)} <span class="hint">· variant ${esc(m.variant)}</span></div>
       <pre class="text">${esc(m.body)}</pre>
     </div>`;
@@ -1730,6 +1778,17 @@ function renderPromote(d) {
     ? `<table><thead><tr><th>${label}</th><th class="num">E-mailed</th><th class="num">Replies</th><th class="num">Rate</th></tr></thead><tbody>
        ${rows.map((r) => `<tr><td>${esc(r.key || r.variant)}</td><td class="num">${num(r.sent)}</td><td class="num">${num(r.replies)}</td><td class="num">${pct(r.rate)}</td></tr>`).join("")}</tbody></table>`
     : `<div class="empty">Nothing sent yet.</div>`;
+  // Two lists: what is stuck (held by a rule, or failed while sending) and what waits to go out. Each has one
+  // button for the whole list. "Send all now" is Send now on each, so it asks first and says when it passes the cap.
+  const stuck = p.queue.filter((m) => m.status === "held" || m.status === "failed");
+  const waiting = p.queue.filter((m) => m.status === "queued" || m.status === "approved");
+  const overCap = p.sent_today + waiting.length > p.cap
+    ? ` Today's cap is ${num(p.cap)} and ${num(p.sent_today)} went out already, so this goes past it.` : "";
+  const sendAll = !waiting.length ? ""
+    : p.paused ? `<p class="hint">Paused: nothing goes out until you press Resume.</p>`
+    : `<div class="actions bulk">${actionButton("promote:sendall", `Send all now (${waiting.length})`, false,
+        `Send ${waiting.length} e-mail${waiting.length === 1 ? "" : "s"} to creators now?${overCap} Each one goes out at once and cannot be taken back.`)}
+        <span class="hint">One after another, like pressing Send now on each: no waiting for the send window or today's cap. Keep this page open until it answers.</span></div>`;
   section.innerHTML = `
     ${pageHead("Projects", "Creator outreach", "E-mails to creators who might cover a project, and their replies.")}
     <div class="grid">
@@ -1765,8 +1824,15 @@ function renderPromote(d) {
       <div class="scroll"><table><thead><tr><th>Creator</th><th>Project</th><th>Their video</th><th>Thanked in a post</th></tr></thead><tbody>
       ${p.coverage.map((c) => `<tr><td>${link(c.creator_url, c.creator)}</td><td>${esc(c.product)}</td><td>${link(c.url, "open")}</td><td>${c.credited ? `<span class="badge good">yes</span>` : `<span class="badge warn">in the next post</span>`}</td></tr>`).join("")}
       </tbody></table></div></div>` : ""}
-    <div class="card"><h3>Today's e-mails</h3>
-      ${p.queue.length ? p.queue.map(mailCard).join("") : `<div class="empty">Queue is empty. It fills each morning from the creator pool${p.youtube_ok ? "" : " once a YouTube key is added"}.</div>`}
+    ${stuck.length ? `<div class="card"><h3>Held or failed <span class="hint">· ${stuck.length}</span></h3>
+      <div class="actions bulk">${actionButton("promote:retryall", `Retry all ${stuck.length}`)}
+        <span class="hint">Puts back each one that passes the rules again. One that may already have arrived is left for you to check.</span></div>
+      ${stuck.map(mailCard).join("")}</div>` : ""}
+    <div class="card"><h3>Today's e-mails${waiting.length ? ` <span class="hint">· ${waiting.length} waiting</span>` : ""}</h3>
+      ${sendAll}
+      ${waiting.length ? waiting.map(mailCard).join("")
+        : p.queue.length ? `<div class="empty">Nothing is waiting to go out.</div>`
+        : `<div class="empty">Queue is empty. It fills each morning from the creator pool${p.youtube_ok ? "" : " once a YouTube key is added"}.</div>`}
     </div>
     <div class="two">
       <div class="card"><h3>E-mails sent per day</h3>${lineChart(p.series, "No e-mails yet.")}</div>
@@ -1944,6 +2010,10 @@ function showTab(id) {
   } catch (error) {}
   document.querySelectorAll("nav button[data-tab]").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === id)));
   document.querySelectorAll("main section").forEach((s) => (s.hidden = s.id !== id));
+  if (arranging && arranging !== id) {
+    arranging = "";
+    dress();
+  }
   setMenu(false);
 }
 
@@ -1983,6 +2053,7 @@ async function load() {
     renderGithub(data);
     renderLearning(data);
     renderLog(data);
+    drawGroups();
     document.getElementById("updated").textContent = "Updated " + new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
   } catch (error) {
     document.getElementById("updated").textContent = "Couldn't load data: " + error.message;
@@ -2003,6 +2074,231 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") setMenu(false);
   if (event.key === "Enter" && event.target.matches(".note-form input")) event.target.nextElementSibling.click();
 });
+
+// ---- Sidebar groups, folding and arranging (design.md: Layout). What you fold or move is remembered in this browser.
+// The pages are drawn again every minute, so the state is put back on every new drawing (dress), not kept in the nodes.
+const CHEVRON = `<svg class="chev" viewBox="0 0 12 12" width="12" height="12" aria-hidden="true"><path d="M3 4.5 6 7.5 9 4.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+const NO_ARRANGE = ["todo", "tradebot"];  // To do is sorted by urgency; TradeBot's own frame stays where it is
+let arranging = "";  // the page whose blocks are being moved, "" when none
+
+function stored(key, fallback) {
+  try {
+    const value = JSON.parse(localStorage.getItem(key));
+    return value && typeof value === "object" && Array.isArray(value) === Array.isArray(fallback) ? value : fallback;
+  } catch (error) {
+    return fallback;
+  }
+}
+
+function store(key, value) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch (error) {}
+}
+
+// A group shows its pages when it is open. Folded, it shows its label, how many pages it holds and the page you are on.
+function drawGroups() {
+  const open = stored("rp-nav-open", []);
+  document.querySelectorAll(".nav-group").forEach((group) => {
+    const label = group.querySelector(".nav-label");
+    const pages = group.querySelectorAll('button[role="tab"]:not([hidden])').length;
+    const isOpen = open.includes(group.dataset.group);
+    group.hidden = !pages;
+    group.classList.toggle("folded", !isOpen);
+    label.setAttribute("aria-expanded", String(isOpen));
+    label.querySelector(".group-count").textContent = isOpen ? "" : pages;
+  });
+}
+
+// The name of a block: its heading without the counts, badges and buttons that change from day to day.
+function blockName(block) {
+  if (block.classList.contains("grid")) return "Numbers";
+  if (block.classList.contains("two")) {
+    const cards = [...block.children].filter((child) => child.matches(".card"));
+    return `Side by side: ${cards.map(blockName).join(", ")}`;
+  }
+  const heading = block.querySelector(":scope > h3");
+  if (!heading) return "Block";
+  const copy = heading.cloneNode(true);
+  copy.querySelectorAll(".hint, .badge, .btn, button, svg").forEach((node) => node.remove());
+  return copy.textContent.replace(/\s+/g, " ").trim().replace(/\s*[·:]$/, "") || "Block";
+}
+
+// What can be moved: the blocks of a page, and the blocks inside a side-by-side row.
+function unitsOf(container) {
+  return [...container.children].filter((child) => child.matches(".card, .grid, .two") && !child.hidden);
+}
+
+function orderKey(container) {
+  const section = container.closest("section");
+  return container === section ? section.id : `${section.id}>${container.dataset.unit}`;
+}
+
+function dress() {
+  const folded = stored("rp-folded", []);
+  const orders = stored("rp-order", {});
+  document.querySelectorAll("main > section").forEach((section) => {
+    // Folding: every block with a heading gets a chevron in front of it
+    const cards = [...section.querySelectorAll(".card")].filter((card) => card.querySelector(":scope > h3"));
+    cards.forEach((card) => {
+      const heading = card.querySelector(":scope > h3");
+      if (!card.dataset.fold) {
+        const taken = cards.map((other) => other.dataset.fold);
+        const base = `${section.id}|${blockName(card)}`;
+        let key = base;
+        for (let count = 2; taken.includes(key); count += 1) key = `${base} #${count}`;
+        card.dataset.fold = key;
+        card.classList.add("foldable");
+      }
+      if (!heading.querySelector(":scope > .fold")) {
+        heading.insertAdjacentHTML("afterbegin", `<button type="button" class="fold" aria-label="${esc(`Fold or open: ${blockName(card)}`)}">${CHEVRON}</button>`);
+      }
+      const isFolded = folded.includes(card.dataset.fold);
+      card.classList.toggle("folded", isFolded);
+      heading.querySelector(":scope > .fold").setAttribute("aria-expanded", String(!isFolded));
+    });
+
+    // Arranging: a saved order is put back; a block that is not in it keeps its place
+    const canArrange = !NO_ARRANGE.includes(section.id);
+    const containers = canArrange ? [section, ...section.querySelectorAll(":scope > .two")] : [];
+    let movable = 0;
+    containers.forEach((container) => {
+      const units = unitsOf(container);
+      if (units.some((unit) => !unit.dataset.unit)) {
+        const taken = [];
+        units.forEach((unit, index) => {
+          const base = unit.classList.contains("two") ? `Row: ${blockName(unit.querySelector(":scope > .card") || unit)}` : blockName(unit);
+          let key = base;
+          for (let count = 2; taken.includes(key); count += 1) key = `${base} #${count}`;
+          taken.push(key);
+          unit.dataset.unit = key;
+          unit.dataset.natural = index;
+          unit.classList.add("unit");
+        });
+      }
+      const saved = orders[orderKey(container)] || [];
+      const natural = [...units].sort((a, b) => a.dataset.natural - b.dataset.natural);
+      const known = natural.filter((unit) => saved.includes(unit.dataset.unit))
+        .sort((a, b) => saved.indexOf(a.dataset.unit) - saved.indexOf(b.dataset.unit));
+      const wanted = natural.map((unit) => (saved.includes(unit.dataset.unit) ? known.shift() : unit));
+      if (wanted.some((unit, index) => unit !== units[index])) {
+        const marks = units.map((unit) => unit.parentNode.insertBefore(document.createComment(""), unit));
+        wanted.forEach((unit, index) => marks[index].replaceWith(unit));
+      }
+      if (units.length > 1) movable += units.length;
+      wanted.forEach((unit, index) => {
+        let bar = unit.querySelector(":scope > .arrange-bar");
+        if (arranging !== section.id) {
+          if (bar) bar.remove();
+          return;
+        }
+        if (!bar) {
+          unit.insertAdjacentHTML("afterbegin", `<div class="arrange-bar"><span class="name">${esc(blockName(unit))}</span>
+            <button type="button" class="tool" data-move="-1">Up</button><button type="button" class="tool" data-move="1">Down</button></div>`);
+          bar = unit.firstElementChild;
+        }
+        bar.querySelector('[data-move="-1"]').disabled = index === 0;
+        bar.querySelector('[data-move="1"]').disabled = index === wanted.length - 1;
+      });
+    });
+    section.classList.toggle("arranging", arranging === section.id);
+
+    // The tools under the page title: fold or open every block, and move blocks
+    const head = section.querySelector(".page-head");
+    if (!head) return;
+    const allFolded = cards.length > 0 && cards.every((card) => card.classList.contains("folded"));
+    const moving = arranging === section.id;
+    const tools = `${cards.length > 1 && !moving ? `<button type="button" class="tool" data-fold-all>${allFolded ? "Open all" : "Fold all"}</button>` : ""}${
+      movable ? `<button type="button" class="tool" data-arrange aria-pressed="${moving}">${moving ? "Done" : "Arrange"}</button>` : ""}${
+      moving ? `<button type="button" class="tool" data-reset-order>Reset order</button>` : ""}`;
+    let row = head.querySelector(":scope > .page-tools");
+    if (!tools) {
+      if (row) row.remove();
+    } else if (!row || row.dataset.tools !== tools) {
+      if (!row) row = head.appendChild(Object.assign(document.createElement("div"), { className: "page-tools" }));
+      row.innerHTML = tools;
+      row.dataset.tools = tools;
+    }
+  });
+  dresser.takeRecords();  // what dress itself changed needs no second pass
+}
+
+const dresser = new MutationObserver(dress);
+dresser.observe(document.querySelector("main"), { childList: true, subtree: true });
+
+function moveUnit(unit, step) {
+  const container = unit.parentElement;
+  const units = unitsOf(container);
+  const from = units.indexOf(unit), to = from + step;
+  if (to < 0 || to >= units.length) return;
+  const keys = units.map((other) => other.dataset.unit);
+  [keys[from], keys[to]] = [keys[to], keys[from]];
+  // A block that is not on the page right now (no reply to answer today) keeps its place after its old neighbour
+  const orders = stored("rp-order", {});
+  const before = orders[orderKey(container)] || [];
+  before.forEach((key, index) => {
+    if (keys.includes(key)) return;
+    const neighbour = before.slice(0, index).reverse().find((other) => keys.includes(other));
+    keys.splice(neighbour ? keys.indexOf(neighbour) + 1 : 0, 0, key);
+  });
+  orders[orderKey(container)] = keys;
+  store("rp-order", orders);
+  dress();
+  const again = unit.querySelector(`:scope > .arrange-bar [data-move="${step}"]`);
+  (again && !again.disabled ? again : unit.querySelector(":scope > .arrange-bar .tool:not(:disabled)")).focus();
+}
+
+document.addEventListener("click", (event) => {
+  const group = event.target.closest(".nav-label[aria-expanded]");
+  if (group) {
+    const id = group.parentElement.dataset.group;
+    const open = stored("rp-nav-open", []);
+    store("rp-nav-open", open.includes(id) ? open.filter((other) => other !== id) : [...open, id]);
+    drawGroups();
+    return;
+  }
+  const section = event.target.closest("main > section");
+  if (!section) return;
+  const move = event.target.closest("[data-move]");
+  if (move) {
+    moveUnit(move.closest(".unit"), Number(move.dataset.move));
+    return;
+  }
+  if (event.target.closest("[data-arrange]")) {
+    arranging = arranging === section.id ? "" : section.id;
+    dress();
+    section.querySelector("[data-arrange]").focus();
+    return;
+  }
+  if (event.target.closest("[data-reset-order]")) {
+    const orders = stored("rp-order", {});
+    Object.keys(orders).filter((key) => key === section.id || key.startsWith(`${section.id}>`)).forEach((key) => delete orders[key]);
+    store("rp-order", orders);
+    dress();
+    toast("Blocks are back in their first order.");
+    return;
+  }
+  const cards = [...section.querySelectorAll(".foldable")];
+  if (event.target.closest("[data-fold-all]")) {
+    const keys = cards.map((card) => card.dataset.fold);
+    const rest = stored("rp-folded", []).filter((key) => !keys.includes(key));
+    store("rp-folded", cards.every((card) => card.classList.contains("folded")) ? rest : [...rest, ...keys]);
+    dress();
+    return;
+  }
+  // A click on a heading folds its block, unless it lands on a link or a button in the heading or selects text
+  const heading = event.target.closest(".foldable > h3");
+  const onControl = event.target.closest("a, button, input, select, textarea, summary, label");
+  if (!heading || (onControl && !onControl.classList.contains("fold"))) return;
+  const picked = getSelection();
+  if (!onControl && picked && !picked.isCollapsed && heading.contains(picked.anchorNode)) return;
+  const key = heading.parentElement.dataset.fold;
+  const folded = stored("rp-folded", []);
+  store("rp-folded", folded.includes(key) ? folded.filter((other) => other !== key) : [...folded, key]);
+  dress();
+});
+
+drawGroups();
 
 load();
 setInterval(load, 60000);
