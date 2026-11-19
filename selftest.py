@@ -4047,7 +4047,7 @@ try:
         except ValueError:
             check(True, f"hub patent desk: malformed action refused ({refused})")
     check(patents.load_overrides() == notes_before, "patent desk: a refused filing or action changes nothing")
-    with mock.patch.object(patent_desk.os, "startfile", create=True) as opened_folder:
+    with mock.patch.object(patent_desk.machine, "open_path") as opened_folder:
         check(hub.run_action("patents:open:hinge-lab") == "Opened the dossier folder of hinge-lab."
               and opened_folder.call_args[0] == (patent_desk.folder("hinge-lab"),),
               "hub patent desk: Open the dossier folder opens that project's folder and nothing else")
@@ -4620,6 +4620,7 @@ check(("launch" in hub.TASKS) == (hub.ROOT / "data" / "launch_auto").exists(),
 
 # A busy PC that cannot answer in time is not a missing task
 busy_run = hub.subprocess.run
+busy_is_mac, hub.machine.IS_MAC = hub.machine.IS_MAC, False  # these checks are about Task Scheduler's answers
 try:
     def no_answer(*args, **kwargs):
         raise subprocess.TimeoutExpired("schtasks", 10)
@@ -4642,6 +4643,7 @@ try:
           "hub tasks: a task that Task Scheduler says is not there is still reported as missing")
 finally:
     hub.subprocess.run = busy_run
+    hub.machine.IS_MAC = busy_is_mac
     hub._cache.pop("tasks", None)
 
 # A run that Windows started at low priority puts itself back at normal
@@ -4693,7 +4695,10 @@ for phone_name in ("jobs_apply", "jobs_open_tracker", "open_answers", "email_ope
     check(not hub.phone_allowed(phone_name), f"phone buttons: {phone_name!r} is refused on the phone")
 run_source = (Path(__file__).parent / "hub.py").read_text(encoding="utf-8").split("def run_action(name: str) -> str:")[1]
 run_source = run_source.split("\n# ---")[0]
-for opener in re.findall(r'if name == "([a-z_]+)":\n(?:.*\n)??\s+(?:_console\(|os\.startfile\()', run_source):
+phone_openers = re.findall(r'if name == "([a-z_]+)":\n(?:.*\n)??\s+(?:_console\(|machine\.open_path\()', run_source)
+check(len(phone_openers) >= 8 and "os.startfile(" not in run_source,
+      f"phone buttons: every button that opens a file or a console is found in hub.run_action ({len(phone_openers)})")
+for opener in phone_openers:
     check(not hub.phone_allowed(opener), f"phone buttons: {opener} opens something on the PC, so the phone cannot press it")
 
 with tempfile.TemporaryDirectory() as phone_folder:
@@ -5381,6 +5386,162 @@ check("${repliesCard(d.hub && d.hub.replies)}" in replies_page and 'event.target
 check('input.type = words ? "text" : "url"' in (Path(__file__).parent / "phone_snapshot.py").read_text(encoding="utf-8")
       and "window.rpPrompt(text, words)" in replies_page,
       "phone buttons: Write my own asks for words on the phone, not for a link")
+
+# A Mac: what Windows and macOS do differently lives in machine.py, and the rest of the code asks it
+import plistlib  # noqa: E402
+
+import machine  # noqa: E402
+
+code_folder = Path(__file__).parent
+check(machine.NO_WINDOW == getattr(subprocess, "CREATE_NO_WINDOW", 0)
+      and gh.CREATE_NO_WINDOW == trylinks.CREATE_NO_WINDOW == creators.CREATE_NO_WINDOW == hub.NO_WINDOW == machine.NO_WINDOW
+      and (machine.NO_WINDOW == 0x08000000) == (sys.platform == "win32"),
+      "mac: the flag that hides console windows is Windows' own there and 0 elsewhere, where any other value is refused")
+flag_run = subprocess.run([sys.executable, "-c", "print('ran')"], capture_output=True, text=True, creationflags=gh.CREATE_NO_WINDOW)
+check(flag_run.stdout.strip() == "ran", "mac: a program started the way GitHub is read starts on this system")
+windows_only_format = [path.name for path in sorted(code_folder.glob("*.py"))
+                       if path.name not in ("selftest.py", "machine.py") and "%#d" in path.read_text(encoding="utf-8")]
+check(machine.day_label(datetime(2026, 11, 7, 12, 30)) == "Sat 7 Nov · 12:30" and not windows_only_format,
+      f"mac: a day is written 'Sat 7 Nov · 12:30' on every system, with no Windows-only date format left ({windows_only_format})")
+check(machine.console_python().exists() and machine.hidden_python().exists()
+      and hub.PYTHON == machine.console_python() and hub.PYTHONW == machine.hidden_python(),
+      "mac: the Python that runs a step is one that exists (pythonw.exe and python.exe only where they are)")
+
+with mock.patch.object(machine, "IS_WINDOWS", False), mock.patch.object(machine, "IS_MAC", True), \
+     mock.patch.object(machine.subprocess, "Popen") as mac_started:
+    machine.open_console(["cmd", "/k", "python3", "autopilot.py", "auth"], "/Users/me/My Apps/reachpilot")
+    console_call = mac_started.call_args[0][0]
+    machine.open_path("/Users/me/notes.txt")
+    opened_call = mac_started.call_args[0][0]
+    machine.notify('Reach "Pilot"', "Posted: riak")
+    notice_call = mac_started.call_args[0][0]
+check(console_call[:2] == ["osascript", "-e"] and 'tell application "Terminal"' in console_call[2]
+      and "cd '/Users/me/My Apps/reachpilot' && python3 autopilot.py auth" in console_call[2] and "cmd" not in console_call[2],
+      "mac: a step that needs me opens in Terminal, in the right folder, without the Windows-only 'cmd /k'")
+check(opened_call == ["open", "/Users/me/notes.txt"]
+      and notice_call[:2] == ["osascript", "-e"] and notice_call[2] == 'display notification "Posted: riak" with title "Reach \\"Pilot\\""',
+      "mac: a file opens in its own program and a notification is a macOS one")
+with mock.patch.object(autopilot.machine, "IS_WINDOWS", False), mock.patch.object(autopilot.machine, "notify") as mac_notice, \
+     mock.patch.object(autopilot.subprocess, "Popen", side_effect=AssertionError("no PowerShell off Windows")):
+    autopilot.notify("ReachPilot", "Posted: riak")
+check(mac_notice.call_args[0] == ("ReachPilot", "Posted: riak"), "mac: autopilot's notification does not start PowerShell off Windows")
+
+def channel_with(apps, windows=False, mac=True):
+    with mock.patch.object(machine, "IS_WINDOWS", windows), mock.patch.object(machine, "IS_MAC", mac), \
+         mock.patch.object(machine, "_mac_app", side_effect=lambda name: Path(f"/Applications/{name}.app") if name in apps else None):
+        return machine.browser_channel(), machine.app_window_browsers()
+
+check(channel_with([], windows=True, mac=False)[0] == "msedge"
+      and channel_with(["Microsoft Edge", "Google Chrome"])[0] == "msedge"
+      and channel_with(["Google Chrome"]) == ("chrome", [str(Path("/Applications/Google Chrome.app") / "Contents" / "MacOS" / "Google Chrome")])
+      and channel_with([]) == (None, []),
+      "mac: screenshots and recordings use Edge on Windows; on a Mac Edge, else Chrome, else Playwright's own browser")
+visuals_source = (code_folder / "visuals.py").read_text(encoding="utf-8")
+check(visuals_source.count("channel=machine.browser_channel()") == 2 and 'channel="msedge"' not in visuals_source,
+      "mac: both the screenshot and the recording ask which browser is installed")
+with mock.patch.object(machine, "IS_MAC", False):
+    windows_font = machine.font_path("seguibl.ttf")
+with mock.patch.object(machine, "IS_MAC", True), mock.patch.object(machine, "MAC_FONT_DIRS", (code_folder,)), \
+     mock.patch.dict(machine.MAC_FONTS, {"seguibl.ttf": "machine.py"}):
+    mac_font, mac_font_missing = machine.font_path("seguibl.ttf"), machine.font_path("nowhere.ttf")
+check(windows_font == Path("C:/Windows/Fonts") / "seguibl.ttf" and mac_font == code_folder / "machine.py"
+      and mac_font_missing == Path("C:/Windows/Fonts") / "nowhere.ttf",
+      "mac: captions are drawn with the Windows font there and with the nearest font a Mac has; a missing one falls back")
+
+# The scheduled tasks on a Mac are launchd agents
+with tempfile.TemporaryDirectory() as mac_dir:
+    mac_agents, mac_notes = Path(mac_dir) / "LaunchAgents", Path(mac_dir) / "tasks"
+    launchctl_calls = []
+
+    def fake_launchctl(*arguments):
+        launchctl_calls.append(arguments)
+        return subprocess.CompletedProcess(arguments, 0, "", "")
+
+    with mock.patch.object(machine, "IS_MAC", True), mock.patch.object(machine, "AGENTS_DIR", mac_agents), \
+         mock.patch.object(machine, "TASK_NOTES", mac_notes), mock.patch.object(machine, "_launchctl", side_effect=fake_launchctl), \
+         mock.patch.object(machine, "_domain", return_value="gui/501"), \
+         mock.patch.dict(machine.os.environ, {"PATH": "/opt/homebrew/bin:/usr/bin"}):
+        before_install = machine.task_info("LinkedIn posts")
+        installed_line = machine.install_task("LinkedIn posts", ["python3", "autopilot.py", "tick"], "/Users/me/reachpilot",
+                                              every_minutes=30, at_login=True, limit_minutes=20)
+        agent_file = mac_agents / "io.github.reachpilot.linkedin-posts.plist"
+        agent = plistlib.loads(agent_file.read_bytes())
+        daily = machine.task_plist("Patent screen", ["python3", "patents.py"], "/x", daily_at="09:00")
+        never_ran = machine.task_info("LinkedIn posts", datetime(2026, 11, 20, 8, 0))
+        failing_code = machine.run_task("linkedin-posts", 1, [sys.executable, "-c", "raise SystemExit(3)"])
+        after_failure = machine.task_info("LinkedIn posts")
+        no_limit_code = machine.run_task("linkedin-posts", 0, [sys.executable, "-c", "pass"])
+        with mock.patch.object(machine.subprocess, "run", side_effect=subprocess.TimeoutExpired("python3", 60)):
+            stopped_code = machine.run_task("linkedin-posts", 1, ["python3", "autopilot.py", "tick"])
+        after_stop = machine.task_info("LinkedIn posts")
+        (mac_notes / "linkedin-posts.json").write_text(json.dumps({"started": "2026-11-20T08:00:00", "ended": "2026-11-20T08:02:00", "exit": 0}), encoding="utf-8")
+        after_good = machine.task_info("LinkedIn posts", datetime(2026, 11, 20, 8, 10))
+        (mac_notes / "linkedin-posts.json").write_text(json.dumps({"started": "2026-11-20T08:00:00"}), encoding="utf-8")
+        while_running = machine.task_info("LinkedIn posts", datetime(2026, 11, 20, 8, 10))
+        machine.start_task("LinkedIn posts")
+        removed_line, removed_again = machine.remove_task("LinkedIn posts"), machine.remove_task("LinkedIn posts")
+    check(before_install == {"name": "LinkedIn posts", "installed": False, "unknown": False}
+          and agent["Label"] == "io.github.reachpilot.linkedin-posts" and agent["StartInterval"] == 1800 and agent["RunAtLoad"] is True
+          and agent["ProgramArguments"][1:] == [str(code_folder.resolve() / "machine.py"), "run", "linkedin-posts", "20", "python3", "autopilot.py", "tick"]
+          and agent["WorkingDirectory"] == "/Users/me/reachpilot" and agent["EnvironmentVariables"]["PATH"] == "/opt/homebrew/bin:/usr/bin"
+          and launchctl_calls[:2] == [("bootout", "gui/501/io.github.reachpilot.linkedin-posts"), ("bootstrap", "gui/501", str(agent_file))]
+          and "every 30 minutes and at sign-in" in installed_line,
+          "mac tasks: installing writes a launchd agent that runs every 30 minutes and at sign-in, with the PATH that finds gh, and loads it")
+    check(daily["StartCalendarInterval"] == {"Hour": 9, "Minute": 0} and "StartInterval" not in daily and daily["RunAtLoad"] is False,
+          "mac tasks: a daily task runs at its hour")
+    check(never_ran == {"name": "LinkedIn posts", "installed": True, "state": "Ready", "last_run": "", "next_run": "",
+                        "last_result": "", "ok": True},
+          f"mac tasks: an installed task that has not run yet is shown as ready, not as failed ({never_ran})")
+    check(failing_code == 3 and after_failure["last_result"] == "3" and after_failure["ok"] is False and after_failure["last_run"]
+          and no_limit_code == 0 and stopped_code == machine.TIMED_OUT and after_stop["last_result"] == "124" and after_stop["ok"] is False,
+          "mac tasks: a run notes when it ran and how it ended, and one that passes its time limit is stopped and shown as failed")
+    check(after_good["ok"] and after_good["last_run"] == "Fri 20 Nov · 08:00" and after_good["next_run"] == "Fri 20 Nov · 08:30"
+          and after_good["state"] == "Ready" and while_running["state"] == "Running" and while_running["ok"] is True,
+          f"mac tasks: the dashboard gets last run, next run and state in the words it already shows ({after_good})")
+    check(("kickstart", "gui/501/io.github.reachpilot.linkedin-posts") in launchctl_calls
+          and removed_line == "LinkedIn posts: removed" and removed_again == "LinkedIn posts: was not installed" and not agent_file.exists(),
+          "mac tasks: Run now starts the agent, and uninstalling unloads and deletes it")
+
+    with mock.patch.object(machine, "IS_MAC", False), mock.patch.object(machine, "_launchctl", side_effect=AssertionError("no launchd")):
+        try:
+            machine.install_task("LinkedIn posts", ["python3", "autopilot.py", "tick"], "/x", every_minutes=30)
+            other_system = "installed"
+        except SystemExit as refusal:
+            other_system = str(refusal)
+    check("cron" in other_system and "python3 autopilot.py tick" in other_system,
+          "mac tasks: a system with neither Task Scheduler nor launchd is told the cron line instead of failing oddly")
+
+    hub._cache.pop("tasks", None)
+    with mock.patch.object(hub.machine, "IS_MAC", True), \
+         mock.patch.object(hub.machine, "task_info", side_effect=lambda name: {"name": name, "installed": True, "state": "Ready",
+                                                                             "last_run": "", "next_run": "", "last_result": "0", "ok": True}), \
+         mock.patch.object(hub.machine, "start_task") as mac_run_now, \
+         mock.patch.object(hub.subprocess, "run", side_effect=AssertionError("no schtasks on a Mac")):
+        mac_tasks = hub.task_status()
+        hub._start_task("linkedin")
+    hub._cache.pop("tasks", None)
+    check(set(mac_tasks) == set(hub.TASKS) and all(task["installed"] and task["ok"] for task in mac_tasks.values())
+          and mac_run_now.call_args[0] == ("LinkedIn posts",),
+          "mac tasks: the dashboard reads the tasks from launchd and its Run now button starts one, without Task Scheduler")
+
+mac_install_sources = {name: (code_folder / name).read_text(encoding="utf-8")
+                       for name in ("autopilot.py", "selfupdate.py", "launch_auto.py", "shorts.py", "replies.py", "patents.py")}
+check(all("if not machine.IS_WINDOWS:" in source and "machine.install_task(TASK_NAME, " in source and "Register-ScheduledTask" in source
+          for source in mac_install_sources.values()),
+      "mac tasks: each of the six install commands makes a launchd agent on a Mac and still a Task Scheduler task on Windows")
+with mock.patch.object(autopilot.machine, "IS_WINDOWS", False), \
+     mock.patch.object(autopilot.machine, "install_task", return_value="scheduled") as mac_install, \
+     mock.patch.object(autopilot.machine, "remove_task", return_value="removed") as mac_remove, \
+     mock.patch.object(autopilot.subprocess, "run", side_effect=AssertionError("no PowerShell off Windows")), \
+     contextlib.redirect_stdout(io.StringIO()):
+    autopilot.cmd_install()
+    autopilot.cmd_uninstall()
+check(mac_install.call_args[0][:2] == ("LinkedIn posts", [sys.executable, str(autopilot.ROOT / "autopilot.py"), "tick"])
+      and mac_install.call_args[1] == {"every_minutes": 30, "at_login": True, "limit_minutes": 20}
+      and mac_remove.call_args[0] == ("LinkedIn posts",),
+      "mac tasks: autopilot install and uninstall keep the Windows schedule (30 minutes, at sign-in, 20-minute limit)")
+check("data/tasks/" in (code_folder / ".gitignore").read_text(encoding="utf-8").split(),
+      "mac tasks: the notes about each run are git-ignored")
 
 print("\nALL PASSED" if not failures else f"\n{len(failures)} FAILED")
 sys.exit(1 if failures else 0)

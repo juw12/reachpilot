@@ -13,6 +13,7 @@
 <p align="center">
   <a href="https://github.com/juw12/reachpilot/actions/workflows/tests.yml"><img src="https://img.shields.io/github/actions/workflow/status/juw12/reachpilot/tests.yml?branch=main&label=tests" alt="Tests"></a>
   <img src="https://img.shields.io/badge/Windows-24292f" alt="Windows">
+  <img src="https://img.shields.io/badge/macOS-24292f" alt="macOS">
   <img src="https://img.shields.io/badge/Python_3.10+-24292f" alt="Python">
   <img src="https://img.shields.io/badge/license-MIT-2563eb" alt="MIT">
 </p>
@@ -31,7 +32,7 @@ it again next week for the older ones: that's the part that never happens. Reach
 
 ## What it does
 
-Every 30 minutes, Windows Task Scheduler runs one pass:
+Every 30 minutes, Windows Task Scheduler (launchd on a Mac) runs one pass:
 
 1. **Watches GitHub** through the `gh` CLI: new public repos, new releases, real commit activity.
 2. **Picks what to post** in the next slot (Tue/Wed/Thu 08:00 by default), in this order:
@@ -250,7 +251,7 @@ Someone who wrote to you first is not a stranger: see **Replies** under *The das
   **Share on LinkedIn** API, so the account stays in good standing.
 - No AI-invented claims. An optional local model (Ollama) can rephrase a post, but its output is rejected if it adds numbers.
 - No silent failures: a LinkedIn login that is about to expire, a failed post or a draft waiting for review shows up
-  on the dashboard's to-do list, and you get a Windows notification a week before the 60-day LinkedIn token runs out.
+  on the dashboard's to-do list, and you get a notification a week before the 60-day LinkedIn token runs out.
 
 ## Setup
 
@@ -276,6 +277,41 @@ python selfupdate.py install         # optional: task \ReachPilot\Updates keeps 
 
 In `config.json`, `"mode": "auto"` posts by itself; set `"mode": "review"` to hold each draft until you run `approve`.
 
+### On a Mac
+
+The same commands work on macOS (Intel and Apple silicon), with `python3` and Terminal:
+
+```bash
+git clone https://github.com/juw12/reachpilot && cd reachpilot
+python3 -m pip install -r requirements.txt
+open -e config.json
+gh auth login
+python3 -m playwright install ffmpeg # once, for the video recording
+python3 autopilot.py init
+python3 autopilot.py preview 5
+python3 autopilot.py install         # a launchd agent instead of a Task Scheduler task: every 30 min + at sign-in
+python3 selfupdate.py install        # optional, as on Windows
+```
+
+What is different there:
+
+- **Scheduled tasks** are launchd agents in `~/Library/LaunchAgents/io.github.reachpilot.*.plist`, with the same
+  schedule and time limit as on Windows. `python3 autopilot.py uninstall` removes the posting task. The dashboard
+  shows their last run and its Run now buttons start them.
+- **Screenshots and recordings** use Microsoft Edge when it is installed, else Google Chrome. With neither,
+  run `python3 -m playwright install chromium` once. The recording also needs Playwright's own small ffmpeg
+  (1.5 MB), once: `python3 -m playwright install ffmpeg`. Without it a post goes out with its pictures.
+- **Captions** are drawn with Arial, because Segoe UI is a Windows font.
+- **The dashboard** opens as an app window in Edge or Chrome, else as a tab in your default browser.
+- **Steps that need you** (LinkedIn sign-in, connecting a platform) open in Terminal.
+
+Run it on one computer only. Two computers with the same accounts would both post in every slot, because each
+keeps its own `state.db`. To look at the dashboard on a second computer without posting, create the `PAUSE`
+file there or do not run `install`.
+
+Not on a Mac yet: the patent desk's PDF print (it looks for Edge in its Windows folder) and the launch
+automations' saved mail password (kept with Windows' own protection).
+
 A repository whose name should not appear in this repository (a private one, for example) is excluded in a
 git-ignored `config.local.json` instead of `config.json`: `{"exclude_repos": ["its-name"]}`. Only that list is
 read from the file.
@@ -299,7 +335,7 @@ ReachPilot posts as you through your own free LinkedIn developer app; nobody els
    saves them to `secrets.json` (git-ignored), and opens LinkedIn so you can approve the scopes `openid profile w_member_social`.
 
 The access token lasts 60 days and self-serve apps get no refresh token, so you sign in again every two months;
-the dashboard and a Windows notification remind you a week before.
+the dashboard and a notification remind you a week before.
 
 ### What talks to what
 
@@ -570,6 +606,7 @@ again on the next daily run. `python patent_desk.py show` prints the desk.
 | `channels.py` | Bluesky, Mastodon, Dev.to, Telegram, Discord: per-platform cutting, publishing, retries |
 | `growth.py` | daily: profiles, pinned intro, follow-back, follower counts |
 | `analytics.py` | reach scoring |
+| `machine.py` | what Windows and a Mac do differently: scheduled tasks, notifications, the browser, fonts |
 | `trylinks.py` | tracked go-links, demo video hosting on GitHub Pages |
 | `showcase.py` | the pages built for a video when a project has no site, and the watch pages |
 | `creators.py` | the thank-you for creators who covered a project |

@@ -31,6 +31,8 @@ import sys
 from datetime import date, datetime
 from pathlib import Path
 
+import machine
+
 CODE_DIR = Path(__file__).resolve().parent
 DATA_DIR = CODE_DIR / "data" / "patents"  # git-ignored
 SCAN_FILE = DATA_DIR / "scan.json"
@@ -529,6 +531,10 @@ def log(result: str) -> None:
 
 def install_task() -> None:
     """Every day 09:00, hidden (pythonw), catching up if the PC was off."""
+    if not machine.IS_WINDOWS:  # a Mac: the same schedule as a launchd agent
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        print(machine.install_task(TASK_NAME, [sys.executable, str(Path(__file__).resolve())], CODE_DIR, daily_at="09:00", limit_minutes=30))
+        return
     pythonw = Path(sys.executable).with_name("pythonw.exe")
     runner = pythonw if pythonw.exists() else Path(sys.executable)
     DATA_DIR.mkdir(parents=True, exist_ok=True)

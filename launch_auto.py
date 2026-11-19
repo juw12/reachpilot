@@ -38,6 +38,7 @@ import urllib.parse
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta
 from pathlib import Path
+import machine
 
 CODE_DIR = Path(__file__).resolve().parent
 DATA_DIR = CODE_DIR / "data" / "launch_auto"
@@ -199,7 +200,7 @@ def _only_one(name: str, wait: float = 0.0, folder: Path | None = None):
 
 
 def _open(path: Path) -> None:
-    os.startfile(path)  # noqa: S606 - a local file the user asked to open
+    machine.open_path(path)  # a local file the user asked to open
 
 
 # ------------------------------------------------------------------ the mail relay (an Apps Script web app)
@@ -1054,6 +1055,10 @@ def action(name: str, now: datetime | None = None) -> str:
 def install_task() -> None:
     """Every hour, hidden (pythonw), catching up if the PC was off. Priority 4 is the normal one: a task gets a low
     one unless told otherwise, and on a busy PC a low-priority run did not finish in six minutes (normal: 26 s)."""
+    if not machine.IS_WINDOWS:  # a Mac: the same schedule as a launchd agent
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        print(machine.install_task(TASK_NAME, [sys.executable, str(Path(__file__).resolve())], CODE_DIR, every_minutes=60, limit_minutes=30))
+        return
     pythonw = Path(sys.executable).with_name("pythonw.exe")
     runner = pythonw if pythonw.exists() else Path(sys.executable)
     DATA_DIR.mkdir(parents=True, exist_ok=True)

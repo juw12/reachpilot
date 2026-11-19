@@ -25,3 +25,23 @@ jobs:
         run: python leakcheck.py --history ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && '--require' || '' }}
         env:
           PRIVATE_NAMES: ${{ secrets.PRIVATE_NAMES }}
+
+  # ReachPilot runs on Windows and on a Mac, so the same checks run on both.
+  selftest-desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install requests openpyxl pillow pypdf
+      - run: python selftest.py
+        env:
+          CI: "1"
+          PYTHONIOENCODING: utf-8

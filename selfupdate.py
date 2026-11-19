@@ -19,6 +19,8 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+import machine
+
 CODE_DIR = Path(__file__).parent
 LOG_FILE = CODE_DIR / "updates.log"  # git-ignored (*.log)
 TASK_PATH = "\\ReachPilot\\"
@@ -146,6 +148,9 @@ def check_once(folder: Path = CODE_DIR) -> None:
 
 def install_task() -> None:
     """Every 30 minutes plus at sign-in, hidden (pythonw), catching up if the PC was asleep."""
+    if not machine.IS_WINDOWS:  # a Mac: the same schedule as a launchd agent
+        print(machine.install_task(TASK_NAME, [sys.executable, str(Path(__file__).resolve())], CODE_DIR, every_minutes=30, at_login=True, limit_minutes=TASK_TIME_LIMIT_MINUTES))
+        return
     pythonw = Path(sys.executable).with_name("pythonw.exe")
     runner = pythonw if pythonw.exists() else Path(sys.executable)
     script = f"""

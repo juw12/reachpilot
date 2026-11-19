@@ -42,6 +42,8 @@ import urllib.parse
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
+import machine
+
 ROOT = Path(__file__).resolve().parent
 MODULES = ROOT / "modules"
 JOBS = MODULES / "jobs"
@@ -80,9 +82,9 @@ if (ROOT / "data" / "shorts").exists():  # only where `python shorts.py install`
     TASKS["shorts"] = "Shorts"
 if (ROOT / "data" / "replies").exists():  # only where `python replies.py install` has been run
     TASKS["replies"] = "Replies"
-PYTHONW = Path(sys.executable).with_name("pythonw.exe")
-PYTHON = Path(sys.executable).with_name("python.exe")
-NO_WINDOW = 0x08000000
+PYTHONW = machine.hidden_python()  # pythonw.exe on Windows; the running Python on a Mac
+PYTHON = machine.console_python()
+NO_WINDOW = machine.NO_WINDOW
 
 _cache: dict[str, tuple[float, object]] = {}
 
@@ -109,10 +111,13 @@ def stamp(path: Path) -> str | None:
 # ------------------------------------------------------------------ scheduled tasks
 
 def task_status() -> dict:
-    """Last/next run and last result of every ReachPilot task (schtasks, cached 2 minutes)."""
+    """Last/next run and last result of every ReachPilot task (schtasks; launchd on a Mac; cached 2 minutes)."""
     def build():
         result = {}
         for key, name in TASKS.items():
+            if machine.IS_MAC:
+                result[key] = machine.task_info(name)
+                continue
             try:
                 output = subprocess.run(
                     ["schtasks", "/query", "/tn", TASK_FOLDER + name, "/fo", "CSV", "/v"],
@@ -149,7 +154,7 @@ def _pretty_task_time(raw: str) -> str:
     raw = (raw or "").strip()
     for fmt in ("%m/%d/%Y %I:%M:%S %p", "%d/%m/%Y %H:%M:%S", "%m/%d/%Y %H:%M:%S", "%Y/%m/%d %H:%M:%S"):
         try:
-            return _dt.strptime(raw, fmt).strftime("%a %#d %b · %H:%M")
+            return machine.day_label(_dt.strptime(raw, fmt))
         except ValueError:
             continue
     return raw
@@ -731,7 +736,7 @@ def promote_action(name: str) -> str:
         _console([str(PYTHON), str(PROMOTE_SCRIPT), "setup-checker"], PROMOTE)
         return "A window opened with the 3-minute reply-checker setup."
     if verb == "openproducts":
-        os.startfile(PROMOTE / "products.json")
+        machine.open_path(PROMOTE / "products.json")
         return "products.json opened."
     if verb not in PROMOTE_VERBS:
         raise ValueError(f"Unknown action: {name}")
@@ -766,7 +771,7 @@ def _podcast_series_next_run(series: dict, now: datetime) -> str:
         if day.weekday() in wanted:
             candidate = datetime(day.year, day.month, day.day, hour, minute)
             if candidate > now:
-                return candidate.strftime("%a %#d %b · %H:%M")
+                return machine.day_label(candidate)
         day += timedelta(days=1)
     return ""
 
@@ -860,7 +865,7 @@ def podcast_action(name: str) -> str:
     verb, _, argument = rest.partition(":")
     if verb == "open":
         if (PODCAST / "site").exists():
-            os.startfile(PODCAST / "site")
+            machine.open_path(PODCAST / "site")
             return "Site folder opened."
         raise ValueError("The site folder isn't there yet (no episodes built).")
     if verb in PROMOTION_VERBS:
@@ -2122,11 +2127,14 @@ def help_sections(tasks: dict, podcast: dict | None = None, launch: dict | None 
 
 def _console(command: list[str], cwd: Path) -> None:
     """Open a visible console window for things that need you (sign-in, apply session)."""
-    subprocess.Popen(command, cwd=cwd, creationflags=subprocess.CREATE_NEW_CONSOLE)
+    machine.open_console(command, cwd)
 
 
 def _start_task(key: str) -> None:
-    subprocess.run(["schtasks", "/run", "/tn", TASK_FOLDER + TASKS[key]], capture_output=True, creationflags=NO_WINDOW)
+    if machine.IS_MAC:
+        machine.start_task(TASKS[key])
+    else:
+        subprocess.run(["schtasks", "/run", "/tn", TASK_FOLDER + TASKS[key]], capture_output=True, creationflags=NO_WINDOW)
     _cache.pop("tasks", None)
 
 
@@ -2176,16 +2184,16 @@ def run_action(name: str) -> str:
         _start_task("jobs")
         return "Job search started; new jobs appear in a few minutes."
     if name == "jobs_open_tracker":
-        os.startfile(JOBS / "jobs_tracker.xlsx")
+        machine.open_path(JOBS / "jobs_tracker.xlsx")
         return "Tracker opened."
     if name == "open_answers":
-        os.startfile(JOBS / "my_answers.txt")
+        machine.open_path(JOBS / "my_answers.txt")
         return "Answers file opened."
     if name == "email_run_now":
         _start_task("email")
         return "E-mail applications started in the background."
     if name == "email_open_leads":
-        os.startfile(EMAIL / "leads_to_apply.html")
+        machine.open_path(EMAIL / "leads_to_apply.html")
         return "Leads page opened."
     if name == "email_preview":
         _console([str(PYTHON), "auto_apply.py", "--dry-run"], EMAIL)
@@ -2212,7 +2220,7 @@ def run_action(name: str) -> str:
         _console([str(PYTHON), "autopilot.py", "channels"], ROOT)
         return "A window opened to connect Bluesky, Mastodon, Dev.to, Telegram and Discord."
     if name == "open_modules":
-        os.startfile(MODULES)
+        machine.open_path(MODULES)
         return "Modules folder opened."
     if name.startswith("promote:"):
         return promote_action(name)
