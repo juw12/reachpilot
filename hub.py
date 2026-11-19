@@ -12,6 +12,8 @@ Other platforms (Bluesky, Mastodon, Dev.to, Telegram, Discord) are part of the p
 Launch tests (launch_section) are read from a project's public summary.json, plus private steps from
 launch_private.json (git-ignored) when that file exists. Where launch_auto.py is installed its rows join them:
 steps this PC does by itself (watch for an answer, one follow-up, approved invitations, daily proposal checks).
+The TradeBot page (tradebot_section) reads the trading bot's public status page; TradeBot's own page with the amounts is
+shown only where tradebot_private.json (git-ignored) says where this PC keeps it.
 The patent screen (patents_section) reads the last daily scan written by patents.py into data/patents/
 (git-ignored); it shows only where that folder exists. The patent desk (patent_desk.py) follows the screen's
 candidates from there: readiness, the filing package, and the dates before and after a filing.
@@ -1204,6 +1206,10 @@ TRADEBOT_REFRESH_SECONDS = 60
 TRADEBOT_RETRY_SECONDS = 120  # after a failed read, wait before the next 6-second try
 TRADEBOT_ROUND_LATE_MINUTES = 15  # a round is due every 5 minutes: three missed is late
 TRADEBOT_SILENT_MINUTES = 10  # the bot's own line: after this long with real money in play it warns in Telegram
+TRADEBOT_PRIVATE = ROOT / "tradebot_private.json"  # git-ignored: where this PC keeps TradeBot's own page, and how it is made
+TRADEBOT_PAGE_SECONDS = 240  # the page file is made again once it is older than this
+TRADEBOT_PAGE_WAIT = 25  # seconds the page's maker may take
+TRADEBOT_PAGE_BYTES = 300_000  # a bigger file is not TradeBot's page
 
 
 def _tradebot_cached() -> dict:
@@ -1411,8 +1417,74 @@ def _tradebot_view(fetched: dict, now: datetime | None = None) -> dict:
     return view
 
 
+def _tradebot_private() -> dict:
+    """This PC's settings for TradeBot's own page from tradebot_private.json; {} when the file is missing or unreadable."""
+    try:
+        data = json.loads(TRADEBOT_PRIVATE.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _tradebot_make_page(command: list[str], folder: str | None) -> None:
+    """Run the owner's own command that writes the page file. It only writes that file; a failure keeps the file from before."""
+    try:
+        subprocess.run(command, cwd=folder, timeout=TRADEBOT_PAGE_WAIT, stdin=subprocess.DEVNULL,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                       creationflags=NO_WINDOW if os.name == "nt" else 0)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        pass
+
+
+def _tradebot_page_age(path: Path, now: float) -> float | None:
+    try:
+        return now - path.stat().st_mtime
+    except OSError:
+        return None
+
+
+def tradebot_page(now: float | None = None) -> dict | None:
+    """TradeBot's own page (money, coins held, the plan, the checks before a buy or a sale, the history) as one HTML text.
+
+    TradeBot makes that page itself (`TradeBot.exe --phone-file FILE`); this only reads the file, and first asks for a new
+    one when it is older than a few minutes. Where the file is and how it is made stand in tradebot_private.json
+    (git-ignored): {"page_file": "...", "page_command": ["...", "--phone-file", "..."], "page_cwd": "..."}.
+    None when this PC has no such setting. The page carries amounts, so it is only ever shown on the owner's own
+    dashboard; the dashboard shows it in a frame that has no rights over the dashboard.
+    """
+    private = _tradebot_private()
+    name = private.get("page_file")
+    if not isinstance(name, str) or not name.strip():
+        return None
+    now = time.time() if now is None else now
+    path = Path(name)
+    command = private.get("page_command")
+    folder = private.get("page_cwd")
+    age = _tradebot_page_age(path, now)
+    tried = _cache.get("tradebot_page_try")
+    if (isinstance(command, list) and command and all(isinstance(part, str) and part for part in command)
+            and (age is None or age > TRADEBOT_PAGE_SECONDS)
+            and not (tried and now - tried[0] < TRADEBOT_RETRY_SECONDS)):
+        _cache["tradebot_page_try"] = (now, None)
+        _tradebot_make_page(command, folder if isinstance(folder, str) and folder else None)
+        age = _tradebot_page_age(path, now)
+    if age is None:
+        return {"html": None, "made": None, "problem": "TradeBot's own page has not been made on this PC yet. The next try is in a few minutes."}
+    try:
+        if path.stat().st_size > TRADEBOT_PAGE_BYTES:
+            raise ValueError("too big")
+        html = path.read_text(encoding="utf-8")
+    except (OSError, ValueError):
+        html = ""
+    if not html[:200].lstrip().lower().startswith("<!doctype html"):
+        return {"html": None, "made": None, "problem": "The file on this PC is not TradeBot's page, so it is not shown."}
+    return {"html": html, "made": stamp(path), "problem": None}
+
+
 def tradebot_section() -> dict:
-    return _tradebot_view(_tradebot_cached())
+    view = _tradebot_view(_tradebot_cached())
+    view["page"] = tradebot_page()
+    return view
 
 
 def tradebot_todo(section: dict | None) -> list[dict]:
@@ -1798,11 +1870,15 @@ def help_sections(tasks: dict, podcast: dict | None = None, launch: dict | None 
         entries.append({
             "module": "TradeBot",
             "runs": "TradeBot's round runs on Cloudflare every 5 minutes; the Indodax sender on a PC asks it once a minute. "
-                    "This card re-reads TradeBot's public status page once a minute.",
+                    "This card re-reads TradeBot's public status page once a minute. Where this PC is set up for it "
+                    "(tradebot_private.json), TradeBot's own page is made again every few minutes.",
             "auto": "Shows the chain on the TradeBot page, step by step, with its state right now: the bot's round, the sender on the PC, "
                     "the copies at Indodax, the real-money gate and the Telegram control. Switches and counts only: no amount, "
                     "coin or result is on the status page or on this card. Offline it shows the last known answer, says so, "
-                    "and raises no to-do. ReachPilot only reads: it cannot buy, sell, pause or change a setting.",
+                    "and raises no to-do. Above the steps, on your own dashboard only, it shows TradeBot's own page: free rupiah, "
+                    "coins held, the plan, what it needs before a buy or a sale, and the history. That page is a copy made on "
+                    "this PC; it says when it was made and warns when it is old. "
+                    "ReachPilot only reads: it cannot buy, sell, pause or change a setting.",
             "you": "Control it in Telegram: /indodax shows the state, /indodax pause stops new buys, /indodax resume lifts it. "
                    "Real money can only be switched on at the PC that runs the sender (API key in .env, run-windows.ps1 -Check, "
                    "real mode with the sentence typed by hand). A silent sender or a tripped safety stop shows up in To do, "

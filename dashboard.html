@@ -92,6 +92,8 @@
   .module h3 { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
   .module h3 .btn { min-height: 28px; padding: 2px 10px; font-size: 12.5px; }
   .module .big { margin: 2px 0 6px; font: 400 30px/1.12 var(--serif); letter-spacing: -.01em; }
+  /* TradeBot's own page keeps its own (dark) look inside a frame; the frame is as tall as the page says it is */
+  .tradebot-page iframe { display: block; width: 100%; max-width: 640px; height: 640px; margin-top: 12px; border: 0; border-radius: 12px; background: #0f1115; }
 
   /* Numbers sit in one joined strip: hairlines between the cells, no boxes */
   .grid { --cols: 4; display: grid; grid-template-columns: repeat(var(--cols), minmax(0, 1fr)); gap: 0 24px; margin: 0 0 36px;
@@ -939,6 +941,42 @@ function tradebotCard(t) {
   </div>`;
 }
 
+// TradeBot's own page (money, coins held, the plan, the checks, the history) is one HTML text that TradeBot made on
+// this PC. It is shown in a frame with no rights over this dashboard: its scripts cannot read the dashboard, its
+// sign-in or the local server. The one line added to it only tells this page how tall it is.
+const TRADEBOT_PAGE_TELLS_HEIGHT = `<script>(() => {
+  const tell = () => parent.postMessage({ tradebotPageHeight: document.body.offsetHeight }, "*");
+  addEventListener("load", tell);
+  addEventListener("resize", tell);
+  if (window.ResizeObserver) new ResizeObserver(tell).observe(document.body);
+  tell();
+})();<\/script>`;
+let tradebotPageShown = null;
+
+function tradebotPageCard(t) {
+  const page = t && t.installed ? t.page : null;
+  if (!page) return "";
+  if (!page.html) {
+    return `<div class="card module">
+      <h3>What TradeBot holds and plans</h3>
+      <p class="hint">${esc(page.problem || "TradeBot's own page is not here yet.")}</p>
+    </div>`;
+  }
+  return `<div class="card module tradebot-page">
+    <h3>What TradeBot holds and plans</h3>
+    <div class="hint">TradeBot's own page: money, coins held, the plan, what it needs before a buy or a sale, and the history.
+      A copy made on the PC every few minutes; it says how old it is. Read only: nothing here can trade.</div>
+    <iframe id="tradebot-frame" title="TradeBot's own page" sandbox="allow-scripts" scrolling="no"></iframe>
+  </div>`;
+}
+
+window.addEventListener("message", (event) => {
+  const frame = document.getElementById("tradebot-frame");
+  const height = event.data && event.data.tradebotPageHeight;
+  if (!frame || event.source !== frame.contentWindow || !Number.isFinite(height)) return;
+  frame.style.height = Math.min(Math.max(Math.ceil(height), 240), 20000) + "px";
+});
+
 function patentHeadline(counts) {
   return counts.look || counts.maybe
     ? [counts.look ? `${num(counts.look)} worth an attorney look` : "", counts.maybe ? `${num(counts.maybe)} maybe` : ""].filter(Boolean).join(" · ")
@@ -1324,9 +1362,22 @@ function renderPatents(d) {
 function renderTradebot(d) {
   const t = d.hub.tradebot;
   moduleTab("tradebot", Boolean(t && t.installed));
-  document.getElementById("tradebot").innerHTML = `
-    ${pageHead("Other", "TradeBot", "The Indodax automation, step by step, with the state of each step.")}
-    ${tradebotCard(t) || `<div class="empty">TradeBot isn't set up.</div>`}`;
+  const section = document.getElementById("tradebot");
+  // Three parts, so the frame with TradeBot's own page is left alone while its text is the same: a frame that is
+  // drawn again every minute would blink and lose its height.
+  if (section.children.length !== 3) section.innerHTML = "<div></div><div></div><div></div>";
+  const [head, own, steps] = section.children;
+  const page = t && t.installed && t.page ? t.page : null;
+  head.innerHTML = pageHead("Other", "TradeBot", page && page.html
+    ? "What it holds and plans, then the Indodax automation step by step."
+    : "The Indodax automation, step by step, with the state of each step.");
+  steps.innerHTML = tradebotCard(t) || `<div class="empty">TradeBot isn't set up.</div>`;
+  const shown = page ? JSON.stringify([page.html, page.problem]) : "";
+  if (shown === tradebotPageShown) return;
+  tradebotPageShown = shown;
+  own.innerHTML = tradebotPageCard(t);
+  const frame = document.getElementById("tradebot-frame");
+  if (frame) frame.srcdoc = page.html + TRADEBOT_PAGE_TELLS_HEIGHT;
 }
 
 function renderTodo(d) {

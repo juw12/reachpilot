@@ -942,9 +942,10 @@ tradebot_words = json.dumps([practice, real_open, silent_real, tripped_real, hub
 check(not re.search(r"Rp\s?\d|\b(BTC|ETH|USDT|IDR)\b", tradebot_words), "hub tradebot: no amount and no coin on the card")
 
 tradebot_home = Path(tempfile.mkdtemp(prefix="rp-tradebot-"))
-tradebot_real = (hub._launch_fetch, hub.LAUNCH_CACHE)
+tradebot_real = (hub._launch_fetch, hub.LAUNCH_CACHE, hub.TRADEBOT_PRIVATE, hub._tradebot_make_page)
 try:
     hub.LAUNCH_CACHE = tradebot_home / "cache"
+    hub.TRADEBOT_PRIVATE = tradebot_home / "tradebot_private.json"  # never this PC's own setting: its command must not run here
     hub._cache.pop("tradebot", None)
     hub._launch_fetch = lambda url: None
     check(hub.tradebot_section()["available"] is False, "hub tradebot: no answer and no cache is a card that says so")
@@ -959,10 +960,73 @@ try:
     kept = hub.tradebot_section()
     check(kept["available"] and kept["stale"] and hub.tradebot_todo(kept) == [],
           "hub tradebot: offline shows the last good answer and asks for nothing")
+    check(kept["page"] is None and hub.tradebot_page() is None, "hub tradebot page: no setting on this PC, no own page")
+
+    # TradeBot's own page: a file TradeBot makes on this PC, read as it is and made again when it is old
+    own_file = tradebot_home / "phone_page.html"
+    own_text = "<!doctype html><html><body><p>Free rupiah Rp50.000</p></body></html>"
+    own_command = ["maker", "--phone-file", str(own_file)]
+    makes = []
+
+    def own_maker(command, folder):
+        makes.append((command, folder))
+        own_file.write_text(own_text, encoding="utf-8")
+
+    def own_setting(**values):
+        hub.TRADEBOT_PRIVATE.write_text(json.dumps(values), encoding="utf-8")
+        hub._cache.pop("tradebot_page_try", None)
+
+    hub._tradebot_make_page = own_maker
+    own_setting(page_file=str(own_file), page_command=own_command, page_cwd=str(tradebot_home))
+    own = hub.tradebot_page()
+    check(own == {"html": own_text, "made": hub.stamp(own_file), "problem": None} and makes == [(own_command, str(tradebot_home))],
+          "hub tradebot page: a missing file is made with the owner's command, then read")
+    hub._cache.pop("tradebot_page_try", None)
+    check(hub.tradebot_page()["html"] == own_text and len(makes) == 1, "hub tradebot page: a fresh file is read, not made again")
+    with_page = hub.tradebot_section()
+    check(with_page["page"]["html"] == own_text and with_page["available"] and hub.tradebot_todo(with_page) == [],
+          "hub tradebot page: the section carries the page next to the steps")
+    long_ago = hub.time.time() - 3 * hub.TRADEBOT_PAGE_SECONDS
+    os.utime(own_file, (long_ago, long_ago))
+    hub._cache.pop("tradebot_page_try", None)
+    hub._tradebot_make_page = lambda command, folder: makes.append("failed")
+    old_copy = hub.tradebot_page()
+    hub.tradebot_page()
+    check(old_copy["html"] == own_text and makes[1:] == ["failed"],
+          "hub tradebot page: when the maker fails the page from before stays, and the next try waits")
+    own_setting(page_file=str(own_file))
+    check(hub.tradebot_page()["html"] == own_text and len(makes) == 2, "hub tradebot page: without a command the file is only read")
+    own_file.write_text('{"not": "a page"}', encoding="utf-8")
+    not_page = hub.tradebot_page()
+    check(not_page["html"] is None and "not TradeBot's page" in not_page["problem"], "hub tradebot page: a file that is not a page is not shown")
+    own_file.write_text("<!doctype html>" + "x" * hub.TRADEBOT_PAGE_BYTES, encoding="utf-8")
+    check(hub.tradebot_page()["html"] is None, "hub tradebot page: a file far too big is not shown")
+    own_file.unlink()
+    missing = hub.tradebot_page()
+    check(missing["html"] is None and "not been made" in missing["problem"], "hub tradebot page: no file yet says so")
+    for odd in ("[]", "{", json.dumps({"page_file": 5}), json.dumps({"page_file": " "})):
+        hub.TRADEBOT_PRIVATE.write_text(odd, encoding="utf-8")
+        check(hub.tradebot_page() is None, f"hub tradebot page: an odd setting ({odd}) shows no page")
+    own_setting(page_file=str(own_file), page_command=["maker", 5], page_cwd=7)
+    check(hub.tradebot_page()["html"] is None and len(makes) == 2, "hub tradebot page: a command that is not a list of words is never run")
+    check(not re.search(r"Rp\s?\d", json.dumps(hub._tradebot_view({"summary": tradebot_status(), "stale": False, "read_at": None}))),
+          "hub tradebot page: the amounts are only in the page, never in the card built from the public status")
 finally:
-    hub._launch_fetch, hub.LAUNCH_CACHE = tradebot_real
+    hub._launch_fetch, hub.LAUNCH_CACHE, hub.TRADEBOT_PRIVATE, hub._tradebot_make_page = tradebot_real
     hub._cache.pop("tradebot", None)
+    hub._cache.pop("tradebot_page_try", None)
     shutil.rmtree(tradebot_home, ignore_errors=True)
+
+tradebot_dashboard = (Path(__file__).parent / "dashboard.html").read_text(encoding="utf-8")
+tradebot_frame = re.search(r'<iframe id="tradebot-frame"[^>]*>', tradebot_dashboard)
+check(bool(tradebot_frame) and 'sandbox="allow-scripts"' in tradebot_frame.group(0)
+      and "allow-same-origin" not in tradebot_dashboard,
+      "dashboard tradebot page: the frame runs the page's own script but has no rights over the dashboard")
+check("frame.srcdoc = page.html + TRADEBOT_PAGE_TELLS_HEIGHT" in tradebot_dashboard
+      and "event.source !== frame.contentWindow" in tradebot_dashboard,
+      "dashboard tradebot page: the page goes into the frame as it is, and only that frame may set its height")
+check("tradebot_private.json" in (Path(__file__).parent / ".gitignore").read_text(encoding="utf-8").splitlines(),
+      "hub tradebot page: the private setting is git-ignored")
 
 # hub: the podcast tile - the reader mirrors podcast.py's own rules (published + audio on the site; pending = held for review)
 podcast_home = Path(tempfile.mkdtemp(prefix="rp-podcast-"))

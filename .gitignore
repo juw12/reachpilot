@@ -34,6 +34,9 @@ data/github_public_cache/
 launch_private.json
 data/launch_cache/
 
+# TradeBot: where this PC keeps TradeBot's own page, with the amounts (hub.py tradebot_page)
+tradebot_private.json
+
 # Readers: the last good metrics.csv of a project (hub.py readers_section)
 data/readers_cache/
 
