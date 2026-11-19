@@ -22,7 +22,8 @@ keeps them silent). The product film is the exception: nobody speaks, it plays m
 (soundtrack.py; "video_music": false keeps it silent).
 
 After a post about one project its video also gets a page of its own (showcase.publish_watch, "watch_pages"),
-and a creator who covered the project is thanked in the post (creators.py).
+and a creator who covered the project is thanked in the post (creators.py). A project that has no such page yet
+gets one without waiting for its post: on a run with no post due, "watch_backfill_per_day" of them a day.
 
 Commands:  init | auth | channels | tick | preview [N] | status | install | uninstall
 Kill switch: create a file named PAUSE in this folder.
@@ -70,6 +71,8 @@ INBOX = ROOT / "analytics_inbox"
 PAUSE_FLAG = ROOT / "PAUSE"
 LOCK_PATH = ROOT / ".tick.lock"
 PAGES_CHECKOUT = ROOT / ".pages"
+WATCH_BACKFILL_RETRY_DAYS = 14  # a project whose watch video or page failed is tried again after this long
+WATCH_BACKFILL_CLEAR_MINUTES = 60  # no watch video is started this close before a post, so its run is never still busy
 TASK_NAME = "LinkedIn posts"
 TASK_PATH = "\\ReachPilot\\"
 WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
@@ -506,17 +509,27 @@ def build_images(config, choice, slot: str, db=None, used=(), earlier: int = 0) 
     videos: list[Path] = []
     if config.get("demo_video", True) and subjects and not (pictures and picture_turn(config, db, earlier)):
         try:
-            url, served = showcase.target(config["github_user"], choice["angle"], subjects)
-            say = voiceover.load(config)
-            videos = styled_videos(config, choice, out_dir, db, used, url, served, say)
-            if not videos:
-                name = showcase.subject_name(choice["angle"], subjects)
-                narrate = reels.plain_narrator(subjects, say) if say else None
-                videos = [visuals.record_demo(url, out_dir / f"{name}_demo.mp4", served, narrate)]
+            videos = record_video(config, choice, out_dir, db, used)
         except Exception as error:
             log.warning("Video failed (%s); posting the pictures only", error)
     choice["media_kind"] = "video" if videos else "pictures" if pictures else "text"
     return [str(path) for path in videos] + pictures
+
+
+def record_video(config, choice, out_dir: Path, db=None, used=()) -> list[Path]:
+    """The video of the projects in choice: a short vertical one in every cut, else the plain screen recording.
+
+    It shows the page showcase.target picks. Raises when neither kind could be made.
+    """
+    subjects = video_subjects(choice)
+    url, served = showcase.target(config["github_user"], choice["angle"], subjects)
+    say = voiceover.load(config)
+    videos = styled_videos(config, choice, out_dir, db, used, url, served, say)
+    if not videos:
+        name = showcase.subject_name(choice["angle"], subjects)
+        narrate = reels.plain_narrator(subjects, say) if say else None
+        videos = [visuals.record_demo(url, out_dir / f"{name}_demo.mp4", served, narrate)]
+    return videos
 
 
 def lead_with_hook(config, choice) -> None:
@@ -757,6 +770,78 @@ def publish_watch_page(config, slot: str, row, facts, video_url: str = "") -> st
     return url
 
 
+def watch_backfill_queue(db, repos: dict, today: str) -> list[str]:
+    """The projects that still have no watch page, the one worked on last first.
+
+    A project whose video or page failed waits WATCH_BACKFILL_RETRY_DAYS before its next try, so one that cannot be
+    recorded does not take the place of the others every day.
+    """
+    have = showcase.published(GENERATED / showcase.WATCH_INDEX, PAGES_CHECKOUT)
+    try:
+        tried = json.loads(kv_get(db, "watch_backfill_tried", "{}") or "{}")
+    except ValueError:
+        tried = {}
+    retry_from = (datetime.strptime(today, "%Y-%m-%d") - timedelta(days=WATCH_BACKFILL_RETRY_DAYS)).strftime("%Y-%m-%d")
+    waiting = [name for name in repos if name not in have and tried.get(name, "") <= retry_from]
+    return sorted(waiting, key=lambda name: repos[name].get("pushed_at") or "", reverse=True)
+
+
+def backfill_watch_page(config, db, repos: dict, now: datetime) -> str:
+    """Give one project that has no watch page its video and its page, without posting about it. Returns the page or "".
+
+    A watch page used to appear only after a post about the project. At three posts a week, with some sixty
+    projects, most of them waited months for a link that plays their demo (19 Nov 2026: 3 of 60 had one).
+    This makes "watch_backfill_per_day" of them a day (0 switches it off), only in a run where no post is due
+    now or within the next hour, so a slow recording never delays a post. Nothing is posted and no post's turn
+    or video format is used up.
+    """
+    try:
+        per_day = int(config.get("watch_backfill_per_day", 2) or 0)
+    except (TypeError, ValueError):
+        per_day = 0
+    if per_day < 1 or not repos or not (config.get("watch_pages", True) and config.get("demo_video", True)):
+        return ""
+    if config.get("slots") and due_slot(config, db, now + timedelta(minutes=WATCH_BACKFILL_CLEAR_MINUTES)):
+        return ""
+    today = now.strftime("%Y-%m-%d")
+    day, _, count = (kv_get(db, "watch_backfill_day", "") or "").partition(":")
+    made = int(count) if day == today and count.isdigit() else 0
+    if made >= per_day:
+        return ""
+    waiting = watch_backfill_queue(db, repos, today)
+    if not waiting:
+        return ""
+    repo = waiting[0]
+    # Noted before the work: a run that is stopped halfway must not start on the same project in the next run.
+    try:
+        tried = json.loads(kv_get(db, "watch_backfill_tried", "{}") or "{}")
+    except ValueError:
+        tried = {}
+    tried = {name: day_tried for name, day_tried in tried.items() if name in repos}
+    tried[repo] = today
+    kv_set(db, "watch_backfill_tried", json.dumps(tried, sort_keys=True))
+    kv_set(db, "watch_backfill_day", f"{today}:{made + 1}")
+
+    facts = facts_for(config, db, repo, repos)
+    if not facts:
+        return ""
+    choice = {"source": "watch", "repo": repo, "angle": "launch", "facts": [facts]}
+    try:
+        videos = record_video(config, choice, GENERATED / "watch" / repo, db)
+    except Exception as error:
+        log.warning("Watch page for %s: the video failed (%s); next try in %d days", repo, error, WATCH_BACKFILL_RETRY_DAYS)
+        return ""
+    video_url = host_video(config, today, repo, [str(path) for path in videos])
+    if not video_url:
+        log.warning("Watch page for %s: the video could not be hosted; next try in %d days", repo, WATCH_BACKFILL_RETRY_DAYS)
+        return ""
+    url = showcase.publish_watch(config["github_user"], facts, video_url, PAGES_CHECKOUT, log, creators.coverage(repo))
+    if url:
+        showcase.remember(GENERATED / showcase.WATCH_INDEX, repo, url)
+        log.info("Watch page made ahead of its post: %s (%d project(s) still without one)", url, len(waiting) - 1)
+    return url
+
+
 def publish_channels(config, db) -> None:
     """Publish queued channel posts and retry failed ones (3 attempts within 3 days), independent of LinkedIn."""
     results = channels.publish_pending(db, load_secrets(), lambda text: track_links(config, db, text), log)
@@ -798,6 +883,10 @@ def tick(config, db) -> None:
 
     if not slot:
         publish_channels(config, db)
+        try:  # only in a run that already read GitHub, and never in the way of anything above
+            backfill_watch_page(config, db, repos, now)
+        except Exception as error:
+            log.exception("Making a watch page ahead of its post failed: %s", error)
         return
     if posts_this_week(db, now) >= config["max_posts_per_week"]:
         log.info("Weekly cap reached; skipping slot %s", slot)
@@ -957,6 +1046,8 @@ def cmd_status(config, db) -> None:
         print("LinkedIn: not connected (run: python autopilot.py auth)")
     print(f"Seed queue left: {db.execute('SELECT COUNT(*) FROM queue WHERE used=0').fetchone()[0]}")
     print(f"Pending GitHub events: {db.execute('SELECT COUNT(*) FROM events WHERE consumed=0').fetchone()[0]}")
+    with_page = len(showcase.published(GENERATED / showcase.WATCH_INDEX, PAGES_CHECKOUT))
+    print(f"Watch pages: {with_page} of {db.execute('SELECT COUNT(*) FROM repos').fetchone()[0]} projects")
     print("Recent posts:")
     for slot, repo, angle, status, url in db.execute(
         "SELECT slot, repo, angle, status, url FROM posts ORDER BY slot DESC LIMIT 8"
