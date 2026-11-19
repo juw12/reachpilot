@@ -1,11 +1,16 @@
-"""Read-only snapshot of the real dashboard, for viewing ReachPilot from a phone.
+"""Snapshot of the real dashboard, for using ReachPilot from a phone.
 
 Usage:  python phone_snapshot.py [out.html]
 
 Writes generated/phone_snapshot.html (git-ignored): dashboard.html with the current /api/data
-answer baked in, the same way docs/build_demo.py bakes in the demo data. It has no server behind
-it, so the buttons only explain that actions run on the PC. Cairn's `live` publisher uploads the
-file to your private relay repo, and the phone reads it from there (works from any network).
+answer baked in, the same way docs/build_demo.py bakes in the demo data. Cairn's dashboards
+publisher uploads the file to your private relay repo, and the phone reads it from there (works
+from any network).
+
+It has no server behind it. A button hands its name to the page that shows the snapshot (Cairn's
+Dashboards page on the phone), which passes it to this PC through the relay repo; phone_action.py
+runs it here and the answer comes back as the usual message. Opened any other way (the file itself,
+an older Cairn), the buttons only explain that actions run on the PC.
 
 Personal data stays out of public places: the file is written to a git-ignored folder and only
 ever uploaded to a private repo.
@@ -23,7 +28,7 @@ PAGE = ROOT / "dashboard.html"
 OUT = ROOT / "generated" / "phone_snapshot.html"
 ICON = ROOT / "icons" / "icon.svg"
 
-READ_ONLY = "Read-only on your phone: open ReachPilot on your PC to run this."
+READ_ONLY = "Read-only here: use ReachPilot on your PC, or Cairn's Dashboards page on your phone, to run this."
 
 SHIM = """<script>
 /* ReachPilot phone snapshot: the data below was read from this PC at %s. */
@@ -32,12 +37,79 @@ SHIM = """<script>
   const READ_ONLY = %s;
   const realFetch = window.fetch.bind(window);
   const json = (body) => new Response(JSON.stringify(body), { headers: { "Content-Type": "application/json" } });
+
+  /* Buttons: the page around this one (Cairn's Dashboards page) sends the name to the PC and passes the answer back. */
+  const waiting = new Map();
+  let asked = 0;
+  addEventListener("message", (event) => {
+    const reply = event.data;
+    if (event.source !== window.parent || !reply || reply.cairnDash !== "reply" || !waiting.has(reply.id)) return;
+    const entry = waiting.get(reply.id);
+    entry.heard = true;
+    if (reply.state === "done") {
+      waiting.delete(reply.id);
+      entry.resolve(String(reply.message || "Done."));
+    } else if (reply.message && typeof window.toast === "function") {
+      window.toast(String(reply.message));
+    }
+  });
+  const askPc = (name) => new Promise((resolve) => {
+    if (window.parent === window) return resolve(READ_ONLY);
+    const id = "rp" + (asked += 1);
+    const entry = { resolve, heard: false };
+    waiting.set(id, entry);
+    window.parent.postMessage({ cairnDash: "action", id, name }, "*");
+    setTimeout(() => {  /* nobody answered: this is not Cairn's Dashboards page (or an old copy of it) */
+      if (entry.heard) return;
+      waiting.delete(id);
+      resolve(READ_ONLY);
+    }, 5000);
+  });
+
   window.fetch = async (url, options = {}) => {
     const path = String(url);
     if (path.endsWith("/api/data")) return json(DATA);
-    if (path.endsWith("/api/action")) return json({ message: READ_ONLY });
+    if (path.endsWith("/api/action")) {
+      let name = "";
+      try { name = String(JSON.parse(options.body).name || ""); } catch { name = ""; }
+      return json({ message: name ? await askPc(name) : READ_ONLY });
+    }
     return realFetch(url, options);
   };
+
+  /* The browser's own confirm() and prompt() never open inside the phone page's frame; the dashboard uses these instead. */
+  const sheet = (text, withInput) => new Promise((resolve) => {
+    const make = (tag, css, words) => {
+      const node = document.createElement(tag);
+      node.style.cssText = css;
+      if (words) node.textContent = words;
+      return node;
+    };
+    const back = make("div", "position:fixed;inset:0;z-index:50;display:flex;align-items:flex-end;justify-content:center;padding:16px;background:rgba(0,0,0,.45)");
+    back.setAttribute("role", "dialog");
+    back.setAttribute("aria-modal", "true");
+    back.setAttribute("aria-label", text);
+    const box = make("div", "width:100%%;max-width:460px;padding:18px;border-radius:12px;background:var(--surface,#fff);color:var(--ink,#111);box-shadow:0 10px 40px rgba(0,0,0,.35)");
+    const input = make("input", "width:100%%;min-height:44px;margin:0 0 14px;padding:8px 10px;border:1px solid var(--line-strong,#bbb);border-radius:6px;background:var(--bg,#fff);color:inherit;font:inherit");
+    input.type = "url";
+    input.setAttribute("aria-label", text);
+    const row = make("div", "display:flex;gap:8px;justify-content:flex-end");
+    const no = make("button", "", "Cancel");
+    const yes = make("button", "", "OK");
+    no.className = "btn ghost";
+    yes.className = "btn";
+    no.type = yes.type = "button";
+    row.append(no, yes);
+    box.append(make("p", "margin:0 0 14px;white-space:pre-wrap", text), ...(withInput ? [input] : []), row);
+    back.append(box);
+    const close = (value) => { back.remove(); resolve(value); };
+    no.addEventListener("click", (event) => { event.stopPropagation(); close(withInput ? null : false); });
+    yes.addEventListener("click", (event) => { event.stopPropagation(); close(withInput ? input.value : true); });
+    document.body.append(back);
+    (withInput ? input : yes).focus();
+  });
+  window.rpConfirm = (text) => sheet(text, false);
+  window.rpPrompt = (text) => sheet(text, true);
 })();
 </script>
 """

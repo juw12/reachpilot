@@ -343,6 +343,24 @@ When the promotion module is installed, the **Promote** page has one button for 
 held or failed e-mail back in the queue if it passes the rules again, and **Send all now** sends every waiting e-mail
 one after another, after asking once.
 
+#### On your phone
+
+`phone_snapshot.py` writes a copy of the dashboard with the current numbers baked in (git-ignored), and
+[Cairn](https://github.com/juw12/cairn) publishes it to your private relay repo and shows it on your phone from any
+network. **Use on phone** in the sidebar opens the QR code to scan. Set up once on the PC:
+
+```
+cairn dashboards add reachpilot <folder>\generated\phone_snapshot.html --title ReachPilot --cwd <folder> --build "python <folder>\phone_snapshot.py" --actions "python <folder>\phone_action.py"
+cairn dashboards schedule
+```
+
+With `--actions` the buttons work on the phone too. The button's name travels through the relay repo to this PC,
+Cairn's worker starts `phone_action.py` with it, and the answer comes back as the usual message; a fresh snapshot
+follows. The name runs through the same list as a button on the PC, after a stricter one: nothing that opens a window,
+a file or a sign-in on the PC runs from the phone. A request is run once, never when it is more than five minutes old,
+and each one is written to `phone_actions.log`. Buttons that ask first (Send all now) ask on the phone as well.
+Without `--actions` the snapshot stays read-only.
+
 When the promotion module ships `listings.py`, the **Promote** page also tracks where each GitHub project is listed.
 One config file names the projects and the places. Each place is either checked by itself (a public page or index
 that needs no login), queued as one dated by-hand step a day, or held until the project has enough stars. Pull requests
@@ -420,7 +438,8 @@ mail of a priority-1 group, and from the other groups the mails that ask for som
 The answers are kept in `inbox_answers.json` (git-ignored, next to the code), so the card, To do, Overview and
 the phone snapshot always agree, and whatever goes through the mailbox next can read them. An answer belongs to
 one mail: a later mail under the same key (another date or title) is open again. Answering **sends nothing and
-changes no mail**. The phone snapshot shows the answers but cannot give one.
+changes no mail**. The phone snapshot shows the answers, and gives one too once its buttons are on (see
+[On your phone](#on-your-phone)).
 
 **Launch automations.** `python launch_auto.py install` adds an hourly task (`\ReachPilot\Launch automations`)
 that takes over steps of a launch test which only wait on a date or on somebody else. Its rows appear on the same

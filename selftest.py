@@ -4675,6 +4675,65 @@ phone_main = (Path(__file__).parent / "phone_snapshot.py").read_text(encoding="u
 check(phone_main.index("leave_low_priority()") < phone_main.index("build("),
       "phone page: the build fixes its priority first, so Task Scheduler answers it on a busy PC")
 
+# Phone buttons: a name pressed on the phone runs only if it needs nothing on the PC's screen (phone_action.py).
+import phone_action  # noqa: E402
+import phone_snapshot  # noqa: E402
+
+for phone_name in ("promote:retryall", "promote:sendall", "promote:send:12", "promote:pause", "promote:covered:yt:UC1|https://youtu.be/x",
+                   "linkedin_toggle_pause", "linkedin_run_now", "jobs_search_now", "email_run_now", "podcast:approve:all",
+                   "podcast:review:off", "podcast:listed:spotify", "patents:decide:demo:file", "patents:filed:demo:2026-11-01:63/123,456",
+                   "launch:followup:demo", "launch:approve_invites:demo", "shorts:pause:demo", "inbox:mine:google-1"):
+    check(hub.phone_allowed(phone_name), f"phone buttons: {phone_name} runs from the phone")
+for phone_name in ("jobs_apply", "jobs_open_tracker", "open_answers", "email_open_leads", "email_preview", "email_test",
+                   "linkedin_auth", "linkedin_approve", "channels_setup", "open_modules", "phone_link", "promote:setkey",
+                   "promote:setupchecker", "promote:openproducts", "podcast:open", "patents:open:demo",
+                   "launch:open_reply:demo", "launch:relay_code:demo", "launch:open_invites:demo", "launch:open_contacts:demo",
+                   "promote", "promote:", "inbox", "inbox:", "nonsense", "nonsense:approve", "", None, 7):
+    check(not hub.phone_allowed(phone_name), f"phone buttons: {phone_name!r} is refused on the phone")
+run_source = (Path(__file__).parent / "hub.py").read_text(encoding="utf-8").split("def run_action(name: str) -> str:")[1]
+run_source = run_source.split("\n# ---")[0]
+for opener in re.findall(r'if name == "([a-z_]+)":\n(?:.*\n)??\s+(?:_console\(|os\.startfile\()', run_source):
+    check(not hub.phone_allowed(opener), f"phone buttons: {opener} opens something on the PC, so the phone cannot press it")
+
+with tempfile.TemporaryDirectory() as phone_folder:
+    phone_log = Path(phone_folder) / "phone_actions.log"
+    phone_ran = []
+
+    def phone_run(name):
+        phone_ran.append(name)
+        if name == "promote:send:9":
+            raise RuntimeError("Nothing to send:\n that one is on hold")
+        return "Sent 3.\nOne is on hold."
+
+    check(phone_action.main(["promote:sendall"], run=phone_run, allowed=hub.phone_allowed, log=phone_log) == (0, "Sent 3. One is on hold."),
+          "phone buttons: an allowed name runs and its answer comes back as one line")
+    check(phone_action.main(["promote:send:9"], run=phone_run, allowed=hub.phone_allowed, log=phone_log)
+          == (1, "Nothing to send: that one is on hold"), "phone buttons: a failure comes back with its reason")
+    check(phone_action.main(["jobs_apply"], run=phone_run, allowed=hub.phone_allowed, log=phone_log)[0] == 1
+          and phone_action.main(["a", "b"], run=phone_run, allowed=hub.phone_allowed, log=phone_log)[0] == 2
+          and phone_action.main([], run=phone_run, allowed=hub.phone_allowed, log=phone_log)[0] == 2
+          and phone_ran == ["promote:sendall", "promote:send:9"],
+          "phone buttons: a PC-only name, two names or none run nothing")
+    phone_lines = phone_log.read_text(encoding="utf-8").splitlines()
+    check(len(phone_lines) == 3 and "ok: Sent 3." in phone_lines[0] and "failed:" in phone_lines[1] and phone_lines[2].endswith("refused"),
+          "phone buttons: every request is written to the log with what came of it")
+
+phone_page = phone_snapshot.render({"overview": {"now": "x"}, "schedule": [{"images": ["/img?p=a"]}], "note": "</script>"},
+                                   (Path(__file__).parent / "dashboard.html").read_text(encoding="utf-8"), "2026-11-19 14:00")
+check('{ cairnDash: "action", id, name }' in phone_page and "event.source !== window.parent" in phone_page,
+      "phone page: a button hands its name to the page around it and only listens to that page")
+check("window.rpConfirm = " in phone_page and "window.rpPrompt = " in phone_page and "window.rpConfirm ? window.rpConfirm(text) : confirm(text)" in phone_page
+      and "window.rpPrompt ? window.rpPrompt(text) : prompt(text)" in phone_page,
+      "phone page: a button that asks first asks inside the page, where the browser's own box never opens")
+check(len(re.findall(r"(?<![\w.])confirm\((?!\))", phone_page)) == 1 and len(re.findall(r"(?<![\w.])prompt\((?!\))", phone_page)) == 1
+      and "width:100%;" in phone_page and "%%" not in phone_page.split("</script>")[0],
+      "phone page: no other place calls the browser's confirm or prompt, and the page's own box is written out whole")
+check('"/img?p=a"' not in phone_page and "<\\/script>" in phone_page and 'const TOKEN = "demo";' in phone_page,
+      "phone page: no local picture links, data cannot close the script, and no session token is in it")
+check('id="phone-open" data-action="phone_link"' in phone_page and " hidden>Use on phone</button>" in phone_page
+      and 'document.getElementById("phone-open").hidden = false;' in phone_page.split('if (location.hostname === "127.0.0.1" && TOKEN !== "demo") {')[1],
+      "dashboard: Use on phone shows on the PC only (the QR code opens there)")
+
 # Shorts: finished short videos go to X one at a time through Buffer (shorts.py). Nothing here talks to Buffer.
 import time  # noqa: E402
 
@@ -4927,7 +4986,7 @@ check("index < 5 || item.failed" in layout_page and "compact && !item.failed ? i
       and '${item.failed ? " · failed" : ""}' in layout_page,
       "overview: the first five to-dos and every failed one are shown, and a failed one lists all of its entries")
 check('actionButton("promote:retryall"' in layout_page and 'actionButton("promote:sendall"' in layout_page
-      and "data-confirm" in layout_page and "confirm(button.dataset.confirm)" in layout_page
+      and "data-confirm" in layout_page and "askYes(button.dataset.confirm)" in layout_page
       and "so this goes past it" in layout_page,
       "promote: the page has Retry all and Send all now, and Send all now asks first and says when it passes the cap")
 nav_groups = re.findall(r'<div class="nav-group folded" data-group="([a-z]+)" role="presentation">\s*<button type="button" class="nav-label" aria-expanded="false">', layout_page)

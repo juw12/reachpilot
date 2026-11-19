@@ -2128,8 +2128,43 @@ def _start_task(key: str) -> None:
     _cache.pop("tasks", None)
 
 
+# Buttons pressed on the phone (phone_action.py). Only what needs nothing on this PC's screen: a button that
+# opens a window, a file or a sign-in is left out, and so is every name not listed here.
+PHONE_PLAIN = {"jobs_search_now", "email_run_now", "linkedin_run_now", "linkedin_toggle_pause", "patents_run_now",
+               "launch_run_now", "shorts_run_now"}
+PHONE_VERBS = {
+    "promote": PROMOTE_VERBS,
+    "podcast": (PODCAST_VERBS - {"open"}) | PROMOTION_VERBS,
+    "patents": {"decide", "ownership", "filed", "unfiled"},
+    "launch": {"followup", "replied", "no_reply", "reply_read", "approve_invites", "shared", "wa_done"},
+    "shorts": {"pause", "resume"},
+    "inbox": None,  # every answer on the inbox card only writes inbox_answers.json
+}
+PHONE_PC_ONLY = "This button only works on your PC: it opens a window or a file there."
+CAIRN_APP = Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "Programs" / "Cairn" / "app"
+
+
+def phone_allowed(name: str) -> bool:
+    if not isinstance(name, str):
+        return False
+    if name in PHONE_PLAIN:
+        return True
+    family, _, rest = name.partition(":")
+    if family not in PHONE_VERBS or not rest:
+        return False
+    verbs = PHONE_VERBS[family]
+    return verbs is None or rest.partition(":")[0] in verbs
+
+
 def run_action(name: str) -> str:
     import autopilot as ap
+
+    if name == "phone_link":
+        if not (CAIRN_APP / "cairn").is_dir():
+            raise ValueError("The phone view needs Cairn on this PC: https://github.com/juw12/cairn")
+        # cmd /k keeps the window open after the code is drawn
+        _console(["cmd", "/k", str(PYTHON), "-m", "cairn", "dashboards", "link"], CAIRN_APP)
+        return "A window opened with a QR code: scan it with your phone. It carries this PC's GitHub sign-in, so show it to nobody else."
 
     if name == "jobs_apply":
         _console(["cmd", "/k", str(JOBS / "autofill.bat")], JOBS)
