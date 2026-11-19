@@ -5046,7 +5046,7 @@ def replies_fresh_world():
             bluesky_note("n6", "ann", "Great work!", minutes=30),
             bluesky_note("n7", "carl", "Cool", hours=50),
         ],
-        "bsky_chat": True,
+        "bsky_chat": True, "bsky_passes": [],
         "bsky_convos": [{"id": "c1", "members": [{"did": "did:plc:me"}, {"did": "did:plc:dave", "handle": "dave.bsky.social"}],
                          "lastMessage": {"id": "m9", "text": "Thanks, great!", "sentAt": replies_ago(hours=1),
                                          "sender": {"did": "did:plc:dave"}}},
@@ -5086,8 +5086,19 @@ def replies_http(method, url, **sent):
         return 200, {"did": "did:plc:me", "handle": "me.bsky.social", "accessJwt": "jwt"}
     if url.endswith("app.bsky.notification.listNotifications"):
         return 200, {"notifications": world["bsky_notes"]}
+    if url.endswith("com.atproto.server.getServiceAuth"):  # the pass for one chat method; bsky.social gives it out
+        world["bsky_passes"].append(sent["params"]["lxm"])
+        if sent["params"]["aud"] != "did:web:api.bsky.chat" or sent["headers"] != {"Authorization": "Bearer jwt"}:
+            return 400, {"error": "InvalidRequest", "message": "wrong pass asked for"}
+        return (200, {"token": "chat-pass"}) if world["bsky_chat"] else (
+            400, {"error": "InvalidRequest", "message": "insufficient access to request a service auth token"})
+    if "/xrpc/chat.bsky." in url and (not url.startswith("https://api.bsky.chat/xrpc/")
+                                      or sent["headers"] != {"Authorization": "Bearer chat-pass"}):
+        return 501, {"error": "MethodNotImplemented"}  # what bsky.social answers to a chat call, whatever the sign-in
+    if "/xrpc/chat.bsky." in url and world["bsky_chat"] == "down":
+        return 502, {"message": "upstream is down"}
     if url.endswith("chat.bsky.convo.listConvos"):
-        return (200, {"convos": world["bsky_convos"]}) if world["bsky_chat"] else (400, {"error": "InvalidToken", "message": "Bad token method"})
+        return 200, {"convos": world["bsky_convos"]}
     if url.endswith("chat.bsky.convo.getConvo"):
         return 200, {"convo": next(chat for chat in world["bsky_convos"] if chat["id"] == sent["params"]["convoId"])}
     if url.endswith("app.bsky.feed.getPostThread"):
@@ -5317,6 +5328,17 @@ try:
           and "error" not in replies.load_state()["items"][by_id["n1"]["key"]] and len(replies_world["sent"]) == 1,
           "replies: I can still send it myself, and the failure is cleared")
 
+    # the chat service is down: that is said as it is, and nobody is told to connect again
+    shutil.rmtree(replies.DATA_DIR)
+    replies_world = replies_fresh_world()
+    replies_world["bsky_chat"] = "down"
+    outcome = replies.run(replies_now)
+    down = hub.replies_section()
+    down_rows = {row["platform"]: row for row in down["platforms"]}
+    check("bluesky: 5 new" in outcome and "HTTP 502" in down_rows["Bluesky"]["messages"] and not down_rows["Bluesky"]["sign_in"]
+          and not any("Connect" in item["title"] for item in hub.replies_todo(down)),
+          f"replies: a chat service that is down is not called a sign-in problem ({down_rows['Bluesky']['messages']})")
+
     # a sign-in that may only post, and a platform that is down
     shutil.rmtree(replies.DATA_DIR)
     replies_world = replies_fresh_world()
@@ -5331,6 +5353,9 @@ try:
           and limited_rows["Bluesky"]["messages"] == replies.SIGN_IN_AGAIN["bluesky"]
           and "HTTP 500" in limited_rows["Dev.to"]["error"] and len(limited["waiting"]) == 5,
           f"replies: a sign-in that may only post, and a platform that is down, do not stop the others ({outcome})")
+    check(replies_world["bsky_passes"] == ["chat.bsky.convo.listConvos"],
+          f"replies: Bluesky messages are asked for with a pass for that one method ({replies_world['bsky_passes']})")
+
     check([(item["title"], item["action"], item.get("failed", False)) for item in limited_todo[1:]]
           == [("Connect Bluesky and Mastodon again so replies can be read", "channels_setup", False),
               ("Comments on Dev.to could not be read", "replies_run_now", True)]

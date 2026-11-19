@@ -218,7 +218,7 @@ def posted(db_file: Path | None = None) -> dict[tuple[str, str], str]:
 
 class BlueskyReplies:
     by_hand = False
-    CHAT = {"atproto-proxy": "did:web:api.bsky.chat#bsky_chat"}
+    CHAT_SERVICE = "https://api.bsky.chat"
 
     def __init__(self, creds: dict):
         self.service = creds.get("service", "https://bsky.social").rstrip("/")
@@ -228,13 +228,28 @@ class BlueskyReplies:
         self.headers = {"Authorization": f"Bearer {session['accessJwt']}"}
         self.messages = ""  # why messages cannot be read; "" when they can
 
+    def _chat(self, verb: str, method: str, **sent):
+        """Messages are asked for at Bluesky's chat service itself, with a pass for that one method.
+
+        bsky.social does not hand a chat call on (HTTP 501 "not implemented", seen 19 Nov 2026), and the account's own
+        server (*.host.bsky.network) is closed to some office networks. bsky.social does give out the pass, and
+        refuses it to an app password made without "allow direct messages".
+        """
+        status, ticket = _http("GET", f"{self.service}/xrpc/com.atproto.server.getServiceAuth", headers=self.headers,
+                               params={"aud": "did:web:api.bsky.chat", "lxm": method})
+        if status >= 300:
+            return status, ticket
+        return _http(verb, f"{self.CHAT_SERVICE}/xrpc/{method}", headers={"Authorization": f"Bearer {ticket['token']}"}, **sent)
+
     def _get(self, method: str, params: dict, chat: bool = False):
-        headers = {**self.headers, **self.CHAT} if chat else self.headers
-        return _http("GET", f"{self.service}/xrpc/{method}", headers=headers, params=params)
+        if chat:
+            return self._chat("GET", method, params=params)
+        return _http("GET", f"{self.service}/xrpc/{method}", headers=self.headers, params=params)
 
     def _post(self, method: str, body: dict, chat: bool = False) -> dict:
-        headers = {**self.headers, **self.CHAT} if chat else self.headers
-        return _ok(_http("POST", f"{self.service}/xrpc/{method}", headers=headers, json=body), f"Bluesky {method}")
+        answer = (self._chat("POST", method, json=body) if chat
+                  else _http("POST", f"{self.service}/xrpc/{method}", headers=self.headers, json=body))
+        return _ok(answer, f"Bluesky {method}")
 
     def read(self) -> list[dict]:
         found = []
@@ -253,8 +268,10 @@ class BlueskyReplies:
                 "target": {"parent": here, "root": (record.get("reply") or {}).get("root") or here},
             })
         status, chats = self._get("chat.bsky.convo.listConvos", {"limit": 30}, chat=True)
-        if status >= 300:  # an app password made without "allow direct messages" is refused here, and only here
-            self.messages = SIGN_IN_AGAIN["bluesky"]
+        if status >= 300:
+            # an app password made without "allow direct messages" is refused here, and only here (HTTP 400);
+            # anything else is Bluesky or the network, and connecting again would not help
+            self.messages = SIGN_IN_AGAIN["bluesky"] if status in (400, 401, 403) else f"Bluesky did not hand over the messages (HTTP {status})."
             return found
         for chat in chats.get("convos") or []:
             last = chat.get("lastMessage") or {}
