@@ -21,7 +21,7 @@ from pathlib import Path
 
 import requests
 
-CREATE_NO_WINDOW = 0x08000000
+CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)  # 0x08000000 on Windows; refused on a Mac unless 0
 RESERVED_NAMES = {"go", "p", "assets", "static", "demo", "watch", "reachpilot-showcase"}
 DEMO_REUSE_DAYS = 60  # a hosted clip is replaced only this often, so the Pages repo does not grow with every post
 DEMO_LIVE_WAIT_SECONDS = 150  # GitHub Pages usually serves a pushed file within a minute or two

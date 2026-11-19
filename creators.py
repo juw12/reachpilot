@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 
 PROMOTE_SCRIPT = Path(__file__).resolve().parent / "modules" / "promote" / "promote.py"
-CREATE_NO_WINDOW = 0x08000000
+CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)  # 0x08000000 on Windows; refused on a Mac unless 0
 NAME_CHARS = 60
 
 

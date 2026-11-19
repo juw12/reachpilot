@@ -36,6 +36,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import machine
 from launch_auto import _only_one, leave_low_priority
 
 CODE_DIR = Path(__file__).resolve().parent
@@ -527,6 +528,10 @@ def action(name: str, ask=_buffer) -> str:
 
 def install_task() -> None:
     """Every hour, hidden (pythonw), catching up if the PC was off. Same settings as the other hourly tasks."""
+    if not machine.IS_WINDOWS:  # a Mac: the same schedule as a launchd agent
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        print(machine.install_task(TASK_NAME, [sys.executable, str(Path(__file__).resolve())], CODE_DIR, every_minutes=60, limit_minutes=30))
+        return
     pythonw = Path(sys.executable).with_name("pythonw.exe")
     runner = pythonw if pythonw.exists() else Path(sys.executable)
     DATA_DIR.mkdir(parents=True, exist_ok=True)

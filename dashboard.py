@@ -498,13 +498,9 @@ def give_window_own_taskbar_button(timeout: float = 20.0) -> bool:
 
 
 def open_window(url: str) -> threading.Thread | None:
-    """Open as a standalone app window (Edge --app), falling back to the default browser.
+    """Open as a standalone app window (Edge --app; Edge or Chrome on a Mac), falling back to the default browser.
     Returns the thread that gives the window its own taskbar button (join it if the process is about to exit)."""
-    candidates = [
-        shutil.which("msedge"),
-        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
-        r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
-    ]
+    candidates = hub.machine.app_window_browsers()  # Edge on Windows; Edge or Chrome on a Mac
     edge = next((path for path in candidates if path and Path(path).exists()), None)
     if edge:
         subprocess.Popen([edge, f"--app={url}", "--window-size=1320,920"])
@@ -524,7 +520,7 @@ def code_is_healthy() -> bool:
     """True if the edited code imports cleanly in a separate process, so a half-saved file never takes the dashboard down."""
     try:
         check = subprocess.run(
-            [str(Path(sys.executable).with_name("python.exe")), "-c", "import hub, dashboard, analytics, trylinks"],
+            [str(hub.machine.console_python()), "-c", "import hub, dashboard, analytics, trylinks"],
             cwd=CODE_DIR, capture_output=True, timeout=90, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
         return check.returncode == 0

@@ -11,7 +11,7 @@ import subprocess
 from pathlib import Path
 from dataclasses import dataclass, field
 
-CREATE_NO_WINDOW = 0x08000000
+CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)  # 0x08000000 on Windows; refused on a Mac unless 0
 
 # UTF-8 text that was mis-decoded as Windows-1252 and saved again ("Ã¢â€°Â¤" instead of "â‰¤").
 MOJIBAKE = re.compile(r"[\u00c2-\u00f4][\u0080-\u00bf\u0152\u0153\u0160\u0161\u0178\u017d\u017e\u0192\u02c6\u02dc\u2013-\u203a\u20ac\u2122]{1,3}")

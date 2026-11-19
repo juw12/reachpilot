@@ -41,6 +41,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 import analytics
 import composer
+import machine
 import soundtrack
 import visuals
 import voiceover
@@ -463,7 +464,7 @@ def format_records(db) -> list[dict]:
 def _font(name: str, size: int):
     for candidate in (name, "segoeuib.ttf", "arialbd.ttf"):
         try:
-            return ImageFont.truetype(str(visuals.FONT_DIR / candidate), size)
+            return ImageFont.truetype(str(machine.font_path(candidate)), size)
         except OSError:
             continue
     try:

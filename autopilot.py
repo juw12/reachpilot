@@ -52,6 +52,7 @@ import composer  # noqa: E402
 import creators  # noqa: E402
 import github_source as gh  # noqa: E402
 import growth  # noqa: E402
+import machine  # noqa: E402
 import reels  # noqa: E402
 import showcase  # noqa: E402
 import trylinks  # noqa: E402
@@ -145,7 +146,11 @@ def kv_set(db, key, value) -> None:
 
 
 def notify(title: str, message: str) -> None:
-    """Windows toast; best effort, never blocks."""
+    """Windows toast (a notification on a Mac); best effort, never blocks."""
+    if not machine.IS_WINDOWS:
+        machine.notify(title, message)
+        log.info("NOTIFY %s: %s", title, message)
+        return
     safe_title = title.replace("'", "''")
     safe_message = message.replace("'", "''")[:240]
     script = f"""
@@ -1110,6 +1115,10 @@ def cmd_goatcounter(config) -> None:
 
 
 def cmd_install() -> None:
+    if not machine.IS_WINDOWS:  # a Mac: a launchd agent, every 30 minutes and at sign-in, stopped after 20 minutes
+        print(machine.install_task(TASK_NAME, [sys.executable, str(ROOT / "autopilot.py"), "tick"], ROOT,
+                                   every_minutes=30, at_login=True, limit_minutes=20))
+        return
     pythonw = Path(sys.executable).with_name("pythonw.exe")
     script = ROOT / "autopilot.py"
     powershell = f"""
@@ -1126,6 +1135,9 @@ Get-ScheduledTask -TaskPath '{TASK_PATH}' -TaskName '{TASK_NAME}' | Select-Objec
 
 
 def cmd_uninstall() -> None:
+    if not machine.IS_WINDOWS:
+        print(machine.remove_task(TASK_NAME))
+        return
     subprocess.run(
         ["powershell", "-NoProfile", "-Command", f"Unregister-ScheduledTask -TaskPath '{TASK_PATH}' -TaskName '{TASK_NAME}' -Confirm:$false"],
         check=False,

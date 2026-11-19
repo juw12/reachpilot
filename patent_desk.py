@@ -40,6 +40,7 @@ from datetime import date, datetime
 from pathlib import Path
 
 import patents
+import machine
 
 FOLLOW_UP_MONTHS = 12  # 35 U.S.C. 119(e): non-provisional or PCT within 12 months of the provisional; no extension
 HISTORY_LIMIT = 60
@@ -1018,7 +1019,7 @@ def open_folder(name: str) -> str:
     target = folder(name)
     if not target.is_dir():
         raise ValueError(f"{name} has no dossier folder yet. It is created by the next daily run.")
-    os.startfile(target)  # noqa: S606 - a folder inside data/patents, name checked above
+    machine.open_path(target)  # a folder inside data/patents, name checked above
     return f"Opened the dossier folder of {name}."
 
 

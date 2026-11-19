@@ -13,6 +13,7 @@ from pathlib import Path
 
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 
+import machine
 import voiceover
 from github_source import CREATE_NO_WINDOW, RepoFacts, gh_api
 
@@ -26,7 +27,7 @@ PALETTES = [
 
 def _font(size: int) -> ImageFont.FreeTypeFont:
     try:
-        return ImageFont.truetype(str(FONT_DIR / "segoeui.ttf"), size)
+        return ImageFont.truetype(str(machine.font_path("segoeui.ttf")), size)
     except OSError:
         return ImageFont.load_default()
 
@@ -38,7 +39,7 @@ def capture(urls: dict[str, str], out_dir: Path) -> dict[str, Path]:
     out_dir.mkdir(parents=True, exist_ok=True)
     results: dict[str, Path] = {}
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(channel="msedge", headless=True)
+        browser = playwright.chromium.launch(channel=machine.browser_channel(), headless=True)
         page = browser.new_context(
             viewport={"width": 1280, "height": 800},
             device_scale_factor=1.5,
@@ -365,7 +366,7 @@ def record_raw(url: str, folder: Path, phone: bool = False, served: dict[str, st
     scale = PHONE_SCALE if phone else 1
     video_size = {"width": view_size[0] * scale, "height": view_size[1] * scale}
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(channel="msedge", headless=True)
+        browser = playwright.chromium.launch(channel=machine.browser_channel(), headless=True)
         context = browser.new_context(
             viewport=video_size, record_video_dir=str(folder), record_video_size=video_size, color_scheme="light",
         )
