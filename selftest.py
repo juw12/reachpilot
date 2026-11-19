@@ -2872,6 +2872,113 @@ with tempfile.TemporaryDirectory() as watch_dir:
           and host_asked.call_count == 1 and (without_video, switched_off_page, for_roundup) == ("", "", ""),
           'autopilot: a posted video gets its watch page; none without a hosted video, for a roundup, or with "watch_pages": false')
 
+# Watch pages ahead of the post: a project that has none gets its video and page on a run where no post is due
+import types  # noqa: E402
+
+with tempfile.TemporaryDirectory() as backfill_dir:
+    backfill_generated = Path(backfill_dir) / "generated"
+    backfill_checkout = Path(backfill_dir) / ".pages"
+    (backfill_checkout / "watch" / "hexbane").mkdir(parents=True)
+    (backfill_checkout / "watch" / "hexbane" / "index.html").write_text("<html>", encoding="utf-8")
+    (backfill_checkout / "watch" / "empty-folder").mkdir()
+    showcase.remember(backfill_generated / showcase.WATCH_INDEX, "buddy", "https://juw12.github.io/watch/buddy/")
+    check(showcase.published(backfill_generated / showcase.WATCH_INDEX, backfill_checkout) == {"buddy", "hexbane"}
+          and showcase.published(Path(backfill_dir) / "none.json", Path(backfill_dir) / "none") == set(),
+          "watch pages ahead: a project has its page when it is noted as live or lies in the Pages checkout")
+
+    backfill_repos = {
+        "buddy": {"pushed_at": "2026-11-19T02:00:00Z"},
+        "hexbane": {"pushed_at": "2026-11-13T02:00:00Z"},
+        "riak": {"pushed_at": "2026-11-10T02:00:00Z"},
+        "kilat": {"pushed_at": "2026-11-16T02:00:00Z"},
+        "teduh": {"pushed_at": "2026-11-09T02:00:00Z"},
+    }
+    backfill_db = sqlite3.connect(":memory:")
+    backfill_db.execute("CREATE TABLE kv(key TEXT PRIMARY KEY, value TEXT)")
+    backfill_db.execute("CREATE TABLE posts(slot TEXT, status TEXT, attempts INTEGER)")
+    backfill_config = {"github_user": "juw12", "watch_backfill_per_day": 2}
+    recorded, hosted, failing = [], [], {"teduh"}
+
+    def backfill_record(config, choice, out_dir, db=None, used=()):
+        recorded.append((choice["repo"], choice["angle"], out_dir.parent.name, out_dir.name))
+        if choice["repo"] in failing:
+            raise RuntimeError("the page did not load")
+        return [out_dir / f"{choice['repo']}_demo.mp4"]
+
+    def backfill_host(config, slot, repo, media):
+        hosted.append(repo)
+        return f"https://juw12.github.io/demo/{repo}.mp4"
+
+    def backfill_publish(user, facts_given, video_url, checkout, log, credits=()):
+        return showcase.watch_url(user, facts_given.name)
+
+    def backfill_run(day, hour=10, config=backfill_config, repos=backfill_repos):
+        return autopilot.backfill_watch_page(config, backfill_db, repos, datetime(2026, 11, day, hour, 0))
+
+    with mock.patch.object(autopilot, "GENERATED", backfill_generated), \
+         mock.patch.object(autopilot, "PAGES_CHECKOUT", backfill_checkout), \
+         mock.patch("autopilot.facts_for", side_effect=lambda config, db, repo, repos: types.SimpleNamespace(name=repo)), \
+         mock.patch("autopilot.record_video", side_effect=backfill_record), \
+         mock.patch("autopilot.host_video", side_effect=backfill_host), \
+         mock.patch("autopilot.creators.coverage", return_value=[]), \
+         mock.patch("autopilot.showcase.publish_watch", side_effect=backfill_publish):
+        check(autopilot.watch_backfill_queue(backfill_db, backfill_repos, "2026-11-20") == ["kilat", "riak", "teduh"],
+              "watch pages ahead: the projects without a page wait in line, the one worked on last first")
+        first = backfill_run(20)
+        second = backfill_run(20, 12)
+        third = backfill_run(20, 14)
+        check((first, second, third) == ("https://juw12.github.io/watch/kilat/", "https://juw12.github.io/watch/riak/", "")
+              and recorded == [("kilat", "launch", "watch", "kilat"), ("riak", "launch", "watch", "riak")],
+              f"watch pages ahead: two projects a day get their video and page, and no more ({recorded})")
+        check(json.loads((backfill_generated / showcase.WATCH_INDEX).read_text(encoding="utf-8")).keys() == {"buddy", "kilat", "riak"},
+              "watch pages ahead: the new pages are noted where the outreach e-mails look for a video link")
+        failed_page = backfill_run(21)
+        next_day_again = backfill_run(21, 12)
+        check(failed_page == "" and next_day_again == "" and recorded[2:] == [("teduh", "launch", "watch", "teduh")]
+              and hosted == ["kilat", "riak"],
+              "watch pages ahead: a video that fails publishes nothing and is not tried again in the next run")
+        nine_days_later = backfill_run(30)
+        tries_so_far = [entry[0] for entry in recorded[2:]]
+        two_weeks_later = autopilot.backfill_watch_page(backfill_config, backfill_db, backfill_repos, datetime(2026, 12, 5, 10, 0))
+        check(nine_days_later == "" and tries_so_far == ["teduh"] and two_weeks_later == ""
+              and [entry[0] for entry in recorded[2:]] == ["teduh", "teduh"],
+              f"watch pages ahead: the failed project is tried again two weeks later, not before ({recorded[2:]})")
+        before = len(recorded)
+        failing.clear()
+        backfill_db.execute("DELETE FROM kv")
+        switched_off = [
+            backfill_run(22, config={"github_user": "juw12", "watch_backfill_per_day": 0}),
+            backfill_run(22, config={"github_user": "juw12", "watch_pages": False}),
+            backfill_run(22, config={"github_user": "juw12", "demo_video": False}),
+            backfill_run(22, config={"github_user": "juw12", "watch_backfill_per_day": "many"}),
+            backfill_run(22, repos={}),
+            # 22 Nov 2026 is a Sunday; the run is at 10:00 and a post is due at 10:30
+            backfill_run(22, config={"github_user": "juw12", "catch_up_hours": 10, "slots": [{"weekday": "Sun", "time": "10:30"}]}),
+        ]
+        check(switched_off == [""] * 6 and len(recorded) == before,
+              'watch pages ahead: nothing is made with "watch_backfill_per_day": 0, without watch pages or videos, '
+              "in a run that did not read GitHub, or within the hour before a post")
+        after_lunch_slot = {"github_user": "juw12", "catch_up_hours": 10, "slots": [{"weekday": "Sun", "time": "12:30"}]}
+        check(backfill_run(22, config=after_lunch_slot) == "https://juw12.github.io/watch/teduh/" and len(recorded) == before + 1,
+              "watch pages ahead: a post later the same day does not hold it back")
+        backfill_db.execute("DELETE FROM kv")
+        (backfill_generated / showcase.WATCH_INDEX).write_text(
+            json.dumps({"buddy": "x", "kilat": "x", "riak": "x"}), encoding="utf-8")
+        before = len(recorded)
+        by_default = backfill_run(22, config={"github_user": "juw12"})
+        check(by_default == "https://juw12.github.io/watch/teduh/" and len(recorded) == before + 1,
+              "watch pages ahead: it is on without a setting")
+    backfill_db.close()
+import inspect  # noqa: E402
+
+tick_source = inspect.getsource(autopilot.tick)
+check(tick_source.index("if not slot:") < tick_source.index("backfill_watch_page(config, db, repos, now)")
+      < tick_source.index("if posts_this_week(db, now)"),
+      "watch pages ahead: only a run with no post due makes one, so a slow recording never delays a post")
+check(json.loads((Path(__file__).parent / "config.json").read_text(encoding="utf-8")).get("watch_backfill_per_day") == 2
+      and "watch_backfill_per_day" in (Path(__file__).parent / "README.md").read_text(encoding="utf-8"),
+      "watch pages ahead: the setting is in config.json and explained in the README")
+
 # patent screen (patents.py): scorer, filing window, route, changes, notes, the hub card and its to-dos.
 # Everything here is offline and uses made-up projects.
 import patents  # noqa: E402

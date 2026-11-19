@@ -154,6 +154,7 @@ Settings in `config.json`:
 | `voice_models` | `models` | the folder that holds the two voice model files |
 | `picture_every` | `5` | one post in this many leads with pictures instead of a video; `0` means never |
 | `watch_pages` | `true` | `false` publishes no watch page |
+| `watch_backfill_per_day` | `2` | watch pages made a day for projects that have none yet, without a post; `0` only makes one after a post |
 
 The dashboard shows each post's video with its format, so you can see which one ran.
 
@@ -184,6 +185,12 @@ left out for those projects.
 After a post about one project, its video also gets a page of its own at `<you>.github.io/watch/<project>/`:
 the video on top, what the project does underneath, and a link to the repo. It is one address that plays the
 demo, for anywhere a file can't be attached. Live pages are listed in `generated/watch_pages.json`.
+
+A project does not have to wait for its post. With three posts a week and many projects, that wait is months,
+so on a run where no post is due ReachPilot also records the video of a project that has no watch page yet and
+publishes the page, two projects a day (`watch_backfill_per_day`), the one you worked on last first. Nothing is
+posted for it. A project whose video fails is tried again two weeks later. `python autopilot.py status` says
+how many projects have their page.
 
 When someone covers a project in a video or an article, record it on the dashboard's **Promote** page
 ("They covered it", then paste the link). The next post about that project thanks them by name with the link,
