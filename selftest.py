@@ -1028,6 +1028,64 @@ check("frame.srcdoc = page.html + TRADEBOT_PAGE_TELLS_HEIGHT" in tradebot_dashbo
 check("tradebot_private.json" in (Path(__file__).parent / ".gitignore").read_text(encoding="utf-8").splitlines(),
       "hub tradebot page: the private setting is git-ignored")
 
+# hub: the inbox card - reads a private file written from strangers' mail, so nothing in it is trusted
+inbox_home = Path(tempfile.mkdtemp(prefix="rp-inbox-"))
+inbox_real = hub.INBOX_PRIVATE
+try:
+    hub.INBOX_PRIVATE = inbox_home / "inbox_private.json"
+    check(hub.inbox_section() == {"installed": False} and hub.inbox_todo(hub.inbox_section()) == [],
+          "hub inbox: no file means no card and nothing in To do")
+    for odd in ("not json", "[1, 2]", '{"groups": "many"}', '{"account": "a@b.co"}'):
+        hub.INBOX_PRIVATE.write_text(odd, encoding="utf-8")
+        check(hub.inbox_section() == {"installed": False}, f"hub inbox: a file that is not the card's shape shows nothing ({odd[:12]})")
+    hub.INBOX_PRIVATE.write_text(json.dumps({
+        "account": "me@example.com", "checked_at": "2026-11-19 10:05", "read": 168, "still_unread": True, "note": "n" * 900,
+        "groups": [
+            {"title": "Money", "priority": 1, "note": "Check in the dashboard, not through the mail's link.", "items": [
+                {"title": "Update your account <b>now</b>\n to get paid", "detail": "d" * 900, "from": "Shop", "date": "2026-11-17",
+                 "unread": True, "search": 'subject:"Update your account" & more', "url": "https://evil.example/steal"},
+                {"title": "", "detail": "no title, so not shown"},
+                {"title": 7}, "a string, not a mail",
+                {"title": "Old one", "date": "17 Nov", "unread": "yes", "search": ["not", "text"]}]},
+            {"title": "Replies", "priority": 9, "items": [{"title": f"Reply {n}"} for n in range(60)]},
+            {"title": "Empty", "items": []}, {"items": "none"}, "not a group",
+        ]}), encoding="utf-8")
+    inbox = hub.inbox_section()
+    money = inbox["groups"][0]["items"]
+    check(inbox["installed"] and [group["title"] for group in inbox["groups"]] == ["Money", "Replies"]
+          and [item["title"] for item in money] == ["Update your account <b>now</b> to get paid", "Old one"],
+          "hub inbox: groups without a usable mail and mails without a title are left out; a title is one line")
+    check(money[0]["url"] == "https://mail.google.com/mail/?authuser=me@example.com#search/subject%3A%22Update%20your%20account%22%20%26%20more"
+          and "evil.example" not in json.dumps(inbox) and money[1]["url"] is None,
+          "hub inbox: a link is built here and only ever opens Gmail's search; a link inside the file is ignored")
+    check(len(money[0]["detail"]) == 500 and len(inbox["note"]) == 400 and len(inbox["groups"][1]["items"]) == hub.INBOX_ITEMS
+          and inbox["groups"][1]["priority"] == 2,
+          "hub inbox: long texts and long lists are cut, an unknown priority is 'worth knowing'")
+    check(money[0]["unread"] is True and money[1]["unread"] is False and inbox["kept_unread"] == 1
+          and money[0]["date"] == "2026-11-17" and money[1]["date"] == "" and inbox["checked_at"] == "2026-11-19 10:05"
+          and inbox["read"] == 168 and inbox["still_unread"] is None,
+          "hub inbox: only a real true counts as unread, only a real date is printed, only a real count is shown")
+    inbox_asks = hub.inbox_todo(inbox)
+    check(len(inbox_asks) == 1 and inbox_asks[0]["priority"] == 1 and inbox_asks[0]["title"] == "Inbox: Money"
+          and inbox_asks[0]["module"] == "Email" and [row["label"] for row in inbox_asks[0]["links"]] == [item["title"] for item in money],
+          "hub inbox: only a 'needs you' group goes to To do, with its mails as links")
+    hub.INBOX_PRIVATE.write_text(json.dumps({"account": "not an address", "groups": [{"items": [{"title": "T", "search": "x"}]}]}), encoding="utf-8")
+    check(hub.inbox_section()["groups"][0]["items"][0]["url"] is None and hub.inbox_section()["groups"][0]["title"] == "Other",
+          "hub inbox: without a real account address there is no link")
+finally:
+    hub.INBOX_PRIVATE = inbox_real
+    shutil.rmtree(inbox_home, ignore_errors=True)
+
+inbox_page = (Path(__file__).parent / "dashboard.html").read_text(encoding="utf-8")
+inbox_card = inbox_page.split("function inboxCard(inbox) {")[1].split("\nfunction renderEmail(d) {")[0]
+check(inbox_page.count("${inboxCard(d.hub.inbox)}") == 2 and '("inbox", inbox_section)' in (Path(__file__).parent / "hub.py").read_text(encoding="utf-8"),
+      "dashboard inbox: the Email page draws the card whether or not e-mail applications are set up")
+check(all(f"${{esc({word})}}" in inbox_card for word in ("item.title", "item.detail", "group.title", "group.note", "inbox.note", "inbox.account"))
+      and "innerHTML" not in inbox_card and "item.url ? link(item.url" in inbox_card,
+      "dashboard inbox: every word from a mail is escaped, and a link goes through link()")
+check("inbox_private.json" in (Path(__file__).parent / ".gitignore").read_text(encoding="utf-8").splitlines(),
+      "hub inbox: the private file is git-ignored")
+
 # hub: the podcast tile - the reader mirrors podcast.py's own rules (published + audio on the site; pending = held for review)
 podcast_home = Path(tempfile.mkdtemp(prefix="rp-podcast-"))
 try:

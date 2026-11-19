@@ -50,3 +50,6 @@ launch_auto.log
 # Shorts: which channels, where their videos are made, the copied videos and what was posted (shorts.py)
 shorts_private.json
 data/shorts/
+
+# Inbox card: what a mailbox holds that only I can deal with (hub.py inbox_section)
+inbox_private.json

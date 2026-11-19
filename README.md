@@ -381,6 +381,26 @@ The page carries amounts, so it stays on your own dashboard and in the phone sna
 demo has none. It sits in a frame that has no rights over the dashboard, says when the copy was made and warns
 in red when no newer copy has come for 20 minutes. Without `page_command` the file is only read.
 
+**Inbox card.** The top of the **Email** page can show what one mailbox holds that only you can deal with: money
+waiting on a form, a sign-in to confirm, a person who asked for something. Everything else in that mailbox was read
+and needs nothing, so it is not listed. ReachPilot does not read the mailbox for this card: whatever went through
+it writes `inbox_private.json` (git-ignored, next to the code), and the card is shown only where that file exists:
+
+```json
+{
+  "account": "you@gmail.com", "checked_at": "2026-11-19 10:05", "read": 200, "still_unread": 0,
+  "groups": [{"title": "Money", "priority": 1, "note": "Check on the site itself, not through the mail's link.",
+              "items": [{"title": "Update your account to receive your funds", "detail": "Third reminder.",
+                         "from": "Shop", "date": "2026-11-17", "unread": true,
+                         "search": "subject:\"Update your account\""}]}]
+}
+```
+
+`priority` is 1 (needs you; also a line in To do), 2 (worth knowing) or 3 (for the record). The words in the file
+come from strangers' mail, so each one is cut to a length and shown as plain text, and a link is never taken from
+the file: **Open in Gmail** is built from the account and the item's `search` words and only ever opens Gmail's
+own search. The card stays on your own dashboard and in the phone snapshot; the public demo has none.
+
 **Launch automations.** `python launch_auto.py install` adds an hourly task (`\ReachPilot\Launch automations`)
 that takes over steps of a launch test which only wait on a date or on somebody else. Its rows appear on the same
 card, marked *automatic*, and replace the public steps they cover:

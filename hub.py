@@ -18,6 +18,9 @@ The patent screen (patents_section) reads the last daily scan written by patents
 (git-ignored); it shows only where that folder exists. The patent desk (patent_desk.py) follows the screen's
 candidates from there: readiness, the filing package, and the dates before and after a filing.
 
+The inbox card (inbox_section) shows what a mailbox holds that only I can deal with. It reads
+inbox_private.json (git-ignored), written by whatever went through that mailbox; it shows only where that file exists.
+
 This file only reads their files, builds the "what I need from you" list, and runs a short whitelist of actions.
 Every reader is defensive: a missing or half-written file shows as "not set up" instead of breaking the dashboard.
 """
@@ -32,6 +35,7 @@ import re
 import subprocess
 import sys
 import time
+import urllib.parse
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -454,6 +458,101 @@ def email_section() -> dict:
         }
 
     return cached(f"email:{log_csv.stat().st_mtime}:{int(time.time() // 120)}", 60, build)
+
+
+# ------------------------------------------------------------------ the inbox card (Email page)
+
+INBOX_PRIVATE = ROOT / "inbox_private.json"
+INBOX_GROUPS, INBOX_ITEMS = 12, 40
+INBOX_ADDRESS = re.compile(r"[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+")
+INBOX_DAY = re.compile(r"\d{4}-\d{2}-\d{2}")
+INBOX_MOMENT = re.compile(r"\d{4}-\d{2}-\d{2}( \d{2}:\d{2})?")
+
+
+def _inbox_text(value, limit: int) -> str:
+    """One line of plain text, cut to `limit`. Mail is written by strangers: anything that is not text becomes ''."""
+    return " ".join(value.split())[:limit] if isinstance(value, str) else ""
+
+
+def _inbox_when(value, shape: re.Pattern) -> str:
+    """A date the page can print ('2026-11-19', or with ' 10:05'); '' for anything else."""
+    text = _inbox_text(value, 16)
+    return text if shape.fullmatch(text) else ""
+
+
+def _inbox_count(value) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
+
+
+def inbox_section() -> dict:
+    """What a mailbox holds that only I can deal with, from inbox_private.json (git-ignored):
+
+    {"account": "me@gmail.com", "checked_at": "2026-11-19 10:05", "read": 168, "still_unread": 0, "note": "...",
+     "groups": [{"title": "Money", "priority": 1, "note": "...",
+                 "items": [{"title": "...", "detail": "...", "from": "...", "date": "2026-11-17",
+                            "unread": true, "search": "subject:(...)"}]}]}
+
+    Whatever went through the mailbox writes that file; this only reads it. Every text is cut to a length and shown
+    as text. A link is never taken from the file: it is built here, from the account and the item's own search words,
+    and always opens Gmail's search. Not set up where the file is missing or is not this shape.
+    """
+    try:
+        data = json.loads(INBOX_PRIVATE.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return {"installed": False}
+    if not isinstance(data, dict) or not isinstance(data.get("groups"), list):
+        return {"installed": False}
+    account = _inbox_text(data.get("account"), 120)
+    opens = "https://mail.google.com/mail/?authuser=" + urllib.parse.quote(account, safe="@") + "#search/" \
+        if INBOX_ADDRESS.fullmatch(account) else None
+
+    groups = []
+    for group in data["groups"][:INBOX_GROUPS]:
+        if not isinstance(group, dict) or not isinstance(group.get("items"), list):
+            continue
+        items = []
+        for item in group["items"][:INBOX_ITEMS]:
+            title = _inbox_text(item.get("title"), 160) if isinstance(item, dict) else ""
+            if not title:
+                continue
+            search = _inbox_text(item.get("search"), 200)
+            items.append({
+                "title": title,
+                "detail": _inbox_text(item.get("detail"), 500),
+                "sender": _inbox_text(item.get("from"), 80),
+                "date": _inbox_when(item.get("date"), INBOX_DAY),
+                "unread": item.get("unread") is True,
+                "url": opens + urllib.parse.quote(search, safe="") if opens and search else None,
+            })
+        if items:
+            groups.append({
+                "title": _inbox_text(group.get("title"), 80) or "Other",
+                "priority": group.get("priority") if group.get("priority") in (1, 2, 3) else 2,
+                "note": _inbox_text(group.get("note"), 300),
+                "items": items,
+            })
+    return {
+        "installed": True,
+        "account": account,
+        "checked_at": _inbox_when(data.get("checked_at"), INBOX_MOMENT),
+        "read": _inbox_count(data.get("read")),
+        "still_unread": _inbox_count(data.get("still_unread")),
+        "note": _inbox_text(data.get("note"), 400),
+        "groups": groups,
+        "kept_unread": sum(item["unread"] for group in groups for item in group["items"]),
+    }
+
+
+def inbox_todo(section: dict | None) -> list[dict]:
+    """One line in To do per urgent group of the inbox card, with the mails as links. Nothing for the other groups."""
+    if not section or not section.get("installed"):
+        return []
+    return [{
+        "priority": 1, "module": "Email", "title": f"Inbox: {group['title']}",
+        "detail": group["note"] or f"{len(group['items'])} mail(s) in {section['account'] or 'the inbox'} that only you can deal with.",
+        "action": None, "action_label": None,
+        "links": [{"label": item["title"], "url": item["url"], "note": item["detail"]} for item in group["items"]],
+    } for group in section["groups"] if group["priority"] == 1]
 
 
 def tail(path: Path, lines: int) -> list[str]:
@@ -2171,7 +2270,7 @@ def build(linkedin_overview: dict | None) -> dict:
                         ("channels", channels_section), ("podcast", podcast_section),
                         ("podcast_promotion", podcast_promotion_section), ("launch", launch_section),
                         ("patents", patents_section), ("tradebot", tradebot_section),
-                        ("readers", readers_section), ("shorts", shorts_section)):
+                        ("readers", readers_section), ("shorts", shorts_section), ("inbox", inbox_section)):
         try:
             sections[key] = reader()
         except Exception as error:  # one broken module must not take the dashboard down
@@ -2192,7 +2291,8 @@ def build(linkedin_overview: dict | None) -> dict:
             + podcast_promotion_todo(sections.get("podcast_promotion"))
             + launch_todo(sections.get("launch"))
             + patents_todo(sections.get("patents"))
-            + tradebot_todo(sections.get("tradebot")),
+            + tradebot_todo(sections.get("tradebot"))
+            + inbox_todo(sections.get("inbox")),
             key=lambda item: item["priority"],
         ),
         "help": help_sections(tasks, sections.get("podcast"), sections.get("launch"), sections.get("patents"),

@@ -1484,16 +1484,50 @@ function renderJobs(d) {
       </tbody></table></div>` : `<div class="empty">No applications yet. Start an apply session to send the first ones.</div>`}</div>`;
 }
 
+// What a mailbox holds that only I can deal with (hub.inbox_section reads inbox_private.json). Not drawn where that
+// file is missing. Every word comes from mail, so every word goes through esc(); links are built by the hub.
+function inboxCard(inbox) {
+  if (!inbox || !inbox.installed) return "";
+  const groups = inbox.groups || [];
+  const facts = [
+    inbox.read !== null && inbox.read !== undefined ? `${num(inbox.read)} mails gone through` : "",
+    `${num(inbox.kept_unread || 0)} left unread for you`,
+    inbox.still_unread ? `${num(inbox.still_unread)} not looked at yet` : "",
+    inbox.checked_at ? `checked ${esc(niceDate(inbox.checked_at))}` : "",
+  ].filter(Boolean).join(" · ");
+  const mail = (item, urgent) => `<div class="todo${urgent ? " p1" : ""}">
+      <div class="text">
+        <h4>${esc(item.title)}</h4>${item.unread ? ` <span class="badge warn">unread</span>` : ""}
+        <div class="hint">${[item.sender, item.date ? niceDate(item.date) : ""].filter(Boolean).map(esc).join(" · ")}${
+          item.detail ? `${item.sender || item.date ? " · " : ""}${esc(item.detail)}` : ""}</div>
+      </div>
+      <div class="actions">${item.url ? link(item.url, "Open in Gmail") : ""}</div>
+    </div>`;
+  return `
+    <div class="card" id="inbox-card">
+      <h3>Inbox${inbox.account ? ` · ${esc(inbox.account)}` : ""}</h3>
+      <p class="hint">What needs you from this mailbox. Everything else was read and needs nothing. ${facts}</p>
+      ${inbox.note ? `<p class="hint">${esc(inbox.note)}</p>` : ""}
+      ${groups.length ? groups.map((group) => `
+        <h4 style="margin:16px 0 2px">${esc(group.title)} <span class="badge ${group.priority === 1 ? "bad" : group.priority === 2 ? "warn" : "grey"}">${
+          group.priority === 1 ? "needs you" : group.priority === 2 ? "worth knowing" : "for the record"} · ${num(group.items.length)}</span></h4>
+        ${group.note ? `<p class="hint" style="margin:0 0 4px">${esc(group.note)}</p>` : ""}
+        ${group.items.map((item) => mail(item, group.priority === 1)).join("")}`).join("")
+        : `<div class="empty">Nothing in this mailbox needs you.</div>`}
+    </div>`;
+}
+
 function renderEmail(d) {
   const e = d.hub.email;
   const section = document.getElementById("email");
   if (!e.installed) {
-    section.innerHTML = `${pageHead("Job search", "E-mail applications")}<div class="empty">E-mail applications aren't set up${e.error ? `: ${esc(e.error)}` : ""}.</div>`;
+    section.innerHTML = `${pageHead("Job search", "E-mail applications")}${inboxCard(d.hub.inbox)}<div class="empty">E-mail applications aren't set up${e.error ? `: ${esc(e.error)}` : ""}.</div>`;
     return;
   }
   const task = d.hub.tasks.email || {};
   section.innerHTML = `
     ${pageHead("Job search", "E-mail applications", "Applications sent by e-mail, and the leads that only take them on their own site.")}
+    ${inboxCard(d.hub.inbox)}
     <div class="grid">
       ${kpi("Sent today", num(e.sent_today), `Cap ${num(e.max_per_day)} per day`)}
       ${kpi("This week", num(e.sent_week))}
