@@ -78,6 +78,8 @@ if (ROOT / "data" / "launch_auto").exists():  # only where `python launch_auto.p
     TASKS["launch"] = "Launch automations"
 if (ROOT / "data" / "shorts").exists():  # only where `python shorts.py install` has been run
     TASKS["shorts"] = "Shorts"
+if (ROOT / "data" / "replies").exists():  # only where `python replies.py install` has been run
+    TASKS["replies"] = "Replies"
 PYTHONW = Path(sys.executable).with_name("pythonw.exe")
 PYTHON = Path(sys.executable).with_name("python.exe")
 NO_WINDOW = 0x08000000
@@ -2131,13 +2133,14 @@ def _start_task(key: str) -> None:
 # Buttons pressed on the phone (phone_action.py). Only what needs nothing on this PC's screen: a button that
 # opens a window, a file or a sign-in is left out, and so is every name not listed here.
 PHONE_PLAIN = {"jobs_search_now", "email_run_now", "linkedin_run_now", "linkedin_toggle_pause", "patents_run_now",
-               "launch_run_now", "shorts_run_now"}
+               "launch_run_now", "shorts_run_now", "replies_run_now"}
 PHONE_VERBS = {
     "promote": PROMOTE_VERBS,
     "podcast": (PODCAST_VERBS - {"open"}) | PROMOTION_VERBS,
     "patents": {"decide", "ownership", "filed", "unfiled"},
     "launch": {"followup", "replied", "no_reply", "reply_read", "approve_invites", "shared", "wa_done"},
     "shorts": {"pause", "resume"},
+    "replies": {"send", "say", "skip", "mode"},
     "inbox": None,  # every answer on the inbox card only writes inbox_answers.json
 }
 PHONE_PC_ONLY = "This button only works on your PC: it opens a window or a file there."
@@ -2240,6 +2243,15 @@ def run_action(name: str) -> str:
         import shorts
 
         return shorts.action(name)
+    if name == "replies_run_now":
+        runner = PYTHONW if PYTHONW.exists() else Path(sys.executable)
+        subprocess.Popen([str(runner), str(ROOT / "replies.py")], cwd=ROOT, creationflags=NO_WINDOW)
+        _cache.pop("tasks", None)
+        return "Reading comments and messages; the card updates in a minute."
+    if name.startswith("replies:"):
+        import replies
+
+        return replies.action(name)
     if name.startswith("inbox:"):
         return inbox_action(name)
     raise ValueError(f"Unknown action: {name}")
@@ -2445,6 +2457,71 @@ def shorts_todo(section: dict | None) -> list[dict]:
     return items
 
 
+# ------------------------------------------------------------------ replies (comments and messages on the platforms)
+
+def replies_section() -> dict:
+    """What people wrote on the connected platforms and what was answered (replies.py), read from this PC's files."""
+    import replies
+
+    return replies.card()
+
+
+def replies_todo(section: dict | None) -> list[dict]:
+    """Every comment or message that waits for an answer, with its buttons, and a sign-in that cannot read yet."""
+    section = section or {}
+    if not section.get("installed"):
+        return []
+    items = []
+    waiting = section.get("waiting") or []
+    if waiting:
+        links = []
+        for item in waiting:
+            if item["by_hand"]:
+                buttons = [{"name": f"replies:skip:{item['key']}", "label": "Done"}]
+            else:
+                buttons = ([{"name": f"replies:send:{item['key']}", "label": "Send"}] if item["draft"] else []) + [
+                    {"name": f"replies:say:{item['key']}|", "label": "Write my own",
+                     "ask": f"Your answer to @{item['author']} on {item['platform']} (up to {item['limit']} characters)",
+                     "most": item["limit"]},
+                    {"name": f"replies:skip:{item['key']}", "label": "Skip"}]
+            note = item["text"][:200]
+            if item["error"]:
+                note += f" · Not sent: {item['error']}"
+            elif item["by_hand"]:
+                note += f" · Answer it on {item['platform']}"
+            elif item["draft"]:
+                note += f" · Suggested answer: {item['draft']}"
+            links.append({"label": f"{item['platform']} {'message' if item['kind'] == 'dm' else 'comment'} from @{item['author']}",
+                          "url": item["url"], "note": note, "actions": buttons})
+        alone = section.get("mode") == "auto"
+        items.append({
+            "priority": 2, "module": "Replies",
+            "title": f"{len(waiting)} comment(s) or message(s) wait for an answer",
+            "detail": ("Simple public comments are answered by themselves. These need you: a message, a real question, "
+                       "or an answer that was refused." if alone
+                       else "Nothing is sent until you choose. Send uses the suggested answer; Skip leaves it unanswered."),
+            "action": None, "action_label": None, "links": links,
+            "failed": any(item["error"] for item in waiting),
+        })
+    again = [platform for platform in section.get("platforms") or [] if platform.get("sign_in")]
+    if again:
+        items.append({
+            "priority": 3, "module": "Replies",
+            "title": f"Connect {' and '.join(platform['platform'] for platform in again)} again so replies can be read",
+            "detail": " ".join(dict.fromkeys(platform["messages"] or platform["comments"] for platform in again)),
+            "action": "channels_setup", "action_label": "Connect platforms", "links": [],
+        })
+    broken = [platform for platform in section.get("platforms") or [] if platform.get("error")]
+    if broken:
+        items.append({
+            "priority": 3, "module": "Replies",
+            "title": f"Comments on {', '.join(platform['platform'] for platform in broken)} could not be read",
+            "detail": "The next run tries again. " + " ".join(f"{platform['platform']}: {platform['error']}" for platform in broken),
+            "action": "replies_run_now", "action_label": "Check now", "links": [], "failed": True,
+        })
+    return items
+
+
 # ------------------------------------------------------------------ everything for the dashboard
 
 def build(linkedin_overview: dict | None) -> dict:
@@ -2454,7 +2531,8 @@ def build(linkedin_overview: dict | None) -> dict:
                         ("channels", channels_section), ("podcast", podcast_section),
                         ("podcast_promotion", podcast_promotion_section), ("launch", launch_section),
                         ("patents", patents_section), ("tradebot", tradebot_section),
-                        ("readers", readers_section), ("shorts", shorts_section), ("inbox", inbox_section)):
+                        ("readers", readers_section), ("shorts", shorts_section), ("replies", replies_section),
+                        ("inbox", inbox_section)):
         try:
             sections[key] = reader()
         except Exception as error:  # one broken module must not take the dashboard down
@@ -2477,6 +2555,7 @@ def build(linkedin_overview: dict | None) -> dict:
             + patents_todo(sections.get("patents"))
             + tradebot_todo(sections.get("tradebot"))
             + shorts_todo(sections.get("shorts"))
+            + replies_todo(sections.get("replies"))
             + inbox_todo(sections.get("inbox")),
             key=lambda item: item["priority"],
         ),

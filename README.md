@@ -241,10 +241,12 @@ Once a day `growth.py` grows the audience and points all of it at GitHub:
   is showing the cache instead of live numbers.
 
 It never follows, likes or replies to strangers automatically: Mastodon instances and Bluesky treat that as spam.
+Someone who wrote to you first is not a stranger: see **Replies** under *The dashboard as a hub*.
 
 ## What it deliberately doesn't do
 
-- No browser automation, scraping, auto-likes or auto-comments on other people's posts. Only the official
+- No browser automation, scraping, auto-likes or auto-comments on other people's posts (an answer goes only to
+  someone who commented on yours or wrote to you). Only the official
   **Share on LinkedIn** API, so the account stays in good standing.
 - No AI-invented claims. An optional local model (Ollama) can rephrase a post, but its output is rejected if it adds numbers.
 - No silent failures: a LinkedIn login that is about to expire, a failed post or a draft waiting for review shows up
@@ -479,6 +481,35 @@ Channels live in `shorts_private.json`, the copied videos and what was posted in
 git-ignored). X must be connected through Buffer (`python autopilot.py channels`). `python shorts.py show` prints
 what the card shows.
 
+**Replies.** `python replies.py install` adds a task every 30 minutes (`\ReachPilot\Replies`) that reads what
+people wrote to you on the connected platforms and puts it on the **Reach** page ("Comments and messages") and in
+To do, on the PC and the phone. Only someone who wrote to you first is ever answered.
+
+| Platform | Comments on your posts, mentions | Direct messages |
+| --- | --- | --- |
+| Bluesky | read and answered | read and answered, with an app password that allows messages |
+| Mastodon | read and answered | read and answered (a message there is a post only you two see) |
+| Dev.to | read; the answer is written on Dev.to (its API cannot post a comment) | none |
+| LinkedIn, X, Threads, Substack, Telegram, Discord | not readable for an app connected this way | no |
+
+A sign-in made before this existed may only post. The card and To do then say so: run
+`python autopilot.py channels` and connect Mastodon (browser sign-in) or Bluesky (normal password, once) again.
+
+- **It starts in review.** Nothing is sent by itself. Each comment or message has **Send** (the suggested answer),
+  **Write my own** and **Skip**.
+- **The suggested answer is a fixed sentence, never invented.** Kind words get a thank-you; "where is it?" gets
+  the link of the repository that post was about. Everything else (a real question, criticism, anything with a
+  link, anything long) gets no suggestion and waits for your own words. The rules are English keywords and strict
+  on purpose: when in doubt it is yours.
+- **One switch turns on answering by itself**, for those one-sentence answers to public comments only: at most 10
+  a day per platform, one a day per person, only while the comment is younger than two days. A direct message is
+  never answered without you, and an answer that was refused is not tried again by itself.
+- **No double answers.** What you answered in the app itself is dropped on the next run, and Send checks once
+  more right before it posts. A comment older than a week is never taken in.
+
+What was found and answered is kept in `data/replies/` (git-ignored). `python replies.py show` prints what the card
+shows.
+
 **Patent screen.** `python patents.py install` adds a daily task (`\ReachPilot\Patent screen`, every day 09:00) and a
 **Patents** page. Each run reads the description and README of every repository you own, private ones included
 when `gh` is signed in, and answers three questions per project:
@@ -548,6 +579,7 @@ again on the next daily run. `python patent_desk.py show` prints the desk.
 | `patent_desk.py` | daily patent desk: readiness checklist per candidate, provisional draft package, filing follow-up |
 | `launch_auto.py` | hourly launch automations: an answer and one follow-up, invitations after approval, daily checks of a waiting document |
 | `shorts.py` | hourly: a channel's finished short videos, scheduled for X through Buffer one at a time |
+| `replies.py` | every 30 minutes: comments and messages on Bluesky, Mastodon and Dev.to, with an answer you send or that goes by itself |
 | `selfupdate.py` | fast-forward updater used by the dashboard and the Updates task; installs newly required packages |
 | `leakcheck.py` | no private repository name in the files or the history (run in CI, names never printed) |
 | `selftest.py` | tests (run in CI) |

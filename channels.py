@@ -591,7 +591,8 @@ def bluesky_sign_in(handle: str, password: str, service: str = "https://bsky.soc
     created = _check(requests.post(
         f"{service}/xrpc/com.atproto.server.createAppPassword",
         headers={"Authorization": f"Bearer {session['accessJwt']}"},
-        json={"name": f"ReachPilot {datetime.now():%Y-%m-%d %H%M}"}, timeout=TIMEOUT,
+        # privileged = may read and answer direct messages (replies.py); without it Bluesky refuses the chat
+        json={"name": f"ReachPilot {datetime.now():%Y-%m-%d %H%M}", "privileged": True}, timeout=TIMEOUT,
     ), "Bluesky app password").json()
     return {"handle": session["handle"], "app_password": created["password"]}
 
@@ -904,7 +905,9 @@ CLIENTS = {"bluesky": Bluesky, "mastodon": Mastodon, "devto": DevTo, "telegram":
 
 MASTODON_PORT = 8767
 MASTODON_REDIRECT = f"http://127.0.0.1:{MASTODON_PORT}/callback"
-MASTODON_SCOPES = "read:accounts read:follows write:statuses write:media write:accounts write:follows"
+# read:notifications and read:statuses are for replies.py: who wrote to me, and whether I already answered
+MASTODON_SCOPES = ("read:accounts read:follows read:notifications read:statuses "
+                   "write:statuses write:media write:accounts write:follows")
 
 
 def browser_authorize(authorize_url: str, port: int, service: str, open_browser=webbrowser.open,
@@ -1044,13 +1047,15 @@ SETUP = {
     "bluesky": {
         "steps": "Type your normal Bluesky password once: ReachPilot uses it to create an app password named "
                  "'ReachPilot' and stores only that (revoke it any time in Settings > App passwords). "
-                 "An existing app password works too.",
+                 "An existing app password works too; to have messages answered, it must be one made with "
+                 "'Allow access to your direct messages'.",
         "fields": [("handle", "Your handle (e.g. juw12.bsky.social)", False),
                    ("app_password", "Bluesky password (used once, not stored)", True)],
     },
     "mastodon": {
         "steps": "Leave the token empty to sign in with your browser (just press Authorize). Or paste a token from "
-                 "Preferences > Development > your app > 'Your access token'.",
+                 "Preferences > Development > your app > 'Your access token' (to have replies answered, the app "
+                 "also needs read:notifications and read:statuses).",
         "fields": [("instance", "Instance (e.g. mastodon.social)", False),
                    ("access_token", "Access token (Enter = sign in with browser)", True)],
     },

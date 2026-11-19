@@ -197,6 +197,9 @@
   /* An error message as the system gave it: wraps anywhere, so a long URL cannot widen the page */
   .problem { margin-top: 8px; padding: 6px 10px; border-radius: 4px; background: var(--red-soft); color: var(--red);
     font: 12.5px/1.5 var(--mono); overflow-wrap: anywhere; }
+  /* A comment or message that waits for an answer (replies.py) */
+  .reply { padding: 12px 0; border-top: 1px solid var(--line); }
+  .reply .said { margin: 4px 0 6px; overflow-wrap: anywhere; }
   .post .head { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; align-items: center; }
   .post .when { font-weight: 600; }
   .post .num { display: inline-block; min-width: 26px; margin-right: 8px; border-radius: 4px; background: var(--ink); color: #fff;
@@ -634,6 +637,53 @@ function renderSchedule(d) {
     ${items.length ? items.map(postCard).join("") : `<div class="empty">Nothing scheduled.</div>`}`;
 }
 
+// Comments and messages: what people wrote to me on the connected platforms, and the answers (replies.py).
+function repliesCard(r) {
+  if (!r || !r.installed) return "";
+  const alone = r.mode === "auto";
+  const can = (why) => (why ? `<span class="hint">${esc(why)}</span>` : `<span class="badge good">Read</span>`);
+  const platformRows = r.platforms.map((p) => `<tr>
+      <td><b>${esc(p.platform)}</b>${p.error ? `<div class="problem">Could not be read: ${esc(p.error)}</div>` : ""}</td>
+      <td>${can(p.comments)}${p.by_hand && !p.comments ? ` <span class="hint">answered on ${esc(p.platform)} itself</span>` : ""}</td>
+      <td>${can(p.messages)}</td>
+      <td>${esc(niceDate(p.checked))}</td>
+    </tr>`).join("") + r.cannot.map((p) => `<tr class="quiet">
+      <td><b>${esc(p.platform)}</b></td>
+      <td colspan="2">${esc(p.why)}</td>
+      <td>${p.link ? link(p.link, "Open") : ""}</td>
+    </tr>`).join("");
+  const sayButton = (w) => `<button class="btn ghost" data-say="${esc(`replies:say:${w.key}|`)}" data-most="${Number(w.limit)}" data-question="${esc(`Your answer to @${w.author} on ${w.platform} (up to ${w.limit} characters)`)}" data-now>Write my own</button>`;
+  // One block per comment, not a table row: on a phone the answer and its buttons must not sit off to the side.
+  const waiting = r.waiting.map((w) => `<div class="reply">
+      <div class="hint">${esc(niceDate(w.at))} &middot; <b>${esc(w.platform)}</b> <span class="badge ${w.kind === "dm" ? "warn" : "grey"}">${w.kind === "dm" ? "Message" : "Comment"}</span> ${link(w.url, `@${w.author}`)}</div>
+      <div class="said">${esc(w.text)}</div>
+      <div>${w.by_hand ? `<span class="hint">Answer it on ${esc(w.platform)}: apps cannot post a comment there.</span>`
+        : w.draft ? `<span class="hint">Suggested answer:</span> <b>${esc(w.draft)}</b>` : `<span class="hint">Needs your own words.</span>`}</div>
+      ${w.error ? `<div class="problem">Not sent: ${esc(w.error)}</div>` : ""}
+      <div class="actions">${w.by_hand ? actionButton(`replies:skip:${w.key}`, "Done", true)
+        : `${w.draft ? actionButton(`replies:send:${w.key}`, "Send") : ""}${sayButton(w)}${actionButton(`replies:skip:${w.key}`, "Skip", true)}`}</div>
+    </div>`).join("");
+  const HOW = { alone: "sent by itself", you: "sent by you" };
+  const recent = r.recent.map((w) => `<div class="hint">${esc(niceDate(w.sent_at || w.at))} &middot; ${esc(w.platform)} ${link(w.url, `@${w.author}`)}: ${esc(w.text.slice(0, 120))}
+      &rarr; ${w.status === "sent" ? `${link(w.sent_url, w.sent_text)} <span class="badge ${w.how === "alone" ? "good" : "grey"}">${HOW[w.how] || "sent"}</span>`
+        : w.status === "answered" ? `<span class="badge grey">answered in the app</span>` : `<span class="badge grey">left unanswered</span>`}</div>`).join("");
+  return `<div class="card">
+      <h3>Comments and messages</h3>
+      <p class="hint"><span class="badge ${alone ? "good" : "grey"}">${alone ? "Answers simple comments by itself" : "Asks you first"}</span>
+        ${alone ? `A thank-you for kind words and the link for &ldquo;where is it?&rdquo; go out by themselves to public comments: at most 10 a day per platform, one a day per person (${num(r.alone_today)} in the last 24 hours). Messages and everything else wait for you.`
+          : "Nothing is sent by itself. Every comment and message waits here and in To do, with a suggested answer where one sentence does it."}
+        Only people who wrote to you first are answered. Checked every 30 minutes${r.last_run ? ` (last: ${esc(niceDate(r.last_run))})` : ""}.</p>
+      ${waiting || `<div class="empty">Nobody is waiting for an answer.</div>`}
+      <div class="actions">${alone ? actionButton("replies:mode:review", "Ask me first", true)
+        : actionButton("replies:mode:auto", "Answer simple comments by itself", true, "From now on a thank-you or the project link is sent by itself to public comments, at most 10 a day per platform. Messages and everything else still wait for you. Turn this on?")}${actionButton("replies_run_now", "Check now", true)}</div>
+      <details><summary>What can be read on each platform</summary>
+        <div class="scroll" tabindex="0" role="region" aria-label="Scrollable table"><table>
+        <thead><tr><th>Platform</th><th>Comments</th><th>Messages</th><th>Checked</th></tr></thead>
+        <tbody>${platformRows}</tbody></table></div></details>
+      ${recent ? `<details><summary>Answered lately (${num(r.recent.length)})</summary>${recent}</details>` : ""}
+    </div>`;
+}
+
 function renderReach(d) {
   const o = d.overview;
   const posted = d.history.filter((p) => p.status === "posted");
@@ -689,6 +739,7 @@ function renderReach(d) {
         <thead><tr><th>Platform</th><th class="num">Followers</th><th class="num">7-day change</th><th class="num">Posts</th><th class="num">GitHub visitors</th></tr></thead>
         <tbody>${platformRows || `<tr class="quiet"><td colspan="5">No platform is connected yet.</td></tr>`}</tbody></table></div>
     </div>
+    ${repliesCard(d.hub && d.hub.replies)}
     <div class="card">
       <h3>What ReachPilot changed on your accounts</h3>
       ${pl.actions.length ? `<div class="scroll" tabindex="0" role="region" aria-label="Scrollable table"><table>
@@ -810,7 +861,7 @@ async function act(name, button) {
 // On the phone the page sits in a frame where the browser's own confirm() and prompt() never open. The phone
 // snapshot (phone_snapshot.py) brings rpConfirm and rpPrompt, which answer a moment later; the PC keeps the browser's.
 const askYes = async (text) => (window.rpConfirm ? window.rpConfirm(text) : confirm(text));
-const askText = async (text) => (window.rpPrompt ? window.rpPrompt(text) : prompt(text));
+const askText = async (text, words = false) => (window.rpPrompt ? window.rpPrompt(text, words) : prompt(text));
 
 document.addEventListener("click", (event) => {
   const button = event.target.closest("[data-action]");
@@ -823,6 +874,16 @@ document.addEventListener("click", (event) => {
       const answer = (typed || "").trim();
       if (/^https:\/\/\S+$/.test(answer)) act(ask.dataset.ask + answer, ask);
       else if (answer) toast("That needs a link that starts with https://");
+    });
+  }
+  // data-say: my own answer to a comment or message (replies.py). The words travel in the button's name.
+  const say = event.target.closest("[data-say]");
+  if (say) {
+    askText(say.dataset.question, true).then((typed) => {
+      const answer = (typed || "").replace(/\s+/g, " ").trim();
+      const most = Number(say.dataset.most) || 500;
+      if (answer.length > most) toast(`That has ${answer.length} characters; ${most} is the most here. Nothing was sent.`);
+      else if (answer) act(say.dataset.say + answer, say);
     });
   }
   const filed = event.target.closest("[data-filed]");
@@ -883,7 +944,7 @@ function link(url, label) {
   return url ? `<a href="${esc(url)}" target="_blank" rel="noopener">${esc(label)}</a>` : esc(label);
 }
 
-const MODULE_TAB = { jobs: "jobs", "job search": "jobs", "e-mail": "email", email: "email", linkedin: "linkedin", promote: "promote", "creator outreach": "promote", podcast: "podcast", patents: "patents", launch: "launch", tradebot: "tradebot" };
+const MODULE_TAB = { jobs: "jobs", "job search": "jobs", "e-mail": "email", email: "email", linkedin: "linkedin", promote: "promote", "creator outreach": "promote", podcast: "podcast", patents: "patents", launch: "launch", tradebot: "tradebot", replies: "reach" };
 
 function todoKey(item) {
   return `${item.module}|${item.title}|${item.detail}`;
@@ -914,8 +975,10 @@ function todoCard(item, compact = false) {
   const more = item.links.length - shown.length;
   // A link can carry its own answers (a mail of the inbox card). They are kept on the PC, so such a row has no
   // "Mark done" of its own: it leaves To do when its last mail is answered. Overview only lists; To do answers.
-  const answers = (l) => (compact || !(l.actions || []).length ? "" : `<span class="answers">${l.actions.map((a) =>
-    `<button class="btn ghost" data-action="${esc(a.name)}" data-now>${esc(a.label)}</button>`).join("")}</span>`);
+  // An answer with "ask" needs words first (my own reply to a comment): it asks, then sends them with the name.
+  const answers = (l) => (compact || !(l.actions || []).length ? "" : `<span class="answers">${l.actions.map((a) => (a.ask
+    ? `<button class="btn ghost" data-say="${esc(a.name)}" data-question="${esc(a.ask)}"${a.most ? ` data-most="${Number(a.most)}"` : ""} data-now>${esc(a.label)}</button>`
+    : `<button class="btn ghost" data-action="${esc(a.name)}" data-now>${esc(a.label)}</button>`)).join("")}</span>`);
   const answered = item.links.some((l) => l.actions);
   const links = shown.length
     ? `<ul>${shown.map((l) => `<li>${link(l.url, l.label)}${l.note ? ` <span class="hint">· ${esc(short(l.note))}</span>` : ""}${answers(l)}</li>`).join("")}${

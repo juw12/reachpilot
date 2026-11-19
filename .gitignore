@@ -51,6 +51,10 @@ launch_auto.log
 shorts_private.json
 data/shorts/
 
+# Replies: what people wrote on the platforms and what was answered (replies.py)
+data/replies/
+replies.log
+
 # Inbox card: what a mailbox holds that only I can deal with (hub.py inbox_section), and what I answered there
 inbox_private.json
 inbox_answers.json

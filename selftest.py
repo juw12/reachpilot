@@ -1363,6 +1363,7 @@ finally:
 check(made == {"handle": "me.bsky.social", "app_password": "wxyz-wxyz-wxyz-wxyz"}
       and bluesky_calls[1][1]["authFactorToken"] == "CODE1"
       and bluesky_calls[2][0] == "com.atproto.server.createAppPassword"
+      and bluesky_calls[2][1]["privileged"] is True  # may read and answer messages (replies.py)
       and bluesky_calls[2][2]["Authorization"] == "Bearer main-jwt"
       and "my normal password" not in json.dumps(made),
       "channels: Bluesky password -> app password (e-mail code handled, main password not stored)")
@@ -4723,7 +4724,7 @@ phone_page = phone_snapshot.render({"overview": {"now": "x"}, "schedule": [{"ima
 check('{ cairnDash: "action", id, name }' in phone_page and "event.source !== window.parent" in phone_page,
       "phone page: a button hands its name to the page around it and only listens to that page")
 check("window.rpConfirm = " in phone_page and "window.rpPrompt = " in phone_page and "window.rpConfirm ? window.rpConfirm(text) : confirm(text)" in phone_page
-      and "window.rpPrompt ? window.rpPrompt(text) : prompt(text)" in phone_page,
+      and "window.rpPrompt ? window.rpPrompt(text, words) : prompt(text)" in phone_page,
       "phone page: a button that asks first asks inside the page, where the browser's own box never opens")
 check(len(re.findall(r"(?<![\w.])confirm\((?!\))", phone_page)) == 1 and len(re.findall(r"(?<![\w.])prompt\((?!\))", phone_page)) == 1
       and "width:100%;" in phone_page and "%%" not in phone_page.split("</script>")[0],
@@ -4999,6 +5000,362 @@ check(all(mark in layout_page for mark in ("data-fold-all", "data-arrange", "dat
                                            'const NO_ARRANGE = ["todo", "tradebot"]', "new MutationObserver(dress)"))
       and "nav button, nav button.nav-label, .tool { min-height: 44px; }" in layout_page,
       "layout: every block folds, a page's blocks can be moved with Up and Down, and the controls are 44px on a phone")
+
+# ---- replies: comments and messages on the connected platforms, read and answered (replies.py)
+import replies  # noqa: E402
+
+for said, expected in (
+        ("Thanks, this is great!", "thanks"), ("@me.bsky.social nice work", "thanks"), ("Love this \U0001F525", "thanks"),
+        ("where is the repo?", "where"), ("link?", "where"), ("Is there a GitHub link?", "where"),
+        ("Where can I find it?", "where"),
+        ("thanks for nothing", "other"), ("great, another useless tool", "other"), ("Nice, but it crashes on start", "other"),
+        ("Cool! Check out my profile for free followers", "other"), ("nice https://spam.example/win", "other"),
+        ("How does it handle rate limits?", "other"), ("Great... really.", "other"), ("why? where is the source?", "other"),
+        ("", "other"), ("nice " * 30, "other"), ("This isn't great", "other")):
+    check(replies.classify(said) == expected, f"replies: {said[:40]!r} is read as {expected}")
+check(replies.draft("thanks", "00000a000000", "cairn", "juw12") in replies.THANKS
+      and replies.draft("where", "00000a000000", "cairn", "juw12") == "Here it is: https://github.com/juw12/cairn"
+      and replies.draft("where", "00000a000000", "", "juw12") == "Everything I build is here: https://github.com/juw12"
+      and replies.draft("where", "00000a000000", "cairn", "") == "" and replies.draft("other", "00000a000000", "cairn", "juw12") == "",
+      "replies: an answer is a fixed thank-you or the link of the project; anything else gets none")
+
+replies_now = replies.now_utc()
+
+
+def replies_ago(**how_long):
+    return (replies_now - timedelta(**how_long)).isoformat().replace("+00:00", "Z")
+
+
+def bluesky_note(name, who, text, reason="reply", **how_long):
+    here = f"at://did:plc:{who}/app.bsky.feed.post/{name}"
+    return {"uri": here, "cid": f"cid-{name}", "reason": reason, "indexedAt": replies_ago(**how_long),
+            "reasonSubject": "at://did:plc:me/app.bsky.feed.post/post1",
+            "author": {"did": f"did:plc:{who}", "handle": f"{who}.bsky.social", "displayName": who.title()},
+            "record": {"text": text, "reply": {"root": {"uri": "at://did:plc:me/app.bsky.feed.post/post1", "cid": "cid-root"},
+                                               "parent": {"uri": "at://did:plc:me/app.bsky.feed.post/post1", "cid": "cid-root"}}}}
+
+
+def replies_fresh_world():
+    return {
+        "bsky_notes": [
+            bluesky_note("n1", "ann", "Thanks, this is great!", hours=1),
+            bluesky_note("n2", "bob", "where is the repo?", hours=2),
+            bluesky_note("n3", "cat", "This looks broken on Windows, what am I doing wrong?", hours=3),
+            bluesky_note("n4", "dan", "", reason="like", hours=1),
+            bluesky_note("n5", "eli", "nice", days=8),
+            bluesky_note("n6", "ann", "Great work!", minutes=30),
+            bluesky_note("n7", "carl", "Cool", hours=50),
+        ],
+        "bsky_chat": True,
+        "bsky_convos": [{"id": "c1", "members": [{"did": "did:plc:me"}, {"did": "did:plc:dave", "handle": "dave.bsky.social"}],
+                         "lastMessage": {"id": "m9", "text": "Thanks, great!", "sentAt": replies_ago(hours=1),
+                                         "sender": {"did": "did:plc:dave"}}},
+                        {"id": "c2", "members": [], "lastMessage": {"id": "m3", "text": "my own last word", "sentAt": replies_ago(hours=1),
+                                                                    "sender": {"did": "did:plc:me"}}}],
+        "bsky_replied": {}, "bsky_gone": set(),
+        "masto_ok": True,
+        "masto_notes": [
+            {"account": {"id": "77", "acct": "eve@fosstodon.org", "display_name": "Eve"},
+             "status": {"id": "501", "visibility": "public", "in_reply_to_id": "400", "created_at": replies_ago(hours=4),
+                        "url": "https://fosstodon.org/@eve/501",
+                        "content": '<p><span class="h-card"><a href="https://mastodon.social/@me">@me</a></span> awesome, thank you!</p>'}},
+            {"account": {"id": "78", "acct": "frank", "display_name": "Frank"},
+             "status": {"id": "502", "visibility": "direct", "in_reply_to_id": None, "created_at": replies_ago(hours=5),
+                        "url": "https://mastodon.social/@frank/502", "content": "<p>@me can we talk about a job?</p>"}},
+            {"account": {"id": "79", "acct": "newsbot", "bot": True},
+             "status": {"id": "503", "visibility": "public", "created_at": replies_ago(hours=1), "content": "<p>@me nice</p>"}},
+        ],
+        "masto_replied": {}, "masto_gone": set(),
+        "devto_ok": True,
+        "devto_articles": [{"id": 11, "comments_count": 2, "url": "https://dev.to/me/my-post-1abc"}, {"id": 12, "comments_count": 0}],
+        "devto_comments": {11: [
+            {"id_code": "c1", "user": {"username": "gina", "name": "Gina"}, "body_html": "<p>Nice write-up!</p>",
+             "created_at": replies_ago(hours=3), "children": []},
+            {"id_code": "c2", "user": {"username": "hank"}, "body_html": "<p>How?</p>", "created_at": replies_ago(hours=6),
+             "children": [{"id_code": "c3", "user": {"username": "me"}, "body_html": "<p>Like this.</p>", "children": []}]}]},
+        "refuse": False, "sent": [],
+    }
+
+
+replies_world = replies_fresh_world()
+
+
+def replies_http(method, url, **sent):
+    world = replies_world
+    if url.endswith("com.atproto.server.createSession"):
+        return 200, {"did": "did:plc:me", "handle": "me.bsky.social", "accessJwt": "jwt"}
+    if url.endswith("app.bsky.notification.listNotifications"):
+        return 200, {"notifications": world["bsky_notes"]}
+    if url.endswith("chat.bsky.convo.listConvos"):
+        return (200, {"convos": world["bsky_convos"]}) if world["bsky_chat"] else (400, {"error": "InvalidToken", "message": "Bad token method"})
+    if url.endswith("chat.bsky.convo.getConvo"):
+        return 200, {"convo": next(chat for chat in world["bsky_convos"] if chat["id"] == sent["params"]["convoId"])}
+    if url.endswith("app.bsky.feed.getPostThread"):
+        asked = sent["params"]["uri"]
+        if asked in world["bsky_gone"]:
+            return 400, {"error": "NotFound", "message": "Post not found"}
+        return 200, {"thread": {"replies": [{"post": {"author": {"did": who}}} for who in world["bsky_replied"].get(asked, [])]}}
+    if url.endswith("com.atproto.repo.createRecord"):
+        if world["refuse"]:
+            return 502, {"message": "upstream is down"}
+        world["sent"].append(("bluesky", sent["json"]["record"]))
+        return 200, {"uri": "at://did:plc:me/app.bsky.feed.post/mine1"}
+    if url.endswith("chat.bsky.convo.sendMessage"):
+        world["sent"].append(("bluesky message", sent["json"]))
+        return 200, {}
+    if url.endswith("/api/v1/accounts/verify_credentials"):
+        return 200, {"id": "900"}
+    if url.endswith("/api/v1/notifications"):
+        return (200, world["masto_notes"]) if world["masto_ok"] else (403, {"error": "This action is outside the authorized scopes"})
+    if url.endswith("/context"):
+        asked = url.split("/")[-2]
+        return (404, {"error": "Record not found"}) if asked in world["masto_gone"] else (200, {"descendants": world["masto_replied"].get(asked, [])})
+    if url.endswith("/api/v1/statuses") and method == "POST":
+        world["sent"].append(("mastodon", sent["data"]))
+        return 200, {"url": "https://mastodon.social/@me/777"}
+    if url.endswith("/users/me"):
+        return 200, {"username": "me"}
+    if url.endswith("/articles/me/published"):
+        return (200, world["devto_articles"]) if world["devto_ok"] else (500, {"error": "server error"})
+    if url.endswith("/comments"):
+        return 200, world["devto_comments"][sent["params"]["a_id"]]
+    raise AssertionError(f"replies asked for something the test does not know: {method} {url}")
+
+
+def replies_key(platform, item_id):
+    return replies.item_key(platform, item_id)
+
+
+def replies_refused(name):
+    try:
+        replies.action(name)
+    except ValueError as error:
+        return str(error)
+    return ""
+
+
+replies_real = (replies.DATA_DIR, replies.SECRETS_FILE, replies.CONFIG_FILE, replies.DB_FILE, replies.LOG_FILE, replies._http)
+replies_home = Path(tempfile.mkdtemp(prefix="rp-replies-"))
+try:
+    replies.DATA_DIR = replies_home / "data"
+    replies.SECRETS_FILE = replies_home / "secrets.json"
+    replies.CONFIG_FILE = replies_home / "config.json"
+    replies.DB_FILE = replies_home / "state.db"
+    replies.LOG_FILE = replies_home / "replies.log"
+    replies._http = replies_http
+    check(replies.card()["installed"] is False and hub.replies_todo(hub.replies_section()) == [] and hub.replies_todo(None) == []
+          and replies.run(replies_now) == "no platform that can be read is connected",
+          "replies: before it is installed and connected there is no card, no to-do and a run does nothing")
+
+    replies.CONFIG_FILE.write_text(json.dumps({"github_user": "juw12"}), encoding="utf-8")
+    replies.SECRETS_FILE.write_text(json.dumps({"channels": {
+        "bluesky": {"handle": "me.bsky.social", "app_password": "abcd-efgh-ijkl-mnop"},
+        "mastodon": {"instance": "https://mastodon.social", "access_token": "token"},
+        "devto": {"api_key": "key"}, "x": {"via": "buffer", "api_key": "key", "channel_id": "1", "username": "me"}}}), encoding="utf-8")
+    replies_db = sqlite3.connect(replies.DB_FILE)
+    channels.ensure_schema(replies_db)
+    replies_db.execute("insert into channel_posts(slot, channel, repo, status, url) values('2026-11-18 08:00', 'bluesky', 'cairn', 'posted', "
+                       "'https://bsky.app/profile/me.bsky.social/post/post1')")
+    replies_db.commit()
+    replies_db.close()
+    check(replies.posted() == {("bluesky", "post1"): "cairn"}, "replies: the project a post was about is found by the post's address")
+
+    # review (how it starts): everything is read, nothing is sent
+    outcome = replies.run(replies_now)
+    state = replies.load_state()
+    by_id = {item["id"].rsplit("/", 1)[-1]: item for item in state["items"].values()}
+    check(outcome == "bluesky: 6 new, 0 settled, 0 sent, 6 waiting | mastodon: 2 new, 0 settled, 0 sent, 2 waiting | devto: 1 new, 0 settled, 0 sent, 1 waiting"
+          and replies_world["sent"] == [] and state["mode"] == "review",
+          f"replies: the first run reads every platform and sends nothing ({outcome})")
+    check(set(by_id) == {"n1", "n2", "n3", "n6", "n7", "m9", "501", "502", "c1"},
+          "replies: a like, a comment older than a week, a bot, my own last word in a chat and a comment I answered are left out")
+    check(by_id["n1"]["kind_of"] == "thanks" and by_id["n1"]["draft"] in replies.THANKS
+          and by_id["n2"]["draft"] == "Here it is: https://github.com/juw12/cairn"
+          and by_id["n3"]["kind_of"] == "other" and by_id["n3"]["draft"] == ""
+          and by_id["m9"]["kind"] == "dm" and by_id["502"]["kind"] == "dm" and by_id["501"]["kind"] == "comment"
+          and by_id["501"]["text"] == "@me awesome, thank you!" and by_id["501"]["kind_of"] == "thanks"
+          and by_id["c1"]["text"] == "Nice write-up!" and by_id["c1"]["url"] == "https://dev.to/gina/comment/c1",
+          "replies: kind words get a thank-you, 'where is it' gets the project's link, a real question gets no suggestion")
+    check(replies.run(replies_now).count(" 0 new") == 3 and len(replies.load_state()["items"]) == 9 and replies_world["sent"] == [],
+          "replies: a second run takes nothing in twice")
+
+    view = hub.replies_section()
+    check(view["installed"] and view["mode"] == "review" and len(view["waiting"]) == 9 and view["recent"] == [] and view["alone_today"] == 0
+          and [(row["platform"], row["comments"], row["messages"], row["sign_in"], row["by_hand"]) for row in view["platforms"]]
+          == [("Bluesky", "", "", False, False), ("Mastodon", "", "", False, False),
+              ("Dev.to", "", "Dev.to has no messages an app can read.", False, True)]
+          and [row["platform"] for row in view["cannot"]] == ["LinkedIn", "X"],
+          "replies: the card says what each connected platform lets an app read, and which ones it cannot")
+    waiting_row = {row["key"]: row for row in view["waiting"]}
+    check(waiting_row[by_id["n1"]["key"]]["limit"] == 300 and waiting_row[by_id["m9"]["key"]]["limit"] == 500
+          and waiting_row[by_id["501"]["key"]]["limit"] == 500 - len("eve@fosstodon.org") - 2 and waiting_row[by_id["c1"]["key"]]["limit"] == 0,
+          "replies: the card says how long an answer may be on each platform")
+    todo_now = hub.replies_todo(view)
+    todo_links = {link["url"]: link for link in todo_now[0]["links"]}
+    n1_buttons = todo_links[by_id["n1"]["url"]]["actions"]
+    check(len(todo_now) == 1 and todo_now[0]["module"] == "Replies" and todo_now[0]["failed"] is False
+          and todo_now[0]["title"] == "9 comment(s) or message(s) wait for an answer" and len(todo_links) == 9
+          and [button["label"] for button in n1_buttons] == ["Send", "Write my own", "Skip"]
+          and n1_buttons[0]["name"] == f"replies:send:{by_id['n1']['key']}" and n1_buttons[1]["name"] == f"replies:say:{by_id['n1']['key']}|"
+          and n1_buttons[1]["most"] == 300 and "@ann.bsky.social on Bluesky" in n1_buttons[1]["ask"]
+          and [button["label"] for button in todo_links[by_id["n3"]["url"]]["actions"]] == ["Write my own", "Skip"]
+          and [button["label"] for button in todo_links[by_id["c1"]["url"]]["actions"]] == ["Done"]
+          and "Suggested answer: Here it is: https://github.com/juw12/cairn" in todo_links[by_id["n2"]["url"]]["note"]
+          and all(hub.phone_allowed(button["name"] + ("hello" if button.get("ask") else ""))
+                  for link in todo_now[0]["links"] for button in link["actions"]),
+          "to do: every waiting comment is listed with Send (when there is a suggestion), Write my own and Skip, also on the phone")
+
+    # the buttons
+    check(hub.run_action(f"replies:send:{by_id['n1']['key']}") == "Sent on Bluesky." and len(replies_world["sent"]) == 1
+          and replies_world["sent"][0][0] == "bluesky" and replies_world["sent"][0][1]["text"] == by_id["n1"]["draft"]
+          and replies_world["sent"][0][1]["reply"] == {"root": {"uri": "at://did:plc:me/app.bsky.feed.post/post1", "cid": "cid-root"},
+                                                         "parent": {"uri": "at://did:plc:ann/app.bsky.feed.post/n1", "cid": "cid-n1"}},
+          "replies: Send posts the suggested answer under the comment, in the thread it belongs to")
+    sent_item = replies.load_state()["items"][by_id["n1"]["key"]]
+    check(sent_item["status"] == "sent" and sent_item["how"] == "you" and sent_item["sent_url"] == "https://bsky.app/profile/me.bsky.social/post/mine1"
+          and "no longer waits" in replies_refused(f"replies:send:{by_id['n1']['key']}") and len(replies_world["sent"]) == 1,
+          "replies: an answer that went out is written down and cannot be sent twice")
+    check(replies.action(f"replies:say:{by_id['502']['key']}|  Sure,\n happy to talk. ") == "Sent on Mastodon."
+          and replies_world["sent"][-1] == ("mastodon", {"status": "@frank Sure, happy to talk.", "in_reply_to_id": "502",
+                                                         "visibility": "direct", "language": "en"}),
+          "replies: my own words to a Mastodon message go out as a message to that person, on one line")
+    check(replies.action(f"replies:say:{by_id['m9']['key']}|Glad it helps.") == "Sent on Bluesky."
+          and replies_world["sent"][-1] == ("bluesky message", {"convoId": "c1", "message": {"text": "Glad it helps."}}),
+          "replies: my own words to a Bluesky message go into that chat")
+    before = len(replies_world["sent"])
+    too_long = replies_refused(f"replies:say:{by_id['n3']['key']}|" + "word " * 70)
+    check("349 characters; Bluesky takes 300 here" in too_long and len(replies_world["sent"]) == before
+          and not replies.load_state()["items"][by_id["n3"]["key"]].get("error")
+          and "empty" in replies_refused(f"replies:say:{by_id['n3']['key']}|   ")
+          and "write your own" in replies_refused(f"replies:send:{by_id['n3']['key']}")
+          and "gives apps no way to post a comment" in replies_refused(f"replies:send:{by_id['c1']['key']}")
+          and len(replies_world["sent"]) == before,
+          "replies: an answer that is too long or empty, one without a suggestion and one for Dev.to are refused, and nothing is sent")
+    check(replies.action(f"replies:skip:{by_id['n3']['key']}") == "Left unanswered."
+          and replies.load_state()["items"][by_id["n3"]["key"]]["status"] == "skipped",
+          "replies: Skip leaves a comment unanswered and takes it off the list")
+    replies_world["bsky_replied"][by_id["n2"]["id"]] = ["did:plc:zed", "did:plc:me"]
+    check(replies.action(f"replies:send:{by_id['n2']['key']}") == "You already answered that on Bluesky. Nothing was sent."
+          and len(replies_world["sent"]) == before and replies.load_state()["items"][by_id["n2"]["key"]]["status"] == "answered",
+          "replies: Send looks once more right before posting, so what I answered in the app is not answered twice")
+    for bad in ("replies:send:xyz", "replies:mode:loud", f"replies:say:{by_id['n6']['key']}|", f"replies:open:{by_id['n6']['key']}",
+                "replies:send:" + "0" * 12, "replies:", None):
+        check(replies_refused(bad) != "", f"replies: the button name {str(bad)[:30]!r} is refused")
+    check(all(hub.phone_allowed(name) for name in ("replies_run_now", "replies:mode:auto", "replies:skip:0123456789ab"))
+          and not hub.phone_allowed("replies:open:0123456789ab") and not hub.phone_allowed("replies:"),
+          "phone buttons: answering, skipping, the switch and Check now work from the phone; nothing else under that name does")
+
+    # what I did in the app itself settles on the next run
+    replies_world["masto_replied"]["501"] = [{"in_reply_to_id": "501", "account": {"id": "900"}}]
+    replies_world["bsky_gone"].add(by_id["n7"]["id"])
+    replies_world["devto_comments"][11][0]["children"] = [{"id_code": "c9", "user": {"username": "me"}, "children": []}]
+    outcome = replies.run(replies_now)
+    settled = replies.load_state()["items"]
+    check([settled[by_id[name]["key"]]["status"] for name in ("501", "n7", "c1", "n6")] == ["answered", "gone", "answered", "waiting"]
+          and len(replies_world["sent"]) == before,
+          f"replies: what I answered in the app, and what was deleted, no longer waits ({outcome})")
+    lately = hub.replies_section()
+    check([row["author"] for row in lately["waiting"]] == ["ann.bsky.social"]
+          and {(row["author"], row["status"], row["how"]) for row in lately["recent"]}
+          == {("ann.bsky.social", "sent", "you"), ("frank", "sent", "you"), ("dave.bsky.social", "sent", "you"),
+              ("cat.bsky.social", "skipped", ""), ("bob.bsky.social", "answered", ""), ("eve@fosstodon.org", "answered", ""),
+              ("gina", "answered", "")},
+          "replies: the card keeps what was answered lately, and how")
+
+    # auto: one-sentence answers to public comments go out alone, within the limits
+    shutil.rmtree(replies.DATA_DIR)
+    replies_world = replies_fresh_world()
+    replies.run(replies_now)
+    check("go out by themselves" in replies.action("replies:mode:auto") and replies.load_state()["mode"] == "auto"
+          and replies_world["sent"] == [], "replies: the switch itself sends nothing")
+    outcome = replies.run(replies_now)
+    alone = replies.load_state()["items"]
+    check([(where, what.get("text") or what.get("status")) for where, what in replies_world["sent"]]
+          == [("bluesky", "Here it is: https://github.com/juw12/cairn"), ("bluesky", by_id["n1"]["draft"]),
+              ("mastodon", "@eve@fosstodon.org " + alone[by_id["501"]["key"]]["draft"])]
+          and replies_world["sent"][2][1]["visibility"] == "public" and replies_world["sent"][2][1]["in_reply_to_id"] == "501"
+          and replies_world["sent"][0][1]["facets"][0]["features"][0]["uri"] == "https://github.com/juw12/cairn",
+          f"replies: by itself it answers the thank-you and the 'where is it', with a link that can be tapped ({outcome})")
+    check({name: alone[by_id[name]["key"]]["status"] for name in ("n3", "n6", "n7", "m9", "502", "c1")}
+          == dict.fromkeys(("n3", "n6", "n7", "m9", "502", "c1"), "waiting")
+          and all(alone[by_id[name]["key"]]["how"] == "alone" for name in ("n1", "n2", "501")),
+          "replies: a real question, a second comment by the same person that day, a comment older than two days, "
+          "every message and Dev.to still wait for me")
+    replies.run(replies_now)
+    check(len(replies_world["sent"]) == 3 and hub.replies_section()["alone_today"] == 3, "replies: the next run sends nothing twice")
+    crowd = {str(number): {"platform": "bluesky", "person": f"p{number}", "how": "alone", "status": "sent",
+                           "sent_at": (replies_now - timedelta(hours=number)).isoformat()} for number in range(replies.ALONE_PER_DAY)}
+    fresh = {"platform": "bluesky", "person": "new", "status": "waiting", "kind": "comment", "kind_of": "thanks", "draft": "Thanks!",
+             "at": replies_now.isoformat()}
+    check(not replies.may_go_alone(fresh, crowd, replies_now)
+          and replies.may_go_alone(fresh, dict(list(crowd.items())[1:]), replies_now)
+          and replies.may_go_alone({**fresh, "platform": "mastodon"}, crowd, replies_now)
+          and replies.may_go_alone(fresh, crowd, replies_now + timedelta(hours=16))
+          and not replies.may_go_alone({**fresh, "kind": "dm"}, {}, replies_now)
+          and not replies.may_go_alone({**fresh, "error": "refused"}, {}, replies_now)
+          and not replies.may_go_alone({**fresh, "kind_of": "other", "draft": ""}, {}, replies_now)
+          and not replies.may_go_alone({**fresh, "at": (replies_now - timedelta(hours=49)).isoformat()}, {}, replies_now),
+          f"replies: at most {replies.ALONE_PER_DAY} answers a day per platform go out by themselves")
+
+    # an answer that was refused waits for me and is not tried again by itself
+    shutil.rmtree(replies.DATA_DIR)
+    replies_world = replies_fresh_world()
+    replies_world["refuse"] = True
+    replies_world["masto_notes"], replies_world["bsky_notes"] = [], replies_world["bsky_notes"][:1]
+    replies.action("replies:mode:auto")
+    replies.run(replies_now)
+    replies_world["refuse"] = False
+    replies.run(replies_now)
+    refused_item = replies.load_state()["items"][by_id["n1"]["key"]]
+    refused_todo = hub.replies_todo(hub.replies_section())
+    check(replies_world["sent"] == [] and refused_item["status"] == "waiting" and "upstream is down" in refused_item["error"]
+          and refused_todo[0]["failed"] is True
+          and "Not sent: " in next(link["note"] for link in refused_todo[0]["links"] if link["url"] == by_id["n1"]["url"])
+          and "need you" in refused_todo[0]["detail"],
+          "replies: an answer the platform refused is not tried again by itself; it is listed as failed with the reason")
+    check(replies.action(f"replies:send:{by_id['n1']['key']}") == "Sent on Bluesky."
+          and "error" not in replies.load_state()["items"][by_id["n1"]["key"]] and len(replies_world["sent"]) == 1,
+          "replies: I can still send it myself, and the failure is cleared")
+
+    # a sign-in that may only post, and a platform that is down
+    shutil.rmtree(replies.DATA_DIR)
+    replies_world = replies_fresh_world()
+    replies_world.update({"masto_ok": False, "bsky_chat": False, "devto_ok": False})
+    outcome = replies.run(replies_now)
+    limited = hub.replies_section()
+    limited_rows = {row["platform"]: row for row in limited["platforms"]}
+    limited_todo = hub.replies_todo(limited)
+    check("mastodon: cannot be read with this sign-in" in outcome and "devto: FAILED" in outcome and "bluesky: 5 new" in outcome
+          and limited_rows["Mastodon"]["sign_in"] and limited_rows["Mastodon"]["comments"] == replies.SIGN_IN_AGAIN["mastodon"]
+          and limited_rows["Bluesky"]["sign_in"] and limited_rows["Bluesky"]["comments"] == ""
+          and limited_rows["Bluesky"]["messages"] == replies.SIGN_IN_AGAIN["bluesky"]
+          and "HTTP 500" in limited_rows["Dev.to"]["error"] and len(limited["waiting"]) == 5,
+          f"replies: a sign-in that may only post, and a platform that is down, do not stop the others ({outcome})")
+    check([(item["title"], item["action"], item.get("failed", False)) for item in limited_todo[1:]]
+          == [("Connect Bluesky and Mastodon again so replies can be read", "channels_setup", False),
+              ("Comments on Dev.to could not be read", "replies_run_now", True)]
+          and replies.SIGN_IN_AGAIN["mastodon"] in limited_todo[1]["detail"] and replies.SIGN_IN_AGAIN["bluesky"] in limited_todo[1]["detail"],
+          "to do: a sign-in that cannot read replies asks to be connected again, and a platform that could not be read is listed as failed")
+finally:
+    (replies.DATA_DIR, replies.SECRETS_FILE, replies.CONFIG_FILE, replies.DB_FILE, replies.LOG_FILE, replies._http) = replies_real
+    shutil.rmtree(replies_home, ignore_errors=True)
+
+check("read:notifications" in channels.MASTODON_SCOPES.split() and "read:statuses" in channels.MASTODON_SCOPES.split()
+      and "write:statuses" in channels.MASTODON_SCOPES.split(),
+      "replies: a new Mastodon sign-in may read who wrote to me, and still post")
+replies_page = (Path(__file__).parent / "dashboard.html").read_text(encoding="utf-8")
+replies_hub = (Path(__file__).parent / "hub.py").read_text(encoding="utf-8")
+replies_ignored = (Path(__file__).parent / ".gitignore").read_text(encoding="utf-8").split()
+check("${repliesCard(d.hub && d.hub.replies)}" in replies_page and 'event.target.closest("[data-say]")' in replies_page
+      and "act(say.dataset.say + answer, say)" in replies_page and 'replies: "reach"' in replies_page
+      and 'actionButton("replies:mode:auto"' in replies_page and 'actionButton("replies_run_now"' in replies_page
+      and '("replies", replies_section)' in replies_hub and 'replies_todo(sections.get("replies"))' in replies_hub
+      and 'name == "replies_run_now"' in replies_hub
+      and "data/replies/" in replies_ignored and "replies.log" in replies_ignored,
+      "replies: the card is on the Reach page, its buttons are wired, and what people wrote stays out of the repository")
+check('input.type = words ? "text" : "url"' in (Path(__file__).parent / "phone_snapshot.py").read_text(encoding="utf-8")
+      and "window.rpPrompt(text, words)" in replies_page,
+      "phone buttons: Write my own asks for words on the phone, not for a link")
 
 print("\nALL PASSED" if not failures else f"\n{len(failures)} FAILED")
 sys.exit(1 if failures else 0)

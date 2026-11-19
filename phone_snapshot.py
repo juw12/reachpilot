@@ -78,7 +78,7 @@ SHIM = """<script>
   };
 
   /* The browser's own confirm() and prompt() never open inside the phone page's frame; the dashboard uses these instead. */
-  const sheet = (text, withInput) => new Promise((resolve) => {
+  const sheet = (text, withInput, words) => new Promise((resolve) => {
     const make = (tag, css, words) => {
       const node = document.createElement(tag);
       node.style.cssText = css;
@@ -91,7 +91,7 @@ SHIM = """<script>
     back.setAttribute("aria-label", text);
     const box = make("div", "width:100%%;max-width:460px;padding:18px;border-radius:12px;background:var(--surface,#fff);color:var(--ink,#111);box-shadow:0 10px 40px rgba(0,0,0,.35)");
     const input = make("input", "width:100%%;min-height:44px;margin:0 0 14px;padding:8px 10px;border:1px solid var(--line-strong,#bbb);border-radius:6px;background:var(--bg,#fff);color:inherit;font:inherit");
-    input.type = "url";
+    input.type = words ? "text" : "url";
     input.setAttribute("aria-label", text);
     const row = make("div", "display:flex;gap:8px;justify-content:flex-end");
     const no = make("button", "", "Cancel");
@@ -109,7 +109,7 @@ SHIM = """<script>
     (withInput ? input : yes).focus();
   });
   window.rpConfirm = (text) => sheet(text, false);
-  window.rpPrompt = (text) => sheet(text, true);
+  window.rpPrompt = (text, words) => sheet(text, true, words);
 })();
 </script>
 """
