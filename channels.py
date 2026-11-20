@@ -577,8 +577,14 @@ class Bluesky:
 APP_PASSWORD_PATTERN = re.compile(r"^[a-z2-7]{4}(-[a-z2-7]{4}){3}$")
 
 
-def bluesky_sign_in(handle: str, password: str, service: str = "https://bsky.social", ask_code=input) -> dict:
-    """Normal password -> a new app password (the only thing stored). An app password is accepted as is."""
+def bluesky_sign_in(handle: str, password: str, service: str = "https://bsky.social", ask_code=input,
+                    name: str = "", forget: list | None = None) -> dict:
+    """Normal password -> a new app password (the only thing stored). An app password is accepted as is.
+
+    name is what the new app password is called on the account. forget lists app passwords made here whose value
+    was never saved: each is removed from the account, and from the list once Bluesky says it is gone. Only the
+    full sign-in may remove one, so this is the one moment for it.
+    """
     handle = handle.strip().lstrip("@")
     if APP_PASSWORD_PATTERN.match(password):
         return {"handle": handle, "app_password": password}
@@ -592,9 +598,30 @@ def bluesky_sign_in(handle: str, password: str, service: str = "https://bsky.soc
         f"{service}/xrpc/com.atproto.server.createAppPassword",
         headers={"Authorization": f"Bearer {session['accessJwt']}"},
         # privileged = may read and answer direct messages (replies.py); without it Bluesky refuses the chat
-        json={"name": f"ReachPilot {datetime.now():%Y-%m-%d %H%M}", "privileged": True}, timeout=TIMEOUT,
+        json={"name": name or f"ReachPilot {datetime.now():%Y-%m-%d %H%M}", "privileged": True}, timeout=TIMEOUT,
     ), "Bluesky app password").json()
+    for stray in list(forget or []):
+        try:
+            gone = requests.post(f"{service}/xrpc/com.atproto.server.revokeAppPassword",
+                                 headers={"Authorization": f"Bearer {session['accessJwt']}"},
+                                 json={"name": stray}, timeout=TIMEOUT)
+        except requests.RequestException:
+            continue  # it stays on the list for the next sign-in
+        if gone.status_code == 200:
+            forget.remove(stray)
     return {"handle": session["handle"], "app_password": created["password"]}
+
+
+def bluesky_messages(creds: dict) -> str:
+    """One line on whether this sign-in can read direct messages, asked of Bluesky now."""
+    import replies  # here, not at the top: replies imports this module
+
+    try:
+        reader = replies.BlueskyReplies(creds)
+        waiting = sum(1 for item in reader.read() if item["kind"] == "dm")
+    except Exception as error:
+        return f"Messages could not be checked just now: {error}"
+    return reader.messages or f"Messages can be read ({waiting} waiting for an answer)."
 
 
 class Mastodon:
@@ -1041,6 +1068,23 @@ def save_channel(secrets_path: Path, channel: str, values: dict | None) -> None:
     secrets_path.write_text(json.dumps(current, indent=2), encoding="utf-8")
 
 
+def unsaved_app_passwords(secrets_path: Path, names: list | None = None) -> list:
+    """Names of Bluesky app passwords made on this PC whose value was never saved; with names, write that list.
+
+    A sign-in that fails after Bluesky made the app password leaves one on the account that nobody can use or
+    see the value of. Its name is kept in secrets.json ("bluesky_unsaved") and the next sign-in removes it.
+    """
+    current = json.loads(secrets_path.read_text(encoding="utf-8")) if secrets_path.exists() else {}
+    if names is None:
+        return list(current.get("bluesky_unsaved") or [])
+    if names:
+        current["bluesky_unsaved"] = list(names)
+    else:
+        current.pop("bluesky_unsaved", None)
+    secrets_path.write_text(json.dumps(current, indent=2), encoding="utf-8")
+    return list(names)
+
+
 # ------------------------------------------------------------------ one-time setup (python autopilot.py channels)
 
 SETUP = {
@@ -1117,13 +1161,19 @@ def buffer_setup(api_key: str, channel: str, ask=input) -> dict:
     return {"via": "buffer", "api_key": api_key, "channel_id": chosen["id"], "username": chosen["name"]}
 
 
-def setup_interactive(secrets_path: Path) -> None:
-    print("ReachPilot: connect other platforms (all free). Press Enter to skip one.\n")
-    for channel in AUTO:
+def setup_interactive(secrets_path: Path, only: str = "") -> None:
+    """Ask about each platform in turn. With only, connect just that one: no questions about the others, and what
+    is saved for it and is no secret (the handle, the instance) is used again, so one answer is left to type."""
+    if only:
+        print(f"ReachPilot: connect {LABELS[only]} again.\n")
+    else:
+        print("ReachPilot: connect other platforms (all free). Press Enter to skip one.\n")
+    for channel in ([only] if only else AUTO):
         label = LABELS[channel]
         creds = credentials(json.loads(secrets_path.read_text(encoding="utf-8")) if secrets_path.exists() else {})
         state = "connected" if creds.get(channel) else "not connected"
-        answer = input(f"{label} ({state}). Set up {'again' if creds.get(channel) else 'now'}? [y/N/r=remove] ").strip().lower()
+        answer = "y" if only else input(
+            f"{label} ({state}). Set up {'again' if creds.get(channel) else 'now'}? [y/N/r=remove] ").strip().lower()
         if answer == "r":
             save_channel(secrets_path, channel, None)
             print(f"  {label} removed.\n")
@@ -1135,14 +1185,27 @@ def setup_interactive(secrets_path: Path) -> None:
         if channel == "x":
             webbrowser.open(BUFFER_API_SETTINGS)
         values = {}
+        saved = creds.get(channel) or {}
         for key, prompt, hidden in SETUP[channel]["fields"]:
+            if only and not hidden and saved.get(key):
+                values[key] = str(saved[key])
+                print(f"  {prompt.split(' (')[0]}: {values[key]}")
+                continue
             values[key] = (getpass.getpass(f"  {prompt}: ") if hidden else input(f"  {prompt}: ")).strip()
+        fresh, stray = "", []
         if channel == "bluesky" and all(values.values()):
+            if not APP_PASSWORD_PATTERN.match(values["app_password"]):
+                fresh = f"ReachPilot {datetime.now():%Y-%m-%d %H%M}"
+            stray = unsaved_app_passwords(secrets_path)
+            while fresh in stray:  # a second try within the minute: Bluesky takes a name once
+                fresh += "+"
             try:
-                values = bluesky_sign_in(values["handle"], values["app_password"])
+                values = bluesky_sign_in(values["handle"], values["app_password"], name=fresh, forget=stray)
             except Exception as error:
                 print(f"  {error}\n  Nothing saved for {label}.\n")
                 continue
+            if fresh:  # on the account now and saved nowhere yet: noted, so a failure below cannot leave it there for good
+                unsaved_app_passwords(secrets_path, stray + [fresh])
         if channel == "mastodon" and values.get("instance") and not values.get("access_token"):
             try:
                 print("  Opening Mastodon in your browser: press Authorize there.")
@@ -1175,7 +1238,12 @@ def setup_interactive(secrets_path: Path) -> None:
         if channel == "x" and x_is_paid(values):
             values["username"] = who.lstrip("@")  # for post links, without a paid lookup per post
         save_channel(secrets_path, channel, values)
-        print(f"  {label} connected as {who}.\n")
+        print(f"  {label} connected as {who}.")
+        if channel == "bluesky":
+            if fresh:
+                unsaved_app_passwords(secrets_path, stray)  # its value is saved now
+            print("  " + bluesky_messages(values))
+        print()
     final = credentials(json.loads(secrets_path.read_text(encoding="utf-8")) if secrets_path.exists() else {})
     ready = [LABELS[channel] for channel in AUTO if final.get(channel)]
     print("Posting to: LinkedIn" + "".join(f", {name}" for name in ready))

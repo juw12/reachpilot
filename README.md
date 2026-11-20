@@ -539,8 +539,11 @@ To do, on the PC and the phone. Only someone who wrote to you first is ever answ
 | Dev.to | read; the answer is written on Dev.to (its API cannot post a comment) | none |
 | LinkedIn, X, Threads, Substack, Telegram, Discord | not readable for an app connected this way | no |
 
-A sign-in made before this existed may only post. The card and To do then say so: run
-`python autopilot.py channels` and connect Mastodon (browser sign-in) or Bluesky (normal password, once) again.
+A sign-in made before this existed may only post. To do then has **Connect Bluesky** or **Connect Mastodon**. The
+button opens one window on this PC that asks about that platform only (`python autopilot.py channels bluesky`).
+Bluesky: type your normal password once. It is used to make an app password that may read messages, only that is
+saved, and the window says at once whether messages can be read. An app password it made on an earlier try and
+could not save is removed from your account in the same sign-in. Mastodon: press Enter, then Authorize in the browser.
 
 - **It starts in review.** Nothing is sent by itself. Each comment or message has **Send** (the suggested answer),
   **Write my own** and **Skip**.

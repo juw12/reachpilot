@@ -586,7 +586,7 @@ def card() -> dict:
     for name in READERS:
         if name in accounts:
             seen = state["platforms"].get(name) or {}
-            platforms.append({"platform": channels.LABELS[name], "checked": _local(seen.get("checked")),
+            platforms.append({"key": name, "platform": channels.LABELS[name], "checked": _local(seen.get("checked")),
                               "comments": seen.get("comments", ""), "messages": seen.get("messages", ""),
                               "error": seen.get("error", ""), "by_hand": READERS[name].by_hand,
                               "sign_in": name in SIGN_IN_AGAIN

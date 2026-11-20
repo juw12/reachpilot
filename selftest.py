@@ -1368,6 +1368,111 @@ check(made == {"handle": "me.bsky.social", "app_password": "wxyz-wxyz-wxyz-wxyz"
       and "my normal password" not in json.dumps(made),
       "channels: Bluesky password -> app password (e-mail code handled, main password not stored)")
 
+
+# connecting Bluesky again from To do: one platform, one prompt, and no app password left behind on the account
+def fake_post_plain(url, json=None, headers=None, timeout=None):
+    bluesky_calls.append((url.rsplit("/", 1)[-1], json, headers))
+    if url.endswith("createSession"):
+        return FakeResponse(200, {"handle": "me.bsky.social", "accessJwt": "main-jwt", "did": "did:plc:x"})
+    if url.endswith("revokeAppPassword"):
+        return FakeResponse(503 if json["name"] == "ReachPilot stuck" else 200, {})
+    return FakeResponse(200, {"name": json["name"], "password": "wxyz-wxyz-wxyz-wxyz"})
+
+
+class FakeBluesky:
+    works = True
+
+    def __init__(self, creds):
+        self.creds = creds
+
+    def verify(self):
+        if not FakeBluesky.works:
+            raise RuntimeError("HTTP 502")
+        return "@" + self.creds["handle"]
+
+
+def no_question(prompt=""):
+    raise AssertionError(f"asked: {prompt}")
+
+
+import builtins
+import tempfile
+
+bluesky_calls.clear()
+forgotten = ["ReachPilot stray", "ReachPilot stuck"]
+again_home = Path(tempfile.mkdtemp(prefix="reachpilot-again-"))
+again_secrets = again_home / "secrets.json"
+again_real = (channels.requests.post, channels.getpass.getpass, builtins.input, channels.CLIENTS["bluesky"], channels.bluesky_messages)
+channels.requests.post = fake_post_plain
+try:
+    channels.bluesky_sign_in("me.bsky.social", "my normal password", name="ReachPilot test", forget=forgotten)
+    check(bluesky_calls[1][1]["name"] == "ReachPilot test"
+          and [(call[0], call[1]["name"], call[2]["Authorization"]) for call in bluesky_calls[2:]]
+          == [("com.atproto.server.revokeAppPassword", "ReachPilot stray", "Bearer main-jwt"),
+              ("com.atproto.server.revokeAppPassword", "ReachPilot stuck", "Bearer main-jwt")]
+          and forgotten == ["ReachPilot stuck"],
+          f"channels: an app password that was never saved is removed in the same sign-in, one Bluesky refused stays listed ({forgotten})")
+
+    again_secrets.write_text(json.dumps({
+        "linkedin": {"token": "kept"}, "bluesky_unsaved": ["ReachPilot stray"],
+        "channels": {"bluesky": {"handle": "me.bsky.social", "app_password": "abcd-abcd-abcd-abcd"},
+                     "mastodon": {"instance": "mastodon.social", "access_token": "t"}}}), encoding="utf-8")
+    check(channels.unsaved_app_passwords(again_secrets) == ["ReachPilot stray"], "channels: the app passwords never saved are read")
+    channels.getpass.getpass = lambda prompt="": "my normal password"
+    builtins.input = no_question
+    channels.CLIENTS["bluesky"] = FakeBluesky
+    channels.bluesky_messages = lambda creds: "Messages can be read (0 waiting for an answer)."
+
+    # the sign-in works and the check after it fails: what is saved stays, and the new app password is noted
+    FakeBluesky.works = False
+    bluesky_calls.clear()
+    again_said = io.StringIO()
+    with contextlib.redirect_stdout(again_said):
+        channels.setup_interactive(again_secrets, "bluesky")
+    after_failure = json.loads(again_secrets.read_text(encoding="utf-8"))
+    made_name = bluesky_calls[1][1]["name"]
+    check(after_failure["channels"]["bluesky"]["app_password"] == "abcd-abcd-abcd-abcd"
+          and after_failure["bluesky_unsaved"] == [made_name] and made_name.startswith("ReachPilot 20")
+          and "Nothing saved for Bluesky" in again_said.getvalue(),
+          f"channels: an app password made and then not saved is noted for removal ({after_failure.get('bluesky_unsaved')})")
+
+    # the next try: only the password is asked, the noted one is removed, messages are checked on the spot
+    FakeBluesky.works = True
+    bluesky_calls.clear()
+    again_said = io.StringIO()
+    with contextlib.redirect_stdout(again_said):
+        channels.setup_interactive(again_secrets, "bluesky")
+    after = json.loads(again_secrets.read_text(encoding="utf-8"))
+    check(after["channels"]["bluesky"] == {"handle": "me.bsky.social", "app_password": "wxyz-wxyz-wxyz-wxyz"}
+          and after["channels"]["mastodon"]["access_token"] == "t" and after["linkedin"] == {"token": "kept"}
+          and "bluesky_unsaved" not in after and bluesky_calls[1][1]["name"] == made_name + "+"
+          and [call[1]["name"] for call in bluesky_calls if call[0].endswith("revokeAppPassword")] == [made_name],
+          "channels: Bluesky alone is connected again with one typed answer, and the app password left behind is removed")
+    check("Your handle: me.bsky.social" in again_said.getvalue() and "Bluesky connected as @me.bsky.social" in again_said.getvalue()
+          and "Messages can be read" in again_said.getvalue() and "my normal password" not in again_said.getvalue()
+          and "wxyz" not in again_said.getvalue() and "Set up" not in again_said.getvalue(),
+          "channels: the window names the handle, says whether messages can be read, and shows no password")
+finally:
+    (channels.requests.post, channels.getpass.getpass, builtins.input, channels.CLIENTS["bluesky"], channels.bluesky_messages) = again_real
+    import shutil
+    shutil.rmtree(again_home, ignore_errors=True)
+
+opened_consoles = []
+real_console = hub._console
+hub._console = lambda command, cwd: opened_consoles.append(command)
+try:
+    said = hub.run_action("channels_setup:bluesky")
+    try:
+        hub.run_action("channels_setup:nonsense")
+        refused = False
+    except ValueError:
+        refused = True
+finally:
+    hub._console = real_console
+check(len(opened_consoles) == 1 and opened_consoles[0][-3:] == ["autopilot.py", "channels", "bluesky"]
+      and "Bluesky password" in said and refused,
+      f"hub: Connect Bluesky opens the window for Bluesky alone, and an unknown platform opens none ({opened_consoles})")
+
 import growth
 
 check([analytics.platform_of(name) for name in ("linkedin.com", "lnkd.in", "mastodon.social", "bsky.app", "dev.to",
@@ -4795,7 +4900,7 @@ for phone_name in ("promote:retryall", "promote:sendall", "promote:send:12", "pr
                    "launch:followup:demo", "launch:approve_invites:demo", "shorts:pause:demo", "inbox:mine:google-1"):
     check(hub.phone_allowed(phone_name), f"phone buttons: {phone_name} runs from the phone")
 for phone_name in ("jobs_apply", "jobs_open_tracker", "open_answers", "email_open_leads", "email_preview", "email_test",
-                   "linkedin_auth", "linkedin_approve", "channels_setup", "open_modules", "phone_link", "promote:setkey",
+                   "linkedin_auth", "linkedin_approve", "channels_setup", "channels_setup:bluesky", "open_modules", "phone_link", "promote:setkey",
                    "promote:setupchecker", "promote:openproducts", "podcast:open", "patents:open:demo",
                    "launch:open_reply:demo", "launch:relay_code:demo", "launch:open_invites:demo", "launch:open_contacts:demo",
                    "promote", "promote:", "inbox", "inbox:", "nonsense", "nonsense:approve", "", None, 7):
@@ -5469,10 +5574,13 @@ try:
           f"replies: Bluesky messages are asked for with a pass for that one method ({replies_world['bsky_passes']})")
 
     check([(item["title"], item["action"], item.get("failed", False)) for item in limited_todo[1:]]
-          == [("Connect Bluesky and Mastodon again so replies can be read", "channels_setup", False),
+          == [("Connect Bluesky again so messages can be read", "channels_setup:bluesky", False),
+              ("Connect Mastodon again so replies can be read", "channels_setup:mastodon", False),
               ("Comments on Dev.to could not be read", "replies_run_now", True)]
-          and replies.SIGN_IN_AGAIN["mastodon"] in limited_todo[1]["detail"] and replies.SIGN_IN_AGAIN["bluesky"] in limited_todo[1]["detail"],
-          "to do: a sign-in that cannot read replies asks to be connected again, and a platform that could not be read is listed as failed")
+          and replies.SIGN_IN_AGAIN["bluesky"] in limited_todo[1]["detail"] and "password there once" in limited_todo[1]["detail"]
+          and limited_todo[1]["action_label"] == "Connect Bluesky"
+          and replies.SIGN_IN_AGAIN["mastodon"] in limited_todo[2]["detail"],
+          "to do: a sign-in that cannot read replies has its own button to connect that platform again, and a platform that could not be read is listed as failed")
 finally:
     (replies.DATA_DIR, replies.SECRETS_FILE, replies.CONFIG_FILE, replies.DB_FILE, replies.LOG_FILE, replies._http) = replies_real
     shutil.rmtree(replies_home, ignore_errors=True)

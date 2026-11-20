@@ -25,7 +25,7 @@ After a post about one project its video also gets a page of its own (showcase.p
 and a creator who covered the project is thanked in the post (creators.py). A project that has no such page yet
 gets one without waiting for its post: on a run with no post due, "watch_backfill_per_day" of them a day.
 
-Commands:  init | auth | channels | tick | preview [N] | status | install | uninstall
+Commands:  init | auth | channels [platform] | tick | preview [N] | status | install | uninstall
 Kill switch: create a file named PAUSE in this folder.
 """
 from __future__ import annotations
@@ -1005,8 +1005,15 @@ def cmd_auth() -> None:
     print(f"Connected as {token['name']}. Token valid for {days:.0f} days.")
 
 
-def cmd_channels() -> None:
-    channels.setup_interactive(SECRETS_PATH)
+def cmd_channels(only: str = "") -> None:
+    """Connect the platforms; with only (python autopilot.py channels bluesky), that one again."""
+    channels.setup_interactive(SECRETS_PATH, only)
+    if only:
+        import replies  # only this command needs it
+
+        if only in replies.READERS and (replies.DATA_DIR / "state.json").exists():
+            # read now, so the dashboard and To do show the new sign-in without waiting for the next run
+            print("Comments and messages, read with this sign-in: " + replies.run())
 
 
 def cmd_preview(config, db, count: int) -> None:
@@ -1147,8 +1154,13 @@ def cmd_uninstall() -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("command", choices=["init", "auth", "channels", "goatcounter", "tick", "preview", "status", "approve", "install", "uninstall", "dashboard"])
-    parser.add_argument("count", nargs="?", type=int, default=3)
+    parser.add_argument("what", nargs="?", default="",
+                        help="preview: how many posts (3). channels: one platform to connect again, e.g. bluesky")
     args = parser.parse_args()
+    if args.command == "channels" and args.what and args.what not in channels.AUTO:
+        parser.error(f"channels: {args.what!r} is not one of {', '.join(channels.AUTO)}")
+    if args.command != "channels" and args.what and not args.what.isdigit():
+        parser.error(f"{args.command}: {args.what!r} is not a number")
     setup_logging()
     config = load_config()
 
@@ -1156,7 +1168,7 @@ def main() -> None:
         cmd_auth()
         return
     if args.command == "channels":
-        cmd_channels()
+        cmd_channels(args.what)
         return
     if args.command == "goatcounter":
         cmd_goatcounter(config)
@@ -1189,7 +1201,7 @@ def main() -> None:
         elif args.command == "tick":
             tick(config, db)
         elif args.command == "preview":
-            cmd_preview(config, db, args.count)
+            cmd_preview(config, db, int(args.what or 3))
         elif args.command == "status":
             cmd_status(config, db)
         elif args.command == "approve":

@@ -2195,6 +2195,12 @@ PHONE_VERBS = {
     "inbox": None,  # every answer on the inbox card only writes inbox_answers.json
 }
 PHONE_PC_ONLY = "This button only works on your PC: it opens a window or a file there."
+# What the window asks when one platform is connected again (channels_setup:<platform>).
+CONNECT_AGAIN = {
+    "bluesky": "type your Bluesky password there once (and the code Bluesky e-mails you, if it asks). Only a new app "
+               "password is saved, and the window says at once whether messages can be read.",
+    "mastodon": "press Enter at the token question, then Authorize in the browser.",
+}
 CAIRN_APP = Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "Programs" / "Cairn" / "app"
 
 
@@ -2262,6 +2268,14 @@ def run_action(name: str) -> str:
     if name == "channels_setup":
         _console([str(PYTHON), "autopilot.py", "channels"], ROOT)
         return "A window opened to connect Bluesky, Mastodon, Dev.to, Telegram and Discord."
+    if name.startswith("channels_setup:"):
+        platform = name.partition(":")[2]
+        if platform not in ap.channels.AUTO:
+            raise ValueError(f"Unknown action: {name}")
+        # cmd /k keeps the window open, so what the sign-in answered can still be read
+        _console(["cmd", "/k", str(PYTHON), "autopilot.py", "channels", platform], ROOT)
+        return (f"A window opened on this PC to connect {ap.channels.LABELS[platform]} again: "
+                + CONNECT_AGAIN.get(platform, "answer what it asks there."))
     if name == "open_modules":
         machine.open_path(MODULES)
         return "Modules folder opened."
@@ -2559,13 +2573,19 @@ def replies_todo(section: dict | None) -> list[dict]:
             "action": None, "action_label": None, "links": links,
             "failed": any(item["error"] for item in waiting),
         })
-    again = [platform for platform in section.get("platforms") or [] if platform.get("sign_in")]
-    if again:
+    for platform in section.get("platforms") or []:
+        if not platform.get("sign_in"):
+            continue
+        # one item and one button per platform: the window it opens asks about that platform and nothing else
+        key = platform.get("key", "")
+        how = CONNECT_AGAIN.get(key)
         items.append({
             "priority": 3, "module": "Replies",
-            "title": f"Connect {' and '.join(platform['platform'] for platform in again)} again so replies can be read",
-            "detail": " ".join(dict.fromkeys(platform["messages"] or platform["comments"] for platform in again)),
-            "action": "channels_setup", "action_label": "Connect platforms", "links": [],
+            "title": f"Connect {platform['platform']} again so {'replies' if platform['comments'] else 'messages'} can be read",
+            "detail": (platform["comments"] or platform["messages"])
+                      + (f" The button opens a window on this PC: {how}" if how else ""),
+            "action": f"channels_setup:{key}" if key else "channels_setup",
+            "action_label": f"Connect {platform['platform']}", "links": [],
         })
     broken = [platform for platform in section.get("platforms") or [] if platform.get("error")]
     if broken:
