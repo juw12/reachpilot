@@ -25,6 +25,10 @@ The "This PC" card (upkeep_section) shows the housekeeping jobs of this PC that 
 that I want to see in the same place: a clean-up, a backup, a sync. It reads upkeep_private.json (git-ignored), which
 names the scheduled tasks and where each one leaves its status; it shows only where that file exists.
 
+The "Submissions" card (submissions_section) shows what I handed in somewhere and that now waits for someone else's
+decision: a request, an application, a review. A watcher of my own looks at that place and writes one status file;
+submissions_private.json (git-ignored) names the watcher's scheduled task and that file. It shows only where the file exists.
+
 This file only reads their files, builds the "what I need from you" list, and runs a short whitelist of actions.
 Every reader is defensive: a missing or half-written file shows as "not set up" instead of breaking the dashboard.
 """
@@ -1869,6 +1873,7 @@ PHONE_VERBS = {
     "gmail": {"check", "mode"},  # an answer to a mail is only sent from the PC: the phone copy carries no mail text
     "inbox": None,  # every answer on the inbox card only writes inbox_answers.json
     "upkeep": {"run", "keep"},  # Open report opens a file on the PC
+    "submissions": {"run"},  # the same: only Check now runs from the phone
 }
 PHONE_PC_ONLY = "This button only works on your PC: it opens a window or a file there."
 # What the window asks when one platform is connected again (channels_setup:<platform>).
@@ -2002,6 +2007,8 @@ def run_action(name: str) -> str:
         return inbox_action(name)
     if name.startswith("upkeep:"):
         return upkeep_action(name)
+    if name.startswith("submissions:"):
+        return submissions_action(name)
     raise ValueError(f"Unknown action: {name}")
 
 
@@ -2526,6 +2533,141 @@ def upkeep_action(name: str) -> str:
     raise ValueError(f"Unknown action: {name}")
 
 
+# ------------------------------------------------------------------ submissions (handed in, waiting for someone's decision)
+
+SUBMISSIONS_PRIVATE = ROOT / "submissions_private.json"  # git-ignored: which watchers the card shows
+SUBMISSIONS_BOARDS, SUBMISSIONS_ITEMS = 6, 40
+SUBMISSIONS_STATES = ("waiting", "accepted", "rejected", "changed", "gone")
+SUBMISSIONS_NO_STATUS = {"ran": "", "ok": None, "summary": "", "items": []}
+
+
+def _submissions_boards() -> list[dict]:
+    """The watchers named in submissions_private.json; [] where the file is missing or is not this shape."""
+    try:
+        data = json.loads(SUBMISSIONS_PRIVATE.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return []
+    boards = []
+    for board in (data.get("boards") if isinstance(data, dict) else None) or []:
+        if not isinstance(board, dict) or not _inbox_text(board.get("name"), 60):
+            continue
+        task = _inbox_text(board.get("task"), 60)
+        boards.append({
+            "name": _inbox_text(board.get("name"), 60),
+            "about": _inbox_text(board.get("about"), 200),
+            "task": task if UPKEEP_TASK.fullmatch(task) else "",
+            "status": board.get("status") if isinstance(board.get("status"), str) else "",
+            "report": board.get("report") if isinstance(board.get("report"), str) else "",
+        })
+    return boards[:SUBMISSIONS_BOARDS]
+
+
+def _submissions_status(path: str) -> dict:
+    """What a watcher wrote after its last look (its status file), every value checked and cut:
+
+    {"ran": "2026-11-20 15:10", "ok": true, "summary": "3 waiting, 1 accepted.",
+     "items": [{"name": "Travel claim", "state": "waiting", "status": "In review", "score": "83 / 63",
+                "changed": "2026-11-20", "next": "Nothing to do: the reviewer has it.", "needs_you": false,
+                "detail": "Full title, who reviews it, the reason they gave"}]}
+
+    "state" is one of SUBMISSIONS_STATES ("" for anything else), "status" the place's own word for it. "detail" is
+    for this PC only: the phone copy leaves it out (phone_snapshot.py). A board without such a file shows its task only."""
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8-sig")) if path else None
+    except (OSError, ValueError):
+        data = None
+    if not isinstance(data, dict):
+        return dict(SUBMISSIONS_NO_STATUS)
+    items = []
+    for row in data.get("items") if isinstance(data.get("items"), list) else []:
+        name = _inbox_text(row.get("name"), 80) if isinstance(row, dict) else ""
+        if not name:
+            continue
+        items.append({
+            "name": name,
+            "state": row.get("state") if row.get("state") in SUBMISSIONS_STATES else "",
+            "status": _inbox_text(row.get("status"), 40),
+            "score": _inbox_text(row.get("score"), 40),
+            "changed": _inbox_when(row.get("changed"), UPKEEP_DAY),
+            "next": _inbox_text(row.get("next"), 200),
+            "detail": _inbox_text(row.get("detail"), 400),
+            "needs_you": row.get("needs_you") is True,
+        })
+    return {
+        "ran": _inbox_when(data.get("ran"), UPKEEP_MOMENT),
+        "ok": data.get("ok") if isinstance(data.get("ok"), bool) else None,
+        "summary": _inbox_text(data.get("summary"), 300),
+        "items": items[:SUBMISSIONS_ITEMS],
+    }
+
+
+def submissions_section() -> dict:
+    """What I handed in and what became of it, from submissions_private.json (git-ignored, next to the code):
+
+    {"boards": [{"name": "Travel claims", "about": "Twice a day: reads where my claims stand",
+                 "task": "Claims watch", "status": "C:\\...\\status.json", "report": "C:\\...\\status.md"}]}
+
+    "task" is the watcher's task in ReachPilot's own folder of Task Scheduler (a launchd agent on a Mac): the card
+    shows when it last looked and when it looks next, and Check now starts it. "status" is the file the watcher
+    writes after each look (see _submissions_status); "report" is a file Open report opens on this PC.
+    Not set up where the file is missing. The paths stay on this PC: the card carries names, states and dates."""
+    boards = _submissions_boards()
+    if not boards:
+        return {"installed": False}
+    tasks = cached("submissions_tasks", 120, lambda: {board["task"]: _task_row(board["task"]) for board in boards if board["task"]})
+    rows = []
+    for index, board in enumerate(boards):
+        rows.append({"index": index, "name": board["name"], "about": board["about"], "task": tasks.get(board["task"]),
+                     "has_report": bool(board["report"]), **_submissions_status(board["status"])})
+    return {"installed": True, "boards": rows}
+
+
+def submissions_todo(section: dict | None) -> list[dict]:
+    """A watcher whose last look failed, and every submission its watcher says needs me (accepted, rejected, changed)."""
+    items = []
+    for board in (section or {}).get("boards") or []:
+        task = board.get("task") or {}
+        name = board["name"]
+        if (task.get("installed") and not task.get("ok")) or board.get("ok") is False:
+            items.append({
+                "priority": 2, "module": "Submissions", "title": f"{name} could not be checked on the last look",
+                "detail": board.get("summary") or f"Task Scheduler result {task.get('last_result') or 'unknown'}.",
+                "action": f"submissions:run:{board['index']}" if task.get("installed") else None,
+                "action_label": "Check again" if task.get("installed") else None, "failed": True, "links": [],
+            })
+        asking = [item for item in board.get("items") or [] if item["needs_you"]]
+        if asking:
+            items.append({
+                "priority": 2, "module": "Submissions", "title": f"{name}: {len(asking)} submission(s) need you",
+                "detail": "Someone decided, or something changed. The Submissions card (Overview) has the rest.",
+                "action": None, "action_label": None,
+                "links": [{"label": item["name"], "url": "", "note": item["next"]} for item in asking],
+            })
+    return items
+
+
+def submissions_action(name: str) -> str:
+    """submissions:run:<board> starts the watcher's task, submissions:open:<board> opens its report on this PC."""
+    _, verb, number = (name.split(":", 2) + ["", ""])[:3]
+    boards = _submissions_boards()
+    if not number.isdigit() or int(number) >= len(boards):
+        raise ValueError(f"Unknown action: {name}")
+    board = boards[int(number)]
+    if verb == "run" and board["task"]:
+        if machine.IS_MAC:
+            machine.start_task(board["task"])
+        else:
+            subprocess.run(["schtasks", "/run", "/tn", TASK_FOLDER + board["task"]], capture_output=True, creationflags=NO_WINDOW)
+        _cache.pop("submissions_tasks", None)
+        return f"{board['name']}: looking now; the card updates when the look is done."
+    if verb == "open":
+        if not board["report"] or not Path(board["report"]).is_file():
+            raise ValueError(f"{board['name']} has not written a report yet.")
+        machine.open_path(Path(board["report"]))
+        return "Report opened."
+    raise ValueError(f"Unknown action: {name}")
+
+
 # ------------------------------------------------------------------ everything for the dashboard
 
 def build(linkedin_overview: dict | None) -> dict:
@@ -2536,7 +2678,8 @@ def build(linkedin_overview: dict | None) -> dict:
                         ("podcast_promotion", podcast_promotion_section), ("launch", launch_section),
                         ("patents", patents_section),
                         ("readers", readers_section), ("shorts", shorts_section), ("replies", replies_section),
-                        ("gmail", gmail_section), ("inbox", inbox_section), ("upkeep", upkeep_section)):
+                        ("gmail", gmail_section), ("inbox", inbox_section), ("upkeep", upkeep_section),
+                        ("submissions", submissions_section)):
         try:
             sections[key] = reader()
         except Exception as error:  # one broken module must not take the dashboard down
@@ -2561,7 +2704,8 @@ def build(linkedin_overview: dict | None) -> dict:
             + replies_todo(sections.get("replies"))
             + gmail_todo(sections.get("gmail"))
             + inbox_todo(sections.get("inbox"))
-            + upkeep_todo(sections.get("upkeep")),
+            + upkeep_todo(sections.get("upkeep"))
+            + submissions_todo(sections.get("submissions")),
             key=lambda item: item["priority"],
         ),
         "help": help_sections(tasks, sections.get("podcast"), sections.get("launch"), sections.get("patents"),

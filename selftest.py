@@ -5950,5 +5950,132 @@ check(all(word not in upkeep_hub.split("# --------------------------------------
           for word in ("Users\\\\", "E:\\\\", "juwen")),
       "hub upkeep: the public code names no folder of anyone's PC")
 
+# ---- hub: the "Submissions" card - watchers named in a private file; their status files are not trusted
+submissions_home = Path(tempfile.mkdtemp(prefix="rp-submissions-"))
+submissions_real = hub.SUBMISSIONS_PRIVATE
+try:
+    hub.SUBMISSIONS_PRIVATE = submissions_home / "submissions_private.json"
+    hub._cache.pop("submissions_tasks", None)
+    check(hub.submissions_section() == {"installed": False} and hub.submissions_todo(hub.submissions_section()) == []
+          and hub.submissions_todo(None) == [],
+          "hub submissions: no file means no card and nothing in To do")
+    for odd in ("", "[]", '{"boards": "x"}', '{"boards": [{"task": "No name"}, 7]}'):
+        hub.SUBMISSIONS_PRIVATE.write_text(odd, encoding="utf-8")
+        check(hub.submissions_section() == {"installed": False},
+              f"hub submissions: a file that is not the card's shape shows nothing ({odd[:12]})")
+    submissions_status = submissions_home / "status.json"
+    submissions_report = submissions_home / "status.md"
+    submissions_status.write_text(json.dumps({
+        "ran": "2026-11-20 15:10", "ok": True, "summary": "2 waiting.  " + "x" * 400,
+        "items": [{"name": "Claim 12", "state": "waiting", "status": "In review", "score": "83 / 63", "changed": "2026-11-20",
+                   "next": "Nothing to do: the reviewer has it.", "needs_you": False, "detail": "Reviewer: someone"},
+                  {"name": "Claim 13", "state": "rejected", "status": "Sent back", "changed": "yesterday", "next": "Read the reason.",
+                   "needs_you": True, "detail": "d" * 900},
+                  {"name": "Claim 14", "state": "exploded", "score": 83, "needs_you": "yes"},
+                  {"state": "waiting"}, "text", {"name": 7}]}), encoding="utf-8")
+    hub.SUBMISSIONS_PRIVATE.write_text(json.dumps({"boards": [
+        {"name": "Claims", "about": "Twice a day", "task": "Claims watch", "status": str(submissions_status),
+         "report": str(submissions_report)},
+        {"name": "Reviews", "task": "..\\Other\\Task"},
+        {"name": "Grants", "task": "Grant watch", "status": 5},
+        {"task": "Nameless"}]}), encoding="utf-8")
+    submissions_asked = []
+
+    def submissions_schtasks(command, **options):
+        submissions_asked.append(command)
+        failed = command[3].endswith("Grant watch")
+        table = ('"TaskName","Next Run Time","Status","Last Run Time","Last Result"\n'
+                 f'"{command[3]}","11/23/2026 9:10:00 AM","Ready","11/20/2026 3:10:00 PM","{1 if failed else 0}"\n')
+        return subprocess.CompletedProcess(command, 0, table if command[1] == "/query" else "", "")
+
+    with mock.patch.object(hub.machine, "IS_MAC", False), mock.patch.object(hub.subprocess, "run", side_effect=submissions_schtasks):
+        submissions = hub.submissions_section()
+        submissions_run_answer = hub.run_action("submissions:run:0")
+    hub._cache.pop("submissions_tasks", None)
+    claims_board, reviews_board, grants_board = submissions["boards"]
+    check(submissions["installed"] and [board["name"] for board in submissions["boards"]] == ["Claims", "Reviews", "Grants"]
+          and [board["index"] for board in submissions["boards"]] == [0, 1, 2],
+          "hub submissions: every named watcher is on the card, one without a name is left out")
+    check(claims_board["task"]["installed"] and claims_board["task"]["ok"] and reviews_board["task"] is None
+          and grants_board["task"]["ok"] is False
+          and sorted(command[3] for command in submissions_asked if command[1] == "/query")
+          == ["\\ReachPilot\\Claims watch", "\\ReachPilot\\Grant watch"],
+          "hub submissions: a watcher's task is read from ReachPilot's own folder; a name with a backslash is never asked for")
+    check(claims_board["ran"] == "2026-11-20 15:10" and claims_board["ok"] is True and len(claims_board["summary"]) == 300
+          and [(item["name"], item["state"], item["status"], item["score"], item["changed"], item["needs_you"])
+               for item in claims_board["items"]]
+          == [("Claim 12", "waiting", "In review", "83 / 63", "2026-11-20", False), ("Claim 13", "rejected", "Sent back", "", "", True),
+              ("Claim 14", "", "", "", "", False)]
+          and len(claims_board["items"][1]["detail"]) == 400,
+          "hub submissions: the status file is read value by value: long text is cut, odd values are dropped, a row needs a name")
+    check(claims_board["has_report"] and not grants_board["has_report"] and grants_board["items"] == []
+          and str(submissions_home) not in json.dumps(submissions),
+          "hub submissions: the card carries names, states and dates, and no path of this PC")
+    submissions_asks = hub.submissions_todo(submissions)
+    check([(item["priority"], item["title"], item.get("failed", False)) for item in submissions_asks]
+          == [(2, "Claims: 1 submission(s) need you", False), (2, "Grants could not be checked on the last look", True)]
+          and submissions_asks[0]["links"] == [{"label": "Claim 13", "url": "", "note": "Read the reason."}]
+          and submissions_asks[1]["action"] == "submissions:run:2" and all(item["module"] == "Submissions" for item in submissions_asks)
+          and "d" * 20 not in json.dumps(submissions_asks),
+          "hub submissions: To do lists what needs me, without the detail, and a failed look with Check again")
+    check(submissions_run_answer.startswith("Claims: looking now")
+          and ["schtasks", "/run", "/tn", "\\ReachPilot\\Claims watch"] in submissions_asked,
+          "hub submissions: Check now starts the watcher's own task")
+
+    def submissions_refuses(name):
+        try:
+            hub.run_action(name)
+        except ValueError as error:
+            return str(error)
+        return ""
+
+    check(all(submissions_refuses(name) for name in ("submissions:run:1", "submissions:run:9", "submissions:run:x", "submissions:run:0:extra",
+                                                      "submissions:open:0", "submissions:open:2", "submissions:nonsense:0", "submissions:")),
+          "hub submissions: an unknown watcher or verb is refused, and so is a report that was not written")
+    submissions_report.write_text("# status", encoding="utf-8")
+    with mock.patch.object(hub.machine, "open_path") as submissions_opened:
+        submissions_open_answer = hub.run_action("submissions:open:0")
+    check(submissions_open_answer == "Report opened." and submissions_opened.call_args[0] == (submissions_report,),
+          "hub submissions: Open report opens the watcher's report file on this PC")
+    check(hub.phone_allowed("submissions:run:0") and not hub.phone_allowed("submissions:open:0")
+          and not hub.phone_allowed("submissions:") and not hub.phone_allowed("submissions"),
+          "hub submissions: Check now runs from the phone, Open report does not")
+    import phone_snapshot
+
+    submissions_phone = phone_snapshot.without_submission_details({"hub": {"submissions": json.loads(json.dumps(submissions))}})
+    submissions_phone_items = submissions_phone["hub"]["submissions"]["boards"][0]["items"]
+    check([item["detail"] for item in submissions_phone_items] == ["", "", ""]
+          and [item["name"] for item in submissions_phone_items] == ["Claim 12", "Claim 13", "Claim 14"]
+          and claims_board["items"][0]["detail"] == "Reviewer: someone"
+          and phone_snapshot.without_submission_details({}) == {}
+          and phone_snapshot.without_submission_details({"hub": {"submissions": {"installed": False}}})
+          == {"hub": {"submissions": {"installed": False}}},
+          "hub submissions: the phone copy keeps names and states and leaves the detail on this PC")
+    with mock.patch.object(hub.machine, "IS_MAC", True), \
+         mock.patch.object(hub.machine, "task_info", side_effect=lambda name: {"name": name, "installed": True, "state": "Ready",
+                                                                             "last_run": "", "next_run": "", "last_result": "0", "ok": True}), \
+         mock.patch.object(hub.machine, "start_task") as submissions_mac_run, \
+         mock.patch.object(hub.subprocess, "run", side_effect=AssertionError("no schtasks on a Mac")):
+        submissions_mac = hub.submissions_section()
+        hub.run_action("submissions:run:2")
+    hub._cache.pop("submissions_tasks", None)
+    check(submissions_mac["boards"][0]["task"]["installed"] and submissions_mac_run.call_args[0] == ("Grant watch",),
+          "hub submissions: on a Mac the watchers are read from launchd and Check now starts the agent")
+finally:
+    hub.SUBMISSIONS_PRIVATE = submissions_real
+    hub._cache.pop("submissions_tasks", None)
+    shutil.rmtree(submissions_home, ignore_errors=True)
+check("${submissionsCard(h.submissions)}" in upkeep_page and "if (!submissions || !submissions.installed) return \"\";" in upkeep_page
+      and "submissions:run:${board.index}" in upkeep_page and "submissions:open:${board.index}" in upkeep_page
+      and 'submissions: "overview"' in upkeep_page
+      and '("submissions", submissions_section)' in upkeep_hub and 'submissions_todo(sections.get("submissions"))' in upkeep_hub,
+      "hub submissions: Overview draws the card with Check now and Open report, and hides it where it is not set up")
+check("submissions_private.json" in (Path(__file__).parent / ".gitignore").read_text(encoding="utf-8").split(),
+      "hub submissions: the list of watchers stays out of the repository")
+check(all(word not in upkeep_hub.split("# ------------------------------------------------------------------ submissions")[1]
+          .split("# ------------------------------------------------------------------ everything")[0]
+          for word in ("Users\\\\", "E:\\\\", "juwen")),
+      "hub submissions: the public code names no folder of anyone's PC")
+
 print("\nALL PASSED" if not failures else f"\n{len(failures)} FAILED")
 sys.exit(1 if failures else 0)

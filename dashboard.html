@@ -187,6 +187,9 @@
   .upkeep .hint { margin-top: 3px; overflow-wrap: anywhere; }
   .upkeep ul { margin: 6px 0 0; padding-left: 18px; }
   .upkeep li .btn { min-height: 28px; margin: 2px 0 2px 6px; padding: 2px 10px; font-size: 13px; }
+  /* Submissions: one line per thing handed in, under its watcher */
+  .submissions .item { margin-top: 10px; }
+  .submissions .actions { margin-top: 12px; }
   .note-form { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
   .note-form input { flex: 1 1 260px; min-height: 34px; max-width: 100%; padding: 6px 8px; border: 1px solid var(--line-strong);
     border-radius: 6px; background: var(--surface); color: var(--ink); font: inherit; }
@@ -1004,7 +1007,7 @@ function link(url, label) {
   return url ? `<a href="${esc(url)}" target="_blank" rel="noopener">${esc(label)}</a>` : esc(label);
 }
 
-const MODULE_TAB = { jobs: "jobs", "job search": "jobs", "e-mail": "email", email: "email", linkedin: "linkedin", promote: "promote", "creator outreach": "promote", podcast: "podcast", patents: "patents", launch: "launch", replies: "reach", gmail: "reach", "this pc": "overview" };
+const MODULE_TAB = { jobs: "jobs", "job search": "jobs", "e-mail": "email", email: "email", linkedin: "linkedin", promote: "promote", "creator outreach": "promote", podcast: "podcast", patents: "patents", launch: "launch", replies: "reach", gmail: "reach", "this pc": "overview", submissions: "overview" };
 
 function todoKey(item) {
   return `${item.module}|${item.title}|${item.detail}`;
@@ -1409,6 +1412,42 @@ function upkeepCard(upkeep) {
   return `<div class="card module upkeep" id="upkeep-card"><h3>This PC <span class="hint">clean-up, backup, sync</span></h3>${jobs}</div>`;
 }
 
+// What I handed in somewhere and that waits for someone else's decision (hub.submissions_section reads
+// submissions_private.json): one block per watcher, one line per submission. Not drawn where that file is missing.
+// Check now starts the watcher's scheduled task. "detail" (who reviews it, what they said) is only in the data on the PC.
+const SUBMISSION_STATE = { waiting: ["grey", "Waiting"], accepted: ["good", "Accepted"], rejected: ["bad", "Rejected"],
+  changed: ["warn", "Changed"], gone: ["bad", "Not found"] };
+function submissionsCard(submissions) {
+  if (!submissions || !submissions.installed) return "";
+  const boards = (submissions.boards || []).map((board) => {
+    const task = board.task && board.task.installed ? board.task : null;
+    const failed = (task && !task.ok) || board.ok === false;
+    const state = failed ? `<span class="badge bad">Not checked</span>`
+      : task && !task.last_run && !board.ran ? `<span class="badge grey">Not checked yet</span>`
+      : task || board.ran ? "" : `<span class="badge grey">No scheduled task</span>`;
+    const when = [board.ran ? `checked ${esc(niceDate(board.ran))}` : task && task.last_run ? `checked ${esc(task.last_run)}` : "",
+      task && task.next_run ? `next ${esc(task.next_run)}` : ""].filter(Boolean).join(" · ");
+    const items = (board.items || []).map((item) => {
+      const [tone, word] = SUBMISSION_STATE[item.state] || ["grey", item.status || "Unknown"];
+      const facts = [item.state && item.status !== word ? esc(item.status) : "", esc(item.score),
+        item.changed ? `changed ${esc(niceDate(item.changed))}` : ""].filter(Boolean).join(" · ");
+      return `<div class="item">
+        <div><b>${esc(item.name)}</b> <span class="badge ${tone}">${esc(word)}</span>${item.needs_you ? ` <span class="badge warn">Needs you</span>` : ""}${facts ? ` <span class="when">${facts}</span>` : ""}</div>
+        ${item.next ? `<div class="hint">${esc(item.next)}</div>` : ""}
+        ${item.detail ? `<div class="hint">${esc(item.detail)}</div>` : ""}
+      </div>`;
+    }).join("");
+    return `<div class="job">
+      <div><b>${esc(board.name)}</b> ${state}${when ? ` <span class="when">${when}</span>` : ""}</div>
+      ${board.about ? `<div class="hint">${esc(board.about)}</div>` : ""}
+      ${board.summary ? `<div class="hint">${esc(board.summary)}</div>` : ""}
+      ${items}
+      <div class="actions">${task ? actionButton(`submissions:run:${board.index}`, "Check now", true) : ""}${board.has_report ? actionButton(`submissions:open:${board.index}`, "Open report", true) : ""}</div>
+    </div>`;
+  }).join("");
+  return `<div class="card module upkeep submissions" id="submissions-card"><h3>Submissions <span class="hint">handed in, waiting for a decision</span></h3>${boards}</div>`;
+}
+
 function renderOverview(d) {
   keepingState(document.getElementById("overview"), () => drawOverview(d));
 }
@@ -1482,6 +1521,7 @@ function drawOverview(d) {
       ${readers.map(readersCard).join("")}
       ${shorts.map(shortsCard).join("")}
       ${upkeepCard(h.upkeep)}
+      ${submissionsCard(h.submissions)}
       ${patents ? `<div class="card module">
         <h3>Patents <button class="btn ghost" data-goto="patents">Open</button></h3>
         ${patents.has_scan ? `<div class="big">${patentHeadline(patents.counts)}</div>

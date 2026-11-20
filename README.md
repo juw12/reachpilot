@@ -506,6 +506,27 @@ names a command, and that command is only ever handed a folder name from that li
 report** opens on the PC. A failed run, a line in `attention` and the folders about to be removed also land in
 To do. The phone copy shows the card too; Run now and Keep work from there, Open report does not.
 
+**Submissions card.** Overview can also show what you handed in somewhere and that now waits for someone else's
+decision (a request, an application, a review), so you do not have to go and look. A small watcher of your own
+reads that place on a schedule and writes one status file; ReachPilot only shows it. Name the watcher in
+`submissions_private.json` (git-ignored, next to the code); the card is shown only where that file exists:
+
+```json
+{"boards": [{"name": "Travel claims", "about": "Twice a day: reads where my claims stand",
+             "task": "Claims watch",
+             "status": "C:\\path\\to\\status.json", "report": "C:\\path\\to\\status.md"}]}
+```
+
+`task` is the watcher's task in the `\ReachPilot\` folder of Task Scheduler (a launchd agent on a Mac): the card
+shows when it last looked and when it looks next, and **Check now** starts it. `status` is the file the watcher
+writes after each look: `{"ran": "2026-11-20 15:10", "ok": true, "summary": "3 waiting, 1 accepted.", "items":
+[{"name": "Claim 12", "state": "waiting", "status": "In review", "score": "83 / 63", "changed": "2026-11-20",
+"next": "Nothing to do: the reviewer has it.", "needs_you": false, "detail": "who reviews it, what they said"}]}`.
+`state` is `waiting`, `accepted`, `rejected`, `changed` or `gone`; `status` is the place's own word. A row with
+`needs_you` and a look that failed also land in To do. `report` is a file **Open report** opens on the PC. The
+phone copy shows the card without `detail` (it can name other people); Check now works from there, Open report
+does not.
+
 **Shorts.** `python shorts.py install` adds an hourly task (`\ReachPilot\Shorts`) for a channel of short videos
 that something else makes. Each finished video has a small post file next to it (`*_post.json`: id, title,
 caption, hashtags, video). The task copies finished videos into `data/shorts/`, gives the next one a public

@@ -150,11 +150,23 @@ def without_mail_text(data: dict) -> dict:
     return data
 
 
+def without_submission_details(data: dict) -> dict:
+    """The Submissions card on the phone: names, states, scores and dates only. "detail" (the full title, who
+    reviews it and what they answered) names other people and stays on this PC."""
+    hub = data.get("hub") if isinstance(data.get("hub"), dict) else {}
+    card = hub.get("submissions")
+    for board in (card.get("boards") or []) if isinstance(card, dict) else []:
+        for item in (board.get("items") or []) if isinstance(board, dict) else []:
+            if isinstance(item, dict):
+                item["detail"] = ""
+    return data
+
+
 def render(data: dict, page: str, built_at: str) -> str:
     page = page.replace("__RP_TOKEN__", "demo")  # "demo" also turns off the local auto-update poll
     icon = "data:image/svg+xml;base64," + base64.b64encode(ICON.read_bytes()).decode("ascii")
     page = page.replace('src="/icon.svg"', f'src="{icon}"').replace('href="/icon.svg"', f'href="{icon}"')
-    shim = SHIM % (built_at, json.dumps(without_mail_text(without_local_images(data)), ensure_ascii=False).replace("</", "<\\/"),
+    shim = SHIM % (built_at, json.dumps(without_submission_details(without_mail_text(without_local_images(data))), ensure_ascii=False).replace("</", "<\\/"),
                    json.dumps(READ_ONLY))
     return page.replace("<head>", "<head>\n" + shim, 1)
 
