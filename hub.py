@@ -938,12 +938,40 @@ def podcast_promotion_section() -> dict:
     return cached("podcast_promotion", 60, build)
 
 
-def podcast_promotion_todo(promotion: dict | None) -> list[dict]:
-    """One reminder while directories are still to do (it stays until each is listed or marked as submitted)."""
-    if not promotion or not promotion.get("installed") or not promotion.get("todo"):
+def apple_late_todo(promotion: dict | None) -> list[dict]:
+    """Apple Podcasts reads the feed by itself. An episode it still does not show two days after it went out
+    needs a push: Podcasts Connect, the show, Refresh feed."""
+    apple = (promotion or {}).get("apple") or {}
+    late = [entry for entry in apple.get("late") or [] if isinstance(entry, dict)]
+    if not (promotion or {}).get("installed") or not late:
         return []
-    rows = [row for row in promotion.get("directories") or [] if row.get("status") == "todo"]
     return [{
+        "priority": 2,
+        "module": "Podcast",
+        "title": f"Apple Podcasts has not picked up {len(late)} episode{'' if len(late) == 1 else 's'}",
+        "detail": "Out for more than two days and still not on Apple: "
+                  + "; ".join(f"{str(entry.get('published') or '')[:10]} {entry.get('title') or entry.get('slug') or ''}".strip()
+                              for entry in late[:5])
+                  + ". Open Podcasts Connect, choose the show and press Refresh feed. "
+                    "Check that the episode is on the feed first (Feed link).",
+        "action": "podcast:promo-refresh",
+        "action_label": "Ask Apple again",
+        "links": [{"label": "Podcasts Connect", "url": "https://podcastsconnect.apple.com/"},
+                  {"label": "Feed", "url": str(promotion.get("feed_url") or "")}],
+        "failed": True,
+    }]
+
+
+def podcast_promotion_todo(promotion: dict | None) -> list[dict]:
+    """One reminder while directories are still to do (it stays until each is listed or marked as submitted),
+    and one when Apple is behind on an episode."""
+    if not promotion or not promotion.get("installed"):
+        return []
+    late = apple_late_todo(promotion)
+    if not promotion.get("todo"):
+        return late
+    rows = [row for row in promotion.get("directories") or [] if row.get("status") == "todo"]
+    return late + [{
         "priority": 3,
         "module": "Podcast",
         "title": f"List the podcast on {len(rows)} more director{'y' if len(rows) == 1 else 'ies'}",
@@ -2021,7 +2049,7 @@ def todo_items(linkedin: dict | None, jobs: dict, email: dict, tasks: dict, podc
 # ------------------------------------------------------------------ help text
 
 def help_sections(tasks: dict, podcast: dict | None = None, launch: dict | None = None,
-                  patents: dict | None = None, tradebot: dict | None = None) -> list[dict]:
+                  patents: dict | None = None, tradebot: dict | None = None, gmail: dict | None = None) -> list[dict]:
     def when(key, fallback):
         task = tasks.get(key, {})
         return f"Next run: {task['next_run']}" if task.get("next_run") and task.get("installed") else fallback
@@ -2120,6 +2148,20 @@ def help_sections(tasks: dict, podcast: dict | None = None, launch: dict | None 
                    "real mode with the sentence typed by hand). A silent sender or a tripped safety stop shows up in To do, "
                    "urgent when real money is in play. Trading can lose money; nothing here promises a result.",
         })
+    if gmail and gmail.get("installed"):
+        entries.append({
+            "module": "Gmail answers",
+            "runs": "Titip (its own program on this PC) looks at new Gmail every 10 minutes, in Chrome. ReachPilot shows "
+                    "what it did and passes your buttons on.",
+            "auto": "Reads new mail in the Primary tab. A short answer that promises nothing goes out by itself: only to the "
+                    "sender, at most 8 a day, one per conversation in 12 hours. Mail about money, a job, a contract, a code "
+                    "or personal papers is kept for you with a suggested answer. Newsletters, receipts and machines are left "
+                    "alone. A mail it could not judge is read again, three times. It never forwards, deletes, follows a link "
+                    "or opens an attachment. These limits are in Titip's code, not in a prompt.",
+            "you": "Answer what waits on the Reach page or in To do: Send, Write my own or Don't answer. "
+                   "Keep this PC unlocked and Chrome signed in to Gmail. On the phone the card shows counts, senders and "
+                   "subjects only; the words of a mail are not copied to the phone view.",
+        })
     return entries
 
 
@@ -2149,6 +2191,7 @@ PHONE_VERBS = {
     "launch": {"followup", "replied", "no_reply", "reply_read", "approve_invites", "shared", "wa_done"},
     "shorts": {"pause", "resume"},
     "replies": {"send", "say", "skip", "mode"},
+    "gmail": {"check", "mode"},  # an answer to a mail is only sent from the PC: the phone copy carries no mail text
     "inbox": None,  # every answer on the inbox card only writes inbox_answers.json
 }
 PHONE_PC_ONLY = "This button only works on your PC: it opens a window or a file there."
@@ -2260,6 +2303,11 @@ def run_action(name: str) -> str:
         import replies
 
         return replies.action(name)
+    if name.startswith("gmail:"):
+        import gmail_answers
+
+        _cache.pop("gmail", None)
+        return gmail_answers.action(name)
     if name.startswith("inbox:"):
         return inbox_action(name)
     raise ValueError(f"Unknown action: {name}")
@@ -2530,6 +2578,95 @@ def replies_todo(section: dict | None) -> list[dict]:
     return items
 
 
+# ------------------------------------------------------------------ Gmail answers (Titip's Autopilot on this PC)
+
+def gmail_section() -> dict:
+    """What Titip's Autopilot did with new Gmail and what waits for an answer (gmail_answers.py). Asks this PC only."""
+    import gmail_answers
+
+    return cached("gmail", 15, gmail_answers.card)
+
+
+def gmail_todo(section: dict | None) -> list[dict]:
+    """Mail that waits for an answer, mail that could not be judged, and an Autopilot that is closed or stuck."""
+    section = section or {}
+    if not section.get("installed"):
+        return []
+    box = ", ".join(section.get("mailboxes") or []) or "Gmail"
+    items = []
+
+    def mail_links(rows: list[dict], buttons) -> list[dict]:
+        links = []
+        for row in rows:
+            note = " · ".join(part for part in (
+                row.get("summary"), f"Kept because: {row['reason']}" if row.get("reason") else "",
+                f"Not sent: {row['error']}" if row.get("error") else "",
+                f"Suggested answer: {row['draft'][:300]}" if row.get("draft") else "") if part)
+            links.append({"label": f"{row.get('sender') or row.get('address') or 'Unknown sender'}: {row.get('subject') or '(no subject)'}",
+                          "url": row.get("url") or "", "note": note, "actions": buttons(row), "mail": True})
+        return links
+
+    if not section.get("readable", True):
+        return [{"priority": 3, "module": "Gmail", "title": "Gmail answers: Titip's state could not be read",
+                 "detail": str(section.get("error") or ""), "action": None, "action_label": None, "links": [], "failed": True}]
+    if not section.get("running") and section.get("on"):
+        can_start = bool(section.get("can_start"))
+        items.append({
+            "priority": 2, "module": "Gmail",
+            "title": "Gmail answers have stopped: Titip is closed",
+            "detail": f"No mail in {box} is read or answered until Titip runs again."
+                      + ("" if can_start else " Start Titip from its own folder (Titip.pyw)."),
+            "action": "gmail:start" if can_start else None, "action_label": "Start Titip" if can_start else None,
+            "links": [], "failed": True,
+        })
+    elif section.get("problem"):
+        items.append({
+            "priority": 2, "module": "Gmail",
+            "title": "Gmail could not be read or answered at the last look",
+            "detail": f"{section['problem']} ({box}, {section.get('problem_at') or 'just now'}). The next look tries again.",
+            "action": "gmail:check", "action_label": "Check now", "links": [], "failed": True,
+        })
+    elif section.get("late"):
+        items.append({
+            "priority": 2, "module": "Gmail",
+            "title": "Gmail has not been looked at for over 30 minutes",
+            "detail": f"Titip is on but its last look at {box} was {section.get('last_check') or 'never'}. "
+                      "It needs this PC unlocked and Chrome signed in to Gmail.",
+            "action": "gmail:check", "action_label": "Check now", "links": [], "failed": True,
+        })
+    waiting = section.get("waiting") or []
+    if waiting:
+        def buttons(row: dict) -> list[dict]:
+            if row.get("sending"):
+                return []
+            return ([{"name": f"gmail:send:{row['id']}", "label": "Send"}] if row.get("draft") else []) + [
+                {"name": f"gmail:say:{row['id']}|", "label": "Write my own",
+                 "ask": f"Your answer to {row.get('sender') or row.get('address')} (up to 1500 characters)", "most": 1500},
+                {"name": f"gmail:skip:{row['id']}", "label": "Don't answer"}]
+
+        items.append({
+            "priority": 2, "module": "Gmail",
+            "title": f"{len(waiting)} mail{'' if len(waiting) == 1 else 's'} in {box} wait{'s' if len(waiting) == 1 else ''} for your answer",
+            "detail": "Kept for you because they are about money, a job, a contract, a code or personal papers, or the answer "
+                      "would promise something. Send uses the suggested answer; Don't answer leaves the mail in Gmail.",
+            "action": None, "action_label": None, "links": mail_links(waiting, buttons),
+            "failed": any(row.get("error") for row in waiting),
+        })
+    failed = section.get("failed") or []
+    if failed:
+        items.append({
+            "priority": 3, "module": "Gmail",
+            "title": f"{len(failed)} mail{'' if len(failed) == 1 else 's'} in {box} could not be judged",
+            "detail": "The model did not answer or Gmail's page did not show the sender, so nothing was decided and nothing "
+                      "was sent. They are still unread in Gmail: open the ones that matter, then clear the list. "
+                      "From Titip 0.8.1 on such a mail is read again by itself, three times, before it lands here.",
+            "action": "gmail:clear", "action_label": "Clear these",
+            "links": mail_links(failed, lambda row: [{"name": f"gmail:skip:{row['id']}", "label": "Clear"}]),
+            "failed": True,
+        })
+    return items
+
+
 # ------------------------------------------------------------------ everything for the dashboard
 
 def build(linkedin_overview: dict | None) -> dict:
@@ -2540,7 +2677,7 @@ def build(linkedin_overview: dict | None) -> dict:
                         ("podcast_promotion", podcast_promotion_section), ("launch", launch_section),
                         ("patents", patents_section), ("tradebot", tradebot_section),
                         ("readers", readers_section), ("shorts", shorts_section), ("replies", replies_section),
-                        ("inbox", inbox_section)):
+                        ("gmail", gmail_section), ("inbox", inbox_section)):
         try:
             sections[key] = reader()
         except Exception as error:  # one broken module must not take the dashboard down
@@ -2564,9 +2701,10 @@ def build(linkedin_overview: dict | None) -> dict:
             + tradebot_todo(sections.get("tradebot"))
             + shorts_todo(sections.get("shorts"))
             + replies_todo(sections.get("replies"))
+            + gmail_todo(sections.get("gmail"))
             + inbox_todo(sections.get("inbox")),
             key=lambda item: item["priority"],
         ),
         "help": help_sections(tasks, sections.get("podcast"), sections.get("launch"), sections.get("patents"),
-                              sections.get("tradebot")),
+                              sections.get("tradebot"), sections.get("gmail")),
     }

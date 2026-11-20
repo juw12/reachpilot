@@ -418,7 +418,11 @@ and a language index.
 When the podcast module ships `promotion.py`, a **Podcast** tab tracks its promotion: which directories list the show
 (with Mark as submitted for the ones that can't be checked), downloads per week and per episode from OP3, series compared,
 where each episode was announced and the follower counts on those channels. The tab only reads files; when the download
-numbers are older than 15 minutes it starts `promotion.py refresh` in the background.
+numbers are older than 15 minutes it starts `promotion.py refresh` in the background. Once the show's Apple link is
+in the module's `listen_links`, the module asks Apple every 2 hours which episodes it shows: the Episodes table says
+**On Apple**, **not yet** or **missing** per episode, and an episode that is out for more than two days and still not
+on Apple becomes a To do (Podcasts Connect, the show, Refresh feed). Without Apple's answer the column says
+"not checked". Nothing has to be uploaded to Apple: it reads the same feed.
 
 The **Launch tests** page shows a card for each launch test listed in `LAUNCH_TESTS` in `hub.py` (the Overview keeps
 a one-line summary with an Open button): the test's own
@@ -553,6 +557,19 @@ A sign-in made before this existed may only post. The card and To do then say so
 What was found and answered is kept in `data/replies/` (git-ignored). `python replies.py show` prints what the card
 shows.
 
+**Gmail answers.** Where [Titip](https://github.com/juw12/titip) is set up on the same PC, the Reach page has a
+**Gmail answers** card. Titip, not ReachPilot, reads new Gmail in Chrome every 10 minutes: a short answer that
+promises nothing goes out by itself (only to the sender, at most 8 a day, one per conversation in 12 hours), mail
+about money, a job, a contract, a code or personal papers is kept with a suggested answer, and newsletters, receipts
+and machines are left alone. Those limits are in Titip's code. `gmail_answers.py` reads Titip's state from this PC's
+own address (`127.0.0.1:47780`; from `~/.titip/autopilot.json` when Titip is closed) and passes the buttons on:
+**Send**, **Write my own**, **Don't answer**, **Clear these** (mail that could not be judged), **Ask me first** /
+**Answer safe mail by itself**, **Check now**, **Pause** and **Start Titip**. To do lists the mail that waits, a
+Titip that is closed, a last look that failed and a look that is more than 30 minutes late.
+`python gmail_answers.py` prints the counts without any mail text. On the phone copy the card carries counts,
+senders and subjects only: what a mail says and its suggested answer stay on the PC, and an answer cannot be sent
+from the phone (Check now and the two modes can be pressed there).
+
 **Patent screen.** `python patents.py install` adds a daily task (`\ReachPilot\Patent screen`, every day 09:00) and a
 **Patents** page. Each run reads the description and README of every repository you own, private ones included
 when `gh` is signed in, and answers three questions per project:
@@ -624,6 +641,7 @@ again on the next daily run. `python patent_desk.py show` prints the desk.
 | `launch_auto.py` | hourly launch automations: an answer and one follow-up, invitations after approval, daily checks of a waiting document |
 | `shorts.py` | hourly: a channel's finished short videos, scheduled for X through Buffer one at a time |
 | `replies.py` | every 30 minutes: comments and messages on Bluesky, Mastodon and Dev.to, with an answer you send or that goes by itself |
+| `gmail_answers.py` | the Gmail answers card: what Titip's Autopilot did with new Gmail on this PC, and its buttons |
 | `selfupdate.py` | fast-forward updater used by the dashboard and the Updates task; installs newly required packages |
 | `leakcheck.py` | no private repository name in the files or the history (run in CI, names never printed) |
 | `selftest.py` | tests (run in CI) |

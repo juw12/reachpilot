@@ -684,6 +684,63 @@ function repliesCard(r) {
     </div>`;
 }
 
+// Gmail answers: what Titip's Autopilot did with new Gmail on this PC, and the mail that waits for me (gmail_answers.py).
+function gmailCard(g) {
+  if (!g || !g.installed) return "";
+  if (g.readable === false) return `<div class="card"><h3>Gmail answers</h3><div class="problem">${esc(g.error || "Titip's state could not be read.")}</div></div>`;
+  const alone = g.mode === "auto";
+  const counts = g.counts || {};
+  const box = (g.mailboxes || []).join(", ") || "Gmail";
+  const state = !g.running ? `<span class="badge bad">Titip is closed</span>`
+    : !g.on ? `<span class="badge grey">Paused</span>`
+    : `<span class="badge ${alone ? "good" : "grey"}">${alone ? "Answers safe mail by itself" : "Asks you first"}</span>`;
+  const sayButton = (w) => `<button class="btn ghost" data-say="${esc(`gmail:say:${w.id}|`)}" data-most="1500" data-question="${esc(`Your answer to ${w.sender || w.address} (up to 1500 characters)`)}" data-now>Write my own</button>`;
+  const mail = (w) => `<div class="hint">${esc(niceDate(w.at))} &middot; <b>${esc(w.sender || w.address || "Unknown sender")}</b>${w.address && w.sender ? ` &lt;${esc(w.address)}&gt;` : ""} ${w.url ? link(w.url, "Open in Gmail") : ""}</div>
+      <div class="said">${esc(w.subject || "(no subject)")}</div>`;
+  // A mail's summary and draft are missing in the phone copy on purpose (phone_snapshot.py): there it says where to read them.
+  const waiting = (g.waiting || []).map((w) => `<div class="reply">
+      ${mail(w)}
+      ${w.summary ? `<div>${esc(w.summary)}</div>` : ""}
+      ${w.reason ? `<div class="hint">Kept because: ${esc(w.reason)}</div>` : ""}
+      ${w.draft ? `<div><span class="hint">Suggested answer:</span><div class="said" style="white-space:pre-wrap">${esc(w.draft)}</div></div>` : w.hidden ? `<div class="hint">${esc(w.hidden)}</div>` : `<div class="hint">No suggested answer: needs your own words.</div>`}
+      ${w.error ? `<div class="problem">Not sent: ${esc(w.error)}</div>` : ""}
+      <div class="actions">${w.hidden ? "" : w.sending ? `<span class="hint">Titip is sending it now&hellip;</span>`
+        : `${w.draft ? actionButton(`gmail:send:${w.id}`, "Send") : ""}${sayButton(w)}${actionButton(`gmail:skip:${w.id}`, "Don't answer", true)}`}</div>
+    </div>`).join("");
+  const failed = (g.failed || []).map((w) => `<div class="reply">
+      ${mail(w)}
+      <div class="problem">${esc(w.reason)}</div>
+      <div class="actions">${actionButton(`gmail:skip:${w.id}`, "Clear", true)}</div>
+    </div>`).join("");
+  const BADGE = { sent: "good", held: "warn", retry: "warn", error: "bad" };
+  const recent = (g.recent || []).map((e) => `<div class="hint">${esc(niceDate(e.at))} &middot; <span class="badge ${BADGE[e.kind] || "grey"}">${esc(e.label)}</span>
+      ${e.who ? `<b>${esc(e.who)}</b>` : ""}${e.subject ? `: ${esc(e.subject)}` : ""}${e.text ? ` &mdash; ${esc(e.text.slice(0, 200))}` : ""}</div>`).join("");
+  return `<div class="card">
+      <h3>Gmail answers <span class="hint">&middot; ${esc(box)}</span></h3>
+      <p class="hint">${state}
+        Titip reads new mail in ${esc(box)} every 10 minutes. ${alone ? "A short answer that promises nothing goes out by itself, only to the sender, at most " + num(g.daily_limit) + " a day." : "Nothing is sent by itself."}
+        Mail about money, a job, a contract, a code or personal papers always waits for you with a suggested answer; newsletters, receipts and machines are left alone.
+        ${g.last_check ? `Last look: ${esc(niceDate(g.last_check))}${g.next_check ? `, next: ${esc(niceDate(g.next_check))}` : ""}.` : ""}${g.busy ? ` <b>${esc(g.busy)}&hellip;</b>` : ""}</p>
+      ${g.running ? "" : `<div class="problem">${esc(g.error || "Titip is not running on this PC.")}</div>`}
+      ${g.problem ? `<div class="problem">Last look: ${esc(g.problem)}</div>` : ""}
+      <div class="grid">
+        ${kpi("Answered today", `${num(g.sent_today)} / ${num(g.daily_limit)}`, "Sent by itself")}
+        ${kpi("Waiting for you", num((g.waiting || []).length), (g.failed || []).length ? `${num(g.failed.length)} more could not be judged` : "With a suggested answer")}
+        ${kpi("Answered", num(counts.sent), g.since ? `Since ${esc(niceDate(g.since))}` : "")}
+        ${kpi("Left alone", num(counts.left), "Newsletters, receipts, machines")}
+      </div>
+      ${waiting || `<div class="empty">No mail is waiting for your answer.</div>`}
+      ${failed ? `<details><summary>Could not be judged (${num(g.failed.length)})</summary>
+        <p class="hint">The model did not answer or Gmail's page did not show the sender, so nothing was decided and nothing was sent. These are still unread in Gmail. From Titip 0.8.1 on such a mail is read again by itself, three times, before it lands here.</p>
+        ${failed}<div class="actions">${actionButton("gmail:clear", "Clear these", true)}</div></details>` : ""}
+      <div class="actions">${!g.running ? (g.can_start ? actionButton("gmail:start", "Start Titip") : "")
+        : `${g.on ? `${alone ? actionButton("gmail:mode:review", "Ask me first", true)
+            : actionButton("gmail:mode:auto", "Answer safe mail by itself", true, "From now on a short answer that promises nothing is sent by itself, only to the sender, at most 8 a day. Mail about money, a job, a contract, a code or personal papers still waits for you. Turn this on?")}${actionButton("gmail:check", "Check now", true)}${actionButton("gmail:switch:off", "Pause", true)}`
+          : actionButton("gmail:switch:on", "Turn on")}${g.page ? link(g.page, "Open Titip's Autopilot page") : ""}`}</div>
+      ${recent ? `<details><summary>What it did lately</summary>${recent}</details>` : ""}
+    </div>`;
+}
+
 function renderReach(d) {
   const o = d.overview;
   const posted = d.history.filter((p) => p.status === "posted");
@@ -740,6 +797,7 @@ function renderReach(d) {
         <tbody>${platformRows || `<tr class="quiet"><td colspan="5">No platform is connected yet.</td></tr>`}</tbody></table></div>
     </div>
     ${repliesCard(d.hub && d.hub.replies)}
+    ${gmailCard(d.hub && d.hub.gmail)}
     <div class="card">
       <h3>What ReachPilot changed on your accounts</h3>
       ${pl.actions.length ? `<div class="scroll" tabindex="0" role="region" aria-label="Scrollable table"><table>
@@ -944,7 +1002,7 @@ function link(url, label) {
   return url ? `<a href="${esc(url)}" target="_blank" rel="noopener">${esc(label)}</a>` : esc(label);
 }
 
-const MODULE_TAB = { jobs: "jobs", "job search": "jobs", "e-mail": "email", email: "email", linkedin: "linkedin", promote: "promote", "creator outreach": "promote", podcast: "podcast", patents: "patents", launch: "launch", tradebot: "tradebot", replies: "reach" };
+const MODULE_TAB = { jobs: "jobs", "job search": "jobs", "e-mail": "email", email: "email", linkedin: "linkedin", promote: "promote", "creator outreach": "promote", podcast: "podcast", patents: "patents", launch: "launch", tradebot: "tradebot", replies: "reach", gmail: "reach" };
 
 function todoKey(item) {
   return `${item.module}|${item.title}|${item.detail}`;
@@ -1978,7 +2036,7 @@ function renderPodcast(d) {
       ? actionButton(`podcast:unlisted:${row.id}`, "Undo", true)
       : row.status === "todo" || row.status === "unknown" ? actionButton(`podcast:listed:${row.id}`, "Mark as submitted") : "";
     const state = row.status === "listed"
-      ? `checked by ${esc(row.checked_by)}${row.link ? ` · ${link(row.link, "their page")}` : ""}`
+      ? `checked by ${esc(row.checked_by)}${row.link ? ` · ${link(row.link, "their page")}` : ""}${row.detail ? ` · ${esc(row.detail)}` : ""}`
       : row.status === "submitted" ? `your mark, ${esc(when(row.marked))}`
       : row.status === "unknown" ? esc(row.detail || "") : "";
     return `<tr>
@@ -1996,6 +2054,18 @@ function renderPodcast(d) {
       + (other.length ? ` <span class="hint">(${other.map((post) => `${esc(post.channel)}: ${esc(post.status)}`).join(", ")})</span>` : "")
       || `<span class="hint">not announced</span>`;
   };
+  // Apple Podcasts reads the feed by itself; promotion.py asks Apple which episodes it shows. Without an answer
+  // nothing is claimed: "not checked", never "missing".
+  const apple = p.apple || {};
+  const appleLate = new Set((apple.late || []).map((entry) => entry.slug));
+  const appleCell = (episode) => !apple.known ? `<span class="hint">not checked</span>`
+    : episode.apple ? link(episode.apple, "On Apple")
+    : appleLate.has(episode.slug) ? `<span class="badge bad">missing</span><div class="hint">over 2 days</div>`
+    : `<span class="badge warn">not yet</span>`;
+  const appleLine = !p.apple ? ""
+    : apple.known ? `Apple Podcasts shows ${num(apple.on_apple)} of ${num(apple.of)} episodes (asked ${esc(when(apple.checked))}).${(apple.late || []).length ? ` ${num(apple.late.length)} went out over two days ago and is still missing: open Podcasts Connect, the show, Refresh feed.` : (apple.missing || []).length ? " A new episode usually appears within a day." : ""}`
+    : apple.status === "error" ? `Apple did not answer the last time it was asked (${esc(when(apple.checked))}); it is asked again within 2 hours.`
+    : "Apple's episode list is known once the show's Apple link is in podcast_config.json (listen_links).";
   const episodeRows = episodes.map((episode, index) => {
     const counts = episode.downloads || {};
     return `<tr>
@@ -2004,6 +2074,7 @@ function renderPodcast(d) {
         <div class="hint">ep ${num(episode.number)} · ${esc(episode.series_name)} · ${esc(when(episode.published))} · ${mmss(episode.seconds)} min</div></td>
       <td class="num">${num(counts.day7)}</td>
       <td class="num">${num(counts.all)}</td>
+      <td>${appleCell(episode)}</td>
       <td>${announcedCell(episode)}</td>
     </tr>`;
   }).join("");
@@ -2033,7 +2104,7 @@ function renderPodcast(d) {
     </div>
     <div class="card">
       <h3>Get listed</h3>
-      <p class="hint">Paste the feed address once on each directory. Apple is checked by itself every 6 hours and Podcast Index once OP3 counts the show; for the others your "Mark as submitted" is the record.</p>
+      <p class="hint">Paste the feed address once on each directory. Apple is checked by itself every 2 hours and Podcast Index once OP3 counts the show; for the others your "Mark as submitted" is the record.</p>
       <div class="actions" style="align-items:center">
         <code class="feed">${esc(p.feed_url)}</code>
         <button class="btn ghost" data-copy="${esc(p.feed_url)}">Copy feed address</button>
@@ -2050,8 +2121,9 @@ function renderPodcast(d) {
     </div>
     <div class="card">
       <h3>Episodes <span class="hint">· most listened first, then newest</span></h3>
+      ${appleLine ? `<p class="hint">${appleLine}</p>` : ""}
       ${episodes.length ? `<div class="scroll"><table>
-        <thead><tr><th class="num">#</th><th>Episode</th><th class="num">7 days</th><th class="num">All time</th><th>Announced on</th></tr></thead>
+        <thead><tr><th class="num">#</th><th>Episode</th><th class="num">7 days</th><th class="num">All time</th><th>Apple Podcasts</th><th>Announced on</th></tr></thead>
         <tbody>${episodeRows}</tbody></table></div>` : `<div class="empty">No published episodes yet.</div>`}
     </div>
     <div class="two">

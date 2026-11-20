@@ -5494,6 +5494,279 @@ check('input.type = words ? "text" : "url"' in (Path(__file__).parent / "phone_s
       and "window.rpPrompt(text, words)" in replies_page,
       "phone buttons: Write my own asks for words on the phone, not for a link")
 
+# ---- Gmail answers: Titip's Autopilot on this PC, shown with its buttons (gmail_answers.py)
+import gmail_answers  # noqa: E402
+
+gmail_home = Path(tempfile.mkdtemp())
+gmail_clock = datetime(2026, 11, 20, 9, 0).timestamp()
+check(gmail_answers.card(home=gmail_home) == {"installed": False} and hub.gmail_todo({"installed": False}) == []
+      and hub.gmail_todo(None) == [],
+      "gmail: no card and no to-do where Titip was never set up")
+
+
+def gmail_mail(item_id, sender, subject, reason, draft=""):
+    return {"id": item_id, "at": int(gmail_clock) - 3600, "account": 0, "mailbox": "me@example.com", "sender": sender,
+            "address": f"{sender.lower()}@example.com", "subject": subject, "summary": f"{sender} wrote about it.",
+            "reason": reason, "draft": draft, "row": "kept out"}
+
+
+def gmail_fresh_world():
+    held = [gmail_mail("aaaaaa01", "Ana", "Re: Fwd: Offer (signed)", "It is about a job.", "Thank you, I will answer today."),
+            gmail_mail("aaaaaa02", "Ben", "Lunch", "The answer would promise something."),
+            gmail_mail("aaaaaa03", "Cat", "Hello", "The model did not answer in time."),
+            gmail_mail("aaaaaa04", "Dan", "Hi", "Could not read the sender's address.")]
+    events = [{"at": int(gmail_clock) - 60, "kind": "held", "who": "Ana", "subject": "Offer", "text": "It is about a job."},
+              {"at": int(gmail_clock) - 120, "kind": "left", "who": "Shop", "subject": "Receipt", "text": "A receipt."},
+              {"at": int(gmail_clock) - 180, "kind": "switch", "who": "", "subject": "", "text": "Autopilot on"},
+              {"at": int(gmail_clock) - 240, "kind": "sent", "who": "Eve", "subject": "Thanks", "text": "You are welcome."},
+              {"at": int(gmail_clock) - 300, "kind": "retry", "who": "Cat", "subject": "Hello", "text": "Trying again."}]
+    return {"closed": False, "orders": [],
+            "snapshot": {"version": "0.8.1", "on": True, "mode": "auto", "busy": "", "lastCheck": int(gmail_clock) - 300,
+                         "nextCheck": int(gmail_clock) + 300, "mailboxes": ["me@example.com"], "sentToday": 1,
+                         "dailyLimit": 8, "held": held, "events": events}}
+
+
+def gmail_ask(order):
+    if gmail_world["closed"]:
+        raise gmail_answers.TitipClosed("refused")
+    snapshot = gmail_world["snapshot"]
+    if order is not None:
+        gmail_world["orders"].append(order)
+        if order.get("command") in ("send", "drop"):
+            if not any(item["id"] == order.get("id") for item in snapshot["held"]):
+                raise ValueError("That mail is no longer waiting.")
+            if order["command"] == "drop":
+                snapshot["held"] = [item for item in snapshot["held"] if item["id"] != order["id"]]
+        if order.get("command") == "mode":
+            snapshot["mode"] = order["mode"]
+        if order.get("command") == "switch":
+            snapshot["on"] = order["on"]
+    return snapshot
+
+
+gmail_real = (gmail_answers.TITIP_HOME, gmail_answers._titip, gmail_answers.TITIP_FOLDERS)
+try:
+    gmail_world = gmail_fresh_world()
+    (gmail_home / gmail_answers.STATE_FILE).write_text(json.dumps({
+        "on": True, "mode": "review", "accounts": [0], "mailboxes": {"0": "me@example.com"},
+        "sent": {"2026-11-20:0": 2, "2026-11-19:0": 5}, "lastCheck": int(gmail_clock) - 7200,
+        "held": gmail_world["snapshot"]["held"][:1], "events": list(reversed(gmail_world["snapshot"]["events"])),
+    }), encoding="utf-8")
+    gmail_card = gmail_answers.card(home=gmail_home, ask=gmail_ask, now=gmail_clock)
+    check(gmail_card["installed"] and gmail_card["running"] and gmail_card["on"] and gmail_card["mode"] == "auto"
+          and gmail_card["version"] == "0.8.1" and gmail_card["mailboxes"] == ["me@example.com"] and not gmail_card["late"]
+          and gmail_card["sent_today"] == 1 and gmail_card["daily_limit"] == 8 and gmail_card["problem"] == ""
+          and gmail_card["counts"] == {"sent": 1, "held": 1, "left": 1, "retry": 1, "error": 0}
+          and gmail_card["page"].endswith("/auto.html")
+          and gmail_card["last_check"] == "2026-11-20 08:55" and gmail_card["next_check"] == "2026-11-20 09:05"
+          and gmail_card["since"] == "2026-11-20 08:55" and gmail_card["waiting"][0]["at"] == "2026-11-20 08:00",
+          "gmail: the card says what Titip says: on, by itself, how many went out today and what it did")
+    check([row["id"] for row in gmail_card["waiting"]] == ["aaaaaa01", "aaaaaa02"]
+          and [row["id"] for row in gmail_card["failed"]] == ["aaaaaa03", "aaaaaa04"]
+          and all("row" not in row for row in gmail_card["waiting"] + gmail_card["failed"]),
+          "gmail: a mail kept on purpose waits for me; one the model or the page failed on is listed apart")
+    check(gmail_card["waiting"][0]["url"]
+          == "https://mail.google.com/mail/u/0/#search/" + "from%3A%28ana%40example.com%29%20subject%3A%28%22Offer%20%20signed%22%29"
+          and gmail_answers.gmail_link(None, "", "") == "" and gmail_answers.gmail_link(3, "a@b.c", "").startswith("https://mail.google.com/mail/u/3/"),
+          f"gmail: a waiting mail links to Gmail's own search for that sender and subject ({gmail_card['waiting'][0]['url']})")
+    check([event["label"] for event in gmail_card["recent"]] == ["Kept for you", "Left alone", "Answered", "Trying again"],
+          "gmail: what it did lately is newest first, without my own switch presses")
+
+    # the to-do: one item for the mail that waits, one for the mail that could not be judged
+    gmail_items = hub.gmail_todo(gmail_card)
+    check([(item["priority"], item["title"], item["action"]) for item in gmail_items]
+          == [(2, "2 mails in me@example.com wait for your answer", None),
+              (3, "2 mails in me@example.com could not be judged", "gmail:clear")]
+          and [[button["label"] for button in entry["actions"]] for entry in gmail_items[0]["links"]]
+          == [["Send", "Write my own", "Don't answer"], ["Write my own", "Don't answer"]]
+          and gmail_items[0]["links"][0]["actions"][1]["name"] == "gmail:say:aaaaaa01|" and gmail_items[0]["links"][0]["actions"][1]["most"] == 1500
+          and "Suggested answer: Thank you" in gmail_items[0]["links"][0]["note"] and all(entry["mail"] for entry in gmail_items[0]["links"])
+          and gmail_items[1]["failed"] is True and not gmail_items[0]["failed"],
+          "to do: a waiting mail has Send (when there is a draft), Write my own and Don't answer; the unjudged ones can be cleared")
+
+    # buttons: each becomes one order to Titip, and a wrong name becomes none
+    check("Titip is sending it" in gmail_answers.action("gmail:send:aaaaaa01", ask=gmail_ask)
+          and "Titip is sending it" in gmail_answers.action("gmail:say:aaaaaa02|  Yes,\n see you there. ", ask=gmail_ask)
+          and gmail_world["orders"] == [{"command": "send", "id": "aaaaaa01"},
+                                        {"command": "send", "id": "aaaaaa02", "text": "Yes,\n see you there."}],
+          "gmail: Send passes the mail on for Titip's own draft, Write my own passes my words on")
+    gmail_world["orders"].clear()
+    gmail_refused = []
+    for gmail_name in ("gmail:say:aaaaaa02|   ", "gmail:say:aaaaaa02|" + "x" * 1501, "gmail:send:zzz", "gmail:send:", "gmail:mode:always",
+                       "gmail:switch:maybe", "gmail:forward:aaaaaa01", "gmail:send:aaaaaa01|extra", "gmail", "gmail:", None, 7,
+                       "gmail:send:bbbbbb09"):
+        try:
+            gmail_answers.action(gmail_name, ask=gmail_ask)
+        except ValueError as error:
+            gmail_refused.append(str(error))
+    check(len(gmail_refused) == 13 and "1501 characters" in gmail_refused[1] and gmail_refused[0].startswith("The answer is empty")
+          and gmail_refused[-1] == "That mail is no longer waiting."
+          and gmail_world["orders"] == [{"command": "send", "id": "bbbbbb09"}],
+          f"gmail: an empty or too long answer and a name that is not a button send nothing; Titip's own refusal is passed on ({len(gmail_refused)})")
+    gmail_world["orders"].clear()
+    check(gmail_answers.action("gmail:clear", ask=gmail_ask) == "Cleared 2 mail(s) that could not be judged. They are still unread in Gmail."
+          and gmail_world["orders"] == [{"command": "drop", "id": "aaaaaa03"}, {"command": "drop", "id": "aaaaaa04"}]
+          and gmail_answers.action("gmail:clear", ask=gmail_ask) == "Nothing to clear."
+          and [item["id"] for item in gmail_world["snapshot"]["held"]] == ["aaaaaa01", "aaaaaa02"],
+          "gmail: Clear these drops only the mail that could not be judged, never one that waits for my answer")
+    gmail_world["orders"].clear()
+    check("Left unanswered" in gmail_answers.action("gmail:skip:aaaaaa02", ask=gmail_ask)
+          and "Every answer waits for you" in gmail_answers.action("gmail:mode:review", ask=gmail_ask)
+          and "go out by themselves" in gmail_answers.action("gmail:mode:auto", ask=gmail_ask)
+          and "paused" in gmail_answers.action("gmail:switch:off", ask=gmail_ask)
+          and "are on" in gmail_answers.action("gmail:switch:on", ask=gmail_ask)
+          and "looking at Gmail now" in gmail_answers.action("gmail:check", ask=gmail_ask)
+          and gmail_world["orders"] == [{"command": "drop", "id": "aaaaaa02"}, {"command": "mode", "mode": "review"},
+                                        {"command": "mode", "mode": "auto"}, {"command": "switch", "on": False},
+                                        {"command": "switch", "on": True}, {"command": "check"}],
+          "gmail: Don't answer, the two modes, Pause, Turn on and Check now are Titip's own orders")
+
+    # a problem at the last look, and a look that is overdue
+    gmail_world = gmail_fresh_world()
+    gmail_world["snapshot"]["events"].insert(0, {"at": int(gmail_clock) - 30, "kind": "error", "who": "", "subject": "",
+                                                 "text": "Chrome is not signed in to Gmail."})
+    gmail_card = gmail_answers.card(home=gmail_home, ask=gmail_ask, now=gmail_clock)
+    gmail_items = hub.gmail_todo(gmail_card)
+    check(gmail_card["problem"] == "Chrome is not signed in to Gmail." and gmail_items[0]["action"] == "gmail:check"
+          and gmail_items[0]["failed"] and "Chrome is not signed in" in gmail_items[0]["detail"] and len(gmail_items) == 3,
+          "to do: a last look that failed is said with its reason and a Check now button")
+    gmail_world = gmail_fresh_world()
+    gmail_world["snapshot"]["lastCheck"] = int(gmail_clock) - 45 * 60
+    gmail_card = gmail_answers.card(home=gmail_home, ask=gmail_ask, now=gmail_clock)
+    check(gmail_card["late"] and hub.gmail_todo(gmail_card)[0]["title"] == "Gmail has not been looked at for over 30 minutes"
+          and not gmail_answers.card(home=gmail_home, ask=gmail_ask, now=gmail_clock - 20 * 60)["late"],
+          "to do: three missed looks in a row are reported, one is not")
+    gmail_world["snapshot"]["on"] = False
+    gmail_card = gmail_answers.card(home=gmail_home, ask=gmail_ask, now=gmail_clock)
+    check(not gmail_card["late"] and gmail_card["next_check"] == ""
+          and [item["title"] for item in hub.gmail_todo(gmail_card)][0].startswith("2 mails"),
+          "gmail: paused by me is not a failure")
+
+    # Titip closed: the card comes from its state file, read only, and every button says why it cannot work
+    gmail_world["closed"] = True
+    gmail_answers.TITIP_FOLDERS = (gmail_home / "nowhere",)
+    gmail_card = gmail_answers.card(home=gmail_home, ask=gmail_ask, now=gmail_clock)
+    check(gmail_card["installed"] and not gmail_card["running"] and gmail_card["readable"] and gmail_card["on"]
+          and gmail_card["mode"] == "review" and gmail_card["sent_today"] == 2 and gmail_card["mailboxes"] == ["me@example.com"]
+          and [row["id"] for row in gmail_card["waiting"]] == ["aaaaaa01"] and gmail_card["recent"][0]["label"] == "Kept for you"
+          and gmail_card["page"] == "" and gmail_card["next_check"] == "" and not gmail_card["can_start"]
+          and gmail_card["error"] == gmail_answers.NOT_RUNNING,
+          "gmail: with Titip closed the card is read from its state file and says nothing is being answered")
+    gmail_items = hub.gmail_todo(gmail_card)
+    check(gmail_items[0]["title"] == "Gmail answers have stopped: Titip is closed" and gmail_items[0]["action"] is None
+          and gmail_items[0]["failed"] and "Titip.pyw" in gmail_items[0]["detail"],
+          "to do: a closed Titip is the first Gmail item; without Titip.pyw nearby it says where to start it")
+    (gmail_home / "titip").mkdir()
+    (gmail_home / "titip" / "Titip.pyw").write_text("", encoding="utf-8")
+    gmail_answers.TITIP_FOLDERS = (gmail_home / "titip",)
+    gmail_card = gmail_answers.card(home=gmail_home, ask=gmail_ask, now=gmail_clock)
+    gmail_started = []
+    check(gmail_card["can_start"] and hub.gmail_todo(gmail_card)[0]["action"] == "gmail:start"
+          and gmail_answers.action("gmail:start", ask=gmail_ask, start=lambda: gmail_started.append(1) or "Titip is starting.")
+          == "Titip is starting." and gmail_started == [1],
+          "gmail: where Titip.pyw is next to ReachPilot the to-do starts it")
+    gmail_closed = []
+    for gmail_name in ("gmail:send:aaaaaa01", "gmail:check", "gmail:clear", "gmail:mode:auto"):
+        try:
+            gmail_answers.action(gmail_name, ask=gmail_ask)
+        except ValueError as error:
+            gmail_closed.append(str(error))
+    check(len(gmail_closed) == 4 and all(text.startswith(gmail_answers.NOT_RUNNING) for text in gmail_closed),
+          "gmail: a button pressed while Titip is closed says so instead of failing silently")
+    (gmail_home / gmail_answers.STATE_FILE).write_text("{not json", encoding="utf-8")
+    gmail_card = gmail_answers.card(home=gmail_home, ask=gmail_ask, now=gmail_clock)
+    check(gmail_card["readable"] is False and hub.gmail_todo(gmail_card)[0]["title"] == "Gmail answers: Titip's state could not be read",
+          "gmail: a state file that cannot be read is said, not shown as an empty inbox")
+
+    # through the dashboard: hub.build's section, hub.run_action, and what the phone may press
+    gmail_world = gmail_fresh_world()
+    gmail_world["snapshot"]["lastCheck"] = int(datetime.now().timestamp())  # the hub reads the card at today's time
+    (gmail_home / gmail_answers.STATE_FILE).write_text("{}", encoding="utf-8")
+    gmail_answers.TITIP_HOME = gmail_home
+    gmail_answers._titip = gmail_ask
+    hub._cache.pop("gmail", None)
+    gmail_section = hub.gmail_section()
+    check(len(gmail_section["waiting"]) == 2 and "Left unanswered" in hub.run_action("gmail:skip:aaaaaa02")
+          and len(hub.gmail_section()["waiting"]) == 1,
+          "gmail: a button pressed on the dashboard reaches Titip and the card is read again at once")
+    for phone_name in ("gmail:check", "gmail:mode:review", "gmail:mode:auto"):
+        check(hub.phone_allowed(phone_name), f"phone buttons: {phone_name} runs from the phone")
+    for phone_name in ("gmail:send:aaaaaa01", "gmail:say:aaaaaa01|Yes", "gmail:skip:aaaaaa01", "gmail:clear", "gmail:switch:off",
+                       "gmail:start", "gmail", "gmail:"):
+        check(not hub.phone_allowed(phone_name), f"phone buttons: {phone_name!r} is refused on the phone")
+    gmail_help = [entry for entry in hub.help_sections({}, gmail=gmail_section) if entry["module"] == "Gmail answers"]
+    check(len(gmail_help) == 1 and "at most 8 a day" in gmail_help[0]["auto"]
+          and not [entry for entry in hub.help_sections({}) if entry["module"] == "Gmail answers"],
+          "help: Gmail answers are explained where Titip is set up, and only there")
+
+    # the phone copy: who wrote and about what, never what a mail says, and nothing to send
+    gmail_world = gmail_fresh_world()
+    gmail_world["snapshot"]["lastCheck"] = int(datetime.now().timestamp())
+    hub._cache.pop("gmail", None)
+    gmail_section = hub.gmail_section()
+    gmail_phone = phone_snapshot.without_mail_text({"hub": {"gmail": gmail_section, "todo": hub.gmail_todo(gmail_section) + [
+        {"module": "Replies", "links": [{"label": "x", "note": "kept", "actions": [{"name": "replies:send:1"}]}]}]}})
+    gmail_phone_text = json.dumps(gmail_phone)
+    check(all(words not in gmail_phone_text for words in ("wrote about it", "It is about a job", "Thank you, I will answer",
+                                                          "You are welcome", "A receipt", "auto.html"))
+          and "Ana" in gmail_phone_text and "Offer" in gmail_phone_text
+          and all(row["hidden"] == phone_snapshot.MAIL_ON_PC for row in gmail_phone["hub"]["gmail"]["waiting"])
+          and all("actions" not in entry and entry["note"] == phone_snapshot.MAIL_ON_PC
+                  for item in gmail_phone["hub"]["todo"][:2] for entry in item["links"])
+          and gmail_phone["hub"]["todo"][2]["links"][0] == {"label": "x", "note": "kept", "actions": [{"name": "replies:send:1"}]},
+          "phone page: the Gmail card carries senders and subjects only; the words of a mail and its Send buttons stay on the PC")
+    check(phone_snapshot.without_mail_text({"hub": {"gmail": {"installed": False}}}) == {"hub": {"gmail": {"installed": False}}}
+          and phone_snapshot.without_mail_text({"overview": {}}) == {"overview": {}},
+          "phone page: a snapshot without the Gmail card passes through unchanged")
+    hub._cache.pop("gmail", None)  # a fresh card with its words: render must take them out itself
+    gmail_section = hub.gmail_section()
+    check(gmail_section["waiting"][0]["draft"] == "Thank you, I will answer today.", "gmail: the card on the PC keeps the suggested answer")
+    gmail_phone_page = phone_snapshot.render({"overview": {"now": "x"}, "hub": {"gmail": gmail_section, "todo": []}},
+                                             (Path(__file__).parent / "dashboard.html").read_text(encoding="utf-8"), "2026-11-20 09:00")
+    check("Thank you, I will answer today." not in gmail_phone_page and "wrote about it" not in gmail_phone_page
+          and "The words of this mail stay on your PC" in gmail_phone_page,
+          "phone page: the file that is published has no mail text in it")
+finally:
+    (gmail_answers.TITIP_HOME, gmail_answers._titip, gmail_answers.TITIP_FOLDERS) = gmail_real
+    hub._cache.pop("gmail", None)
+    shutil.rmtree(gmail_home, ignore_errors=True)
+
+gmail_page = (Path(__file__).parent / "dashboard.html").read_text(encoding="utf-8")
+gmail_hub = (Path(__file__).parent / "hub.py").read_text(encoding="utf-8")
+gmail_source = (Path(__file__).parent / "gmail_answers.py").read_text(encoding="utf-8")
+check("${gmailCard(d.hub && d.hub.gmail)}" in gmail_page and 'gmail: "reach"' in gmail_page
+      and 'actionButton("gmail:clear", "Clear these", true)' in gmail_page and 'actionButton("gmail:check", "Check now", true)' in gmail_page
+      and 'data-say="${esc(`gmail:say:${w.id}|`)}"' in gmail_page and "actionButton(`gmail:send:${w.id}`, \"Send\")" in gmail_page
+      and '("gmail", gmail_section)' in gmail_hub and 'gmail_todo(sections.get("gmail"))' in gmail_hub,
+      "gmail: the card is on the Reach page and its buttons are wired")
+check("ProxyHandler({})" in gmail_source and 'DESK = "http://127.0.0.1:47780"' in gmail_source
+      and len(re.findall(r"https?://(?!127\.0\.0\.1|mail\.google\.com|github\.com/juw12/titip)", gmail_source)) == 0,
+      "gmail: the module asks this PC's own address only, never through the proxy")
+
+# Apple Podcasts: which episodes Apple shows (the podcast module asks Apple), and a push when one stays missing
+apple_view = {"installed": True, "todo": [], "feed_url": "https://f.test/feed.xml",
+              "apple": {"status": "listed", "known": True, "on_apple": 1, "of": 3,
+                        "missing": [{"slug": "ep2", "title": "Two", "published": "2026-11-17T08:00:00+07:00"},
+                                    {"slug": "ep3", "title": "Three", "published": "2026-11-20T08:00:00+07:00"}],
+                        "late": [{"slug": "ep2", "title": "Two", "published": "2026-11-17T08:00:00+07:00"}]}}
+apple_todo = hub.podcast_promotion_todo(apple_view)
+check(len(apple_todo) == 1 and apple_todo[0]["priority"] == 2 and apple_todo[0]["failed"]
+      and apple_todo[0]["title"] == "Apple Podcasts has not picked up 1 episode" and "2026-11-17 Two" in apple_todo[0]["detail"]
+      and "Three" not in apple_todo[0]["detail"] and apple_todo[0]["action"] == "podcast:promo-refresh"
+      and [entry["url"] for entry in apple_todo[0]["links"]] == ["https://podcastsconnect.apple.com/", "https://f.test/feed.xml"],
+      "to do: an episode out for two days that Apple still does not show asks for a feed refresh in Podcasts Connect")
+check(hub.podcast_promotion_todo({**apple_view, "apple": {**apple_view["apple"], "late": []}}) == []
+      and hub.podcast_promotion_todo({**apple_view, "apple": {"status": "error", "known": False}}) == []
+      and hub.podcast_promotion_todo({**apple_view, "installed": False}) == []
+      and hub.apple_late_todo(None) == [] and hub.apple_late_todo({"installed": True}) == []
+      and [item["priority"] for item in hub.podcast_promotion_todo(
+          {**apple_view, "todo": ["spotify"], "directories": [{"id": "spotify", "name": "Spotify", "status": "todo", "submit": "https://s.test"}]})]
+      == [2, 3],
+      "to do: a new episode Apple has not picked up yet, or an Apple that did not answer, is no failure")
+check("<th>Apple Podcasts</th>" in gmail_page and "<td>${appleCell(episode)}</td>" in gmail_page
+      and '!apple.known ? `<span class="hint">not checked</span>`' in gmail_page and "Apple is checked by itself every 2 hours" in gmail_page,
+      "podcast page: each episode says whether Apple shows it, and says 'not checked' when Apple gave no answer")
+
 # A Mac: what Windows and macOS do differently lives in machine.py, and the rest of the code asks it
 import plistlib  # noqa: E402
 

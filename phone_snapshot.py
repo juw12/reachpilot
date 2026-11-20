@@ -28,6 +28,8 @@ PAGE = ROOT / "dashboard.html"
 OUT = ROOT / "generated" / "phone_snapshot.html"
 ICON = ROOT / "icons" / "icon.svg"
 
+MAIL_ON_PC = "The words of this mail stay on your PC. Read and answer it in ReachPilot there, or on Titip's own Autopilot page."
+
 READ_ONLY = "Read-only here: use ReachPilot on your PC, or Cairn's Dashboards page on your phone, to run this."
 
 SHIM = """<script>
@@ -123,11 +125,36 @@ def without_local_images(data: dict) -> dict:
     return data
 
 
+def without_mail_text(data: dict) -> dict:
+    """The Gmail answers card (gmail_answers.py) on the phone: counts, senders and subjects only.
+    What a mail says, why it was kept, the suggested answer and the answers that were sent stay on this PC:
+    the snapshot is a plain file in a private repo, and Titip's own phone page is the encrypted way to read them.
+    Without the words there is nothing to send from here, so those buttons go too."""
+    hub = data.get("hub") if isinstance(data.get("hub"), dict) else {}
+    card = hub.get("gmail")
+    if isinstance(card, dict) and card.get("installed"):
+        for row in card.get("waiting") or []:
+            row.update({"summary": "", "reason": "", "draft": "", "error": "", "hidden": MAIL_ON_PC})
+        for row in card.get("failed") or []:  # its reason is Titip's own sentence ("The model did not answer"), not the mail
+            row.update({"summary": "", "draft": "", "error": ""})
+        for event in card.get("recent") or []:
+            event["text"] = ""
+        card["problem"] = "The last look had a problem; ReachPilot on your PC says which." if card.get("problem") else ""
+        card["page"] = ""
+    for item in hub.get("todo") or []:
+        if isinstance(item, dict) and item.get("module") == "Gmail":
+            for entry in item.get("links") or []:
+                if isinstance(entry, dict) and entry.get("mail"):
+                    entry["note"] = MAIL_ON_PC
+                    entry.pop("actions", None)
+    return data
+
+
 def render(data: dict, page: str, built_at: str) -> str:
     page = page.replace("__RP_TOKEN__", "demo")  # "demo" also turns off the local auto-update poll
     icon = "data:image/svg+xml;base64," + base64.b64encode(ICON.read_bytes()).decode("ascii")
     page = page.replace('src="/icon.svg"', f'src="{icon}"').replace('href="/icon.svg"', f'href="{icon}"')
-    shim = SHIM % (built_at, json.dumps(without_local_images(data), ensure_ascii=False).replace("</", "<\\/"),
+    shim = SHIM % (built_at, json.dumps(without_mail_text(without_local_images(data)), ensure_ascii=False).replace("</", "<\\/"),
                    json.dumps(READ_ONLY))
     return page.replace("<head>", "<head>\n" + shim, 1)
 
