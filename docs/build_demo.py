@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import shutil
 import sys
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from pathlib import Path
 
 DOCS = Path(__file__).resolve().parent
@@ -358,22 +358,6 @@ def patent_demo() -> dict:
 PATENTS = patent_demo()
 
 
-def tradebot_demo() -> dict:
-    """A made-up answer from a trading bot's public status page, through the real card builder."""
-    now = datetime(TODAY.year, TODAY.month, TODAY.day, 9, 30)
-    now_ms = int(now.timestamp() * 1000)
-    status = {
-        "ok": True, "service": "trade-bot", "version": "0.10.0", "money": "practice",
-        "configured": True, "bot": "demo_trade_bot", "paired": True, "running": True,
-        "lastRound": {"at": now_ms - 2 * 60000, "markets": 12, "errors": 0},
-        "indodax": {"configured": True, "lastReportAt": now_ms - 60000, "mode": "practice", "paused": False,
-                    "keys": False, "checked": False, "tripped": False, "openCopies": 2, "realOpen": 0},
-    }
-    return hub._tradebot_view({"summary": status, "stale": False, "read_at": "Sat 7 Nov · 09:30"}, now=now)
-
-
-TRADEBOT = tradebot_demo()
-
 DEMO = {
     "overview": {
         "now": f"{TODAY} 09:45", "mode": "auto", "paused": False, "token_days_left": 41, "click_tracking": True,
@@ -416,7 +400,6 @@ DEMO = {
             "patents": task("Patent screen", "Sat 7 Nov · 09:00", "Sun 8 Nov · 09:00"),
         },
         "patents": PATENTS,
-        "tradebot": TRADEBOT,
         "todo": [
             {"priority": 1, "module": "Jobs", "title": "1 application stopped and needs you",
              "detail": "The site asked for an e-mailed verification code. ReachPilot never answers human checks; open the apply session and finish it.",
@@ -481,10 +464,8 @@ DEMO = {
     ],
 }
 
-DEMO["hub"]["todo"] = sorted(DEMO["hub"]["todo"] + hub.patents_todo(PATENTS) + hub.tradebot_todo(TRADEBOT),
-                             key=lambda item: item["priority"])
-DEMO["hub"]["help"] += [entry for entry in hub.help_sections({}, None, None, PATENTS, TRADEBOT)
-                        if entry["module"] in ("Patents", "TradeBot")]
+DEMO["hub"]["todo"] = sorted(DEMO["hub"]["todo"] + hub.patents_todo(PATENTS), key=lambda item: item["priority"])
+DEMO["hub"]["help"] += [entry for entry in hub.help_sections({}, None, None, PATENTS) if entry["module"] == "Patents"]
 
 ACTION_REPLIES = {
     "patents_run_now": "Demo: on your PC this reads every repository you own again and updates this card in about a minute.",

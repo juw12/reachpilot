@@ -12,8 +12,6 @@ Other platforms (Bluesky, Mastodon, Dev.to, Telegram, Discord) are part of the p
 Launch tests (launch_section) are read from a project's public summary.json, plus private steps from
 launch_private.json (git-ignored) when that file exists. Where launch_auto.py is installed its rows join them:
 steps this PC does by itself (watch for an answer, one follow-up, approved invitations, daily proposal checks).
-The TradeBot page (tradebot_section) reads the trading bot's public status page; TradeBot's own page with the amounts is
-shown only where tradebot_private.json (git-ignored) says where this PC keeps it.
 The patent screen (patents_section) reads the last daily scan written by patents.py into data/patents/
 (git-ignored); it shows only where that folder exists. The patent desk (patent_desk.py) follows the screen's
 candidates from there: readiness, the filing package, and the dates before and after a filing.
@@ -1452,312 +1450,6 @@ def launch_todo(section: dict | None, today: date | None = None) -> list[dict]:
     return items
 
 
-# ------------------------------------------------------------------ TradeBot (the trading bot's public status page)
-
-TRADEBOT_STATUS_URL = "https://trade-bot.juw12.workers.dev/v1/status"
-TRADEBOT_GUIDE = "https://github.com/juw12/projects/tree/main/apps/tradebot/indodax"
-TRADEBOT_LINKS = [
-    {"label": "Status page", "url": TRADEBOT_STATUS_URL},
-    {"label": "Code", "url": "https://github.com/juw12/projects/tree/main/apps/tradebot"},
-    {"label": "Sender guide", "url": TRADEBOT_GUIDE},
-]
-TRADEBOT_REFRESH_SECONDS = 60
-TRADEBOT_RETRY_SECONDS = 120  # after a failed read, wait before the next 6-second try
-TRADEBOT_ROUND_LATE_MINUTES = 15  # a round is due every 5 minutes: three missed is late
-TRADEBOT_SILENT_MINUTES = 10  # the bot's own line: after this long with real money in play it warns in Telegram
-TRADEBOT_PRIVATE = ROOT / "tradebot_private.json"  # git-ignored: where this PC keeps TradeBot's own page, and how it is made
-TRADEBOT_PAGE_SECONDS = 240  # the page file is made again once it is older than this
-TRADEBOT_PAGE_WAIT = 25  # seconds the page's maker may take
-TRADEBOT_PAGE_BYTES = 300_000  # a bigger file is not TradeBot's page
-
-
-def _tradebot_cached() -> dict:
-    hit = _cache.get("tradebot")
-    if hit and time.time() - hit[0] < (TRADEBOT_RETRY_SECONDS if hit[1]["stale"] else TRADEBOT_REFRESH_SECONDS):
-        return hit[1]
-    value = _launch_summary({"id": "tradebot-status", "summary_url": TRADEBOT_STATUS_URL})
-    _cache["tradebot"] = (time.time(), value)
-    return value
-
-
-def _tradebot_minutes(moment, now_ms: float) -> int | None:
-    """Whole minutes since an epoch-millisecond time; None when the value is not a time."""
-    if isinstance(moment, bool) or not isinstance(moment, (int, float)) or moment <= 0:
-        return None
-    return max(0, int((now_ms - moment) // 60000))
-
-
-def _tradebot_ago(minutes: int) -> str:
-    if minutes < 1:
-        return "under a minute ago"
-    if minutes < 120:
-        return f"{minutes} minute{'' if minutes == 1 else 's'} ago"
-    if minutes < 2 * 1440:
-        return f"{minutes // 60} hours ago"
-    return f"{minutes // 1440} days ago"
-
-
-def _tradebot_copies(count: int | None) -> str:
-    if count is None:
-        return "open copies not reported"
-    return f"{count} cop{'y' if count == 1 else 'ies'} open"
-
-
-def _tradebot_count(value) -> int | None:
-    """A count from the network: a whole number that is not negative, or nothing."""
-    count = _launch_int(value)
-    return count if count is not None and count >= 0 else None
-
-
-def _tradebot_view(fetched: dict, now: datetime | None = None) -> dict:
-    """The TradeBot card from one status answer. Every field is checked: it comes from the network.
-
-    Switches and counts only. The status page carries no amount, coin or result, and neither does this card.
-    An offline answer is shown as last known: no age is judged from it and it raises no to-do.
-    """
-    stale = bool(fetched.get("stale"))
-    view = {"installed": True, "available": False, "stale": stale, "read_at": fetched.get("read_at"), "version": None,
-            "headline": "", "real": False, "published": False, "steps": [], "needs_me": [], "links": TRADEBOT_LINKS}
-    status = fetched.get("summary")
-    if not isinstance(status, dict) or status.get("service") != "trade-bot":
-        return view
-
-    now_ms = (now or datetime.now()).timestamp() * 1000
-    version = status.get("version")
-    block = status.get("indodax")
-    has_block = isinstance(block, dict)
-    indodax = _launch_dict(block)
-    published = isinstance(indodax.get("paused"), bool)  # older builds publish less, or nothing, about Indodax
-    configured = indodax.get("configured") is True
-    mode = indodax.get("mode") if indodax.get("mode") in ("practice", "real") else None
-    paused = indodax.get("paused") is True
-    keys, checked, tripped = (indodax.get(name) if isinstance(indodax.get(name), bool) else None
-                              for name in ("keys", "checked", "tripped"))
-    open_copies = _tradebot_count(indodax.get("openCopies"))
-    real_open = _tradebot_count(indodax.get("realOpen"))
-    report_age = _tradebot_minutes(indodax.get("lastReportAt"), now_ms)
-    silent = configured and not stale and report_age is not None and report_age > TRADEBOT_SILENT_MINUTES
-    real = mode == "real" or bool(real_open)
-    steps, needs = [], []
-
-    def step(title, how, state, label, detail):
-        steps.append({"title": title, "how": how, "state": state, "state_label": label, "detail": detail})
-
-    def need(priority, title, detail):
-        needs.append({"priority": priority, "title": title, "detail": detail})
-
-    # 1. the round on Cloudflare
-    round_info = _launch_dict(status.get("lastRound"))
-    round_age = _tradebot_minutes(round_info.get("at"), now_ms)
-    markets, errors = _tradebot_count(round_info.get("markets")), _tradebot_count(round_info.get("errors"))
-    looked = (f": {markets} market{'' if markets == 1 else 's'}, {errors or 0} error{'' if errors == 1 else 's'}"
-              if markets is not None else "")
-    how = "TradeBot runs on Cloudflare. Every 5 minutes it reads the markets and decides what its practice account buys or sells."
-    if status.get("running") is not True:
-        if status.get("configured") is not True:
-            step("The bot reads the markets", how, "grey", "not set up", "No Telegram bot is connected to TradeBot.")
-        elif status.get("paired") is not True:
-            step("The bot reads the markets", how, "warn", "not paired", "The bot is connected but has no owner yet, so no round runs.")
-        else:
-            step("The bot reads the markets", how, "warn", "stopped", "The five-minute round is not scheduled.")
-    elif stale:
-        step("The bot reads the markets", how, "grey", "last known: running", "It was running when this was last read.")
-    elif round_age is None:
-        step("The bot reads the markets", how, "warn", "no round yet", "It is scheduled but has not finished a round.")
-    elif round_age > TRADEBOT_ROUND_LATE_MINUTES:
-        step("The bot reads the markets", how, "warn", "late", f"Last round {_tradebot_ago(round_age)}{looked}. One is due every 5 minutes.")
-    else:
-        step("The bot reads the markets", how, "warn" if errors else "good", "running, with errors" if errors else "running",
-             f"Last round {_tradebot_ago(round_age)}{looked}.")
-
-    # 2. the sender on a PC
-    how = ("A small program on a PC asks TradeBot once a minute what it holds, and reports back. Orders leave from the PC "
-           "because Indodax refuses requests that come from Cloudflare.")
-    if not has_block:
-        step("The sender on a PC asks for the signals", how, "grey", "not in this build", "The live build has no Indodax sender yet.")
-    elif not configured:
-        step("The sender on a PC asks for the signals", how, "grey", "not set up", "No sender key has been issued.")
-        if not stale:
-            need(3, "get the sender's key",
-                 "Ask TradeBot for it once with your setup code, put it in the .env next to bridge.py, then start the sender in practice.")
-    elif report_age is None:
-        step("The sender on a PC asks for the signals", how, "warn", "never reported", "A sender key exists but no report has arrived.")
-        if not stale:
-            need(3, "start the Indodax sender on the PC", "A sender key exists but no report has arrived. Run run-windows.ps1 on the PC.")
-    elif stale:
-        step("The sender on a PC asks for the signals", how, "grey", "last known: reported", "A report had arrived when this was last read.")
-    elif silent:
-        step("The sender on a PC asks for the signals", how, "bad" if real else "warn", "silent",
-             f"Last report {_tradebot_ago(report_age)}. While it is silent no copy is opened or closed, and the stop does not act.")
-        need(1 if real else 3, "the Indodax sender is silent" + (" with real money in play" if real else ""),
-             f"Last report {_tradebot_ago(report_age)}. Nothing is bought, sold or stopped while it is silent. "
-             "Check that the PC is on and the sender is running.")
-    else:
-        step("The sender on a PC asks for the signals", how, "good", "reporting", f"Last report {_tradebot_ago(report_age)}.")
-
-    # 3. the copies at Indodax
-    how = ("For each coin the bot holds, the sender keeps a small copy on Indodax in rupiah: it buys when the bot buys, sells when "
-           "the bot sells, and sells on its own when a copy falls to the stop. Practice copies are only written down.")
-    counts = _tradebot_copies(open_copies)
-    if not has_block:
-        step("Copies at Indodax", how, "grey", "not in this build", "The live build has no Indodax sender yet.")
-    elif tripped:
-        step("Copies at Indodax", how, "bad", "safety stop", f"The safety stop has tripped ({counts}). No new buy is sent until it is cleared on the PC.")
-        if not stale:
-            need(1 if real else 2, "the Indodax safety stop has tripped",
-                 "Look at your Indodax account first. Then clear it on the PC: run-windows.ps1 -Clear.")
-    elif paused:
-        step("Copies at Indodax", how, "warn", "paused", f"New buys are paused from Telegram ({counts}). Sells and the stop still work.")
-    elif mode is None:
-        step("Copies at Indodax", how, "grey", "no report yet", "The sender has not said which mode it runs in.")
-    elif not published:
-        step("Copies at Indodax", how, "grey", mode, "The live build publishes the mode only.")
-    elif mode == "real":
-        step("Copies at Indodax", how, "warn", "real money", f"{counts.capitalize()}, {real_open or 0} of them real orders.")
-    else:
-        real_left = f" {real_open} real cop{'y is' if real_open == 1 else 'ies are'} still open: sells and the stop still act on them." if real_open else ""
-        step("Copies at Indodax", how, "good", "practice", f"{counts.capitalize()}. No real buy is sent.{real_left}")
-
-    # 4. the real-money gate
-    how = ("Three switches, all on the PC: an Indodax API key in .env, the key check (run-windows.ps1 -Check) and real mode with a "
-           "sentence typed by hand. Nothing in Telegram or on this page can open it.")
-    if not published:
-        step("The real-money gate", how, "grey", "not published", "The live build does not publish these switches.")
-    elif keys is None:
-        step("The real-money gate", how, "grey", "no report yet", "The sender reports the switches once it runs.")
-    else:
-        switches = f"API key {'set' if keys else 'missing'}, key check {'passed' if checked else 'not passed'}, mode {mode or 'unknown'}."
-        if mode == "real" and keys and checked:
-            step("The real-money gate", how, "warn", "open", f"{switches} Real buys can be sent.")
-        elif mode == "real":
-            step("The real-money gate", how, "bad", "real mode, buys refused", f"{switches} Real buys are refused until the key passes the check.")
-            if not stale and keys:
-                need(2, "the Indodax API key has not passed the check",
-                     "Real mode is on but real buys are refused. Stop the sender, run run-windows.ps1 -Check, then start it again.")
-        else:
-            step("The real-money gate", how, "good", "closed", f"{switches} No real buy can be sent.")
-
-    # 5. control and alerts
-    how = ("Telegram is the remote control. /indodax shows this state, /indodax pause stops new buys and /indodax resume lifts it. "
-           "The bot messages you on every buy, sell and safety stop, when real mode starts, and when the sender has been silent "
-           "for 10 minutes with real money in play.")
-    bot = status.get("bot")
-    bot = f"@{bot}" if isinstance(bot, str) and re.fullmatch(r"[A-Za-z0-9_]{3,40}", bot) else "the bot"
-    if status.get("configured") is True and status.get("paired") is True:
-        step("Control and alerts in Telegram", how, "good", "connected",
-             f"Send the commands to {bot}." + ("" if published else " The live build has no pause, resume or silent alert yet."))
-    else:
-        step("Control and alerts in Telegram", how, "grey", "not connected", "No Telegram bot is connected and paired.")
-
-    if not has_block:
-        headline = "The live build has no Indodax sender yet"
-    elif not configured:
-        headline = "Indodax sender not set up"
-    elif report_age is None:
-        headline = "Sender key issued, sender not started"
-    elif tripped:
-        headline = "Safety stop tripped"
-    elif silent:
-        headline = "Sender silent" + (" with real money in play" if real else "")
-    elif mode == "real":
-        headline = f"Real money: {real_open or 0} real cop{'y' if real_open == 1 else 'ies'} open"
-    elif mode == "practice":
-        headline = f"Practice: {counts}"
-    else:
-        headline = "Sender reporting"
-    if paused and has_block and not tripped:
-        headline += ", new buys paused"
-
-    view.update({
-        "available": True,
-        "version": version if isinstance(version, str) and re.fullmatch(r"[0-9A-Za-z.\-]{1,20}", version) else None,
-        "headline": headline, "real": real, "published": published, "steps": steps, "needs_me": needs,
-    })
-    return view
-
-
-def _tradebot_private() -> dict:
-    """This PC's settings for TradeBot's own page from tradebot_private.json; {} when the file is missing or unreadable."""
-    try:
-        data = json.loads(TRADEBOT_PRIVATE.read_text(encoding="utf-8-sig"))
-    except (OSError, ValueError):
-        return {}
-    return data if isinstance(data, dict) else {}
-
-
-def _tradebot_make_page(command: list[str], folder: str | None) -> None:
-    """Run the owner's own command that writes the page file. It only writes that file; a failure keeps the file from before."""
-    try:
-        subprocess.run(command, cwd=folder, timeout=TRADEBOT_PAGE_WAIT, stdin=subprocess.DEVNULL,
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                       creationflags=NO_WINDOW if os.name == "nt" else 0)
-    except (OSError, ValueError, subprocess.SubprocessError):
-        pass
-
-
-def _tradebot_page_age(path: Path, now: float) -> float | None:
-    try:
-        return now - path.stat().st_mtime
-    except OSError:
-        return None
-
-
-def tradebot_page(now: float | None = None) -> dict | None:
-    """TradeBot's own page (money, coins held, the plan, the checks before a buy or a sale, the history) as one HTML text.
-
-    TradeBot makes that page itself (`TradeBot.exe --phone-file FILE`); this only reads the file, and first asks for a new
-    one when it is older than a few minutes. Where the file is and how it is made stand in tradebot_private.json
-    (git-ignored): {"page_file": "...", "page_command": ["...", "--phone-file", "..."], "page_cwd": "..."}.
-    None when this PC has no such setting. The page carries amounts, so it is only ever shown on the owner's own
-    dashboard; the dashboard shows it in a frame that has no rights over the dashboard.
-    """
-    private = _tradebot_private()
-    name = private.get("page_file")
-    if not isinstance(name, str) or not name.strip():
-        return None
-    now = time.time() if now is None else now
-    path = Path(name)
-    command = private.get("page_command")
-    folder = private.get("page_cwd")
-    age = _tradebot_page_age(path, now)
-    tried = _cache.get("tradebot_page_try")
-    if (isinstance(command, list) and command and all(isinstance(part, str) and part for part in command)
-            and (age is None or age > TRADEBOT_PAGE_SECONDS)
-            and not (tried and now - tried[0] < TRADEBOT_RETRY_SECONDS)):
-        _cache["tradebot_page_try"] = (now, None)
-        _tradebot_make_page(command, folder if isinstance(folder, str) and folder else None)
-        age = _tradebot_page_age(path, now)
-    if age is None:
-        return {"html": None, "made": None, "problem": "TradeBot's own page has not been made on this PC yet. The next try is in a few minutes."}
-    try:
-        if path.stat().st_size > TRADEBOT_PAGE_BYTES:
-            raise ValueError("too big")
-        html = path.read_text(encoding="utf-8")
-    except (OSError, ValueError):
-        html = ""
-    if not html[:200].lstrip().lower().startswith("<!doctype html"):
-        return {"html": None, "made": None, "problem": "The file on this PC is not TradeBot's page, so it is not shown."}
-    return {"html": html, "made": stamp(path), "problem": None}
-
-
-def tradebot_section() -> dict:
-    view = _tradebot_view(_tradebot_cached())
-    view["page"] = tradebot_page()
-    return view
-
-
-def tradebot_todo(section: dict | None) -> list[dict]:
-    """What the trading setup needs from me. Nothing while offline: a last known answer cannot tell what is true now."""
-    if not section or not section.get("available") or section.get("stale"):
-        return []
-    return [{
-        "priority": item["priority"], "module": "TradeBot",
-        "title": "TradeBot: " + item["title"], "detail": item["detail"],
-        "action": None, "action_label": None,
-        "links": [{"label": "Sender guide", "url": TRADEBOT_GUIDE, "note": ""}],
-    } for item in section.get("needs_me") or []]
-
-
 # ------------------------------------------------------------------ patent screen (patents.py)
 
 PATENTS_DISCLAIMER = (
@@ -2049,7 +1741,7 @@ def todo_items(linkedin: dict | None, jobs: dict, email: dict, tasks: dict, podc
 # ------------------------------------------------------------------ help text
 
 def help_sections(tasks: dict, podcast: dict | None = None, launch: dict | None = None,
-                  patents: dict | None = None, tradebot: dict | None = None, gmail: dict | None = None) -> list[dict]:
+                  patents: dict | None = None, gmail: dict | None = None) -> list[dict]:
     def when(key, fallback):
         task = tasks.get(key, {})
         return f"Next run: {task['next_run']}" if task.get("next_run") and task.get("installed") else fallback
@@ -2129,24 +1821,6 @@ def help_sections(tasks: dict, podcast: dict | None = None, launch: dict | None 
                    "name as inventor and your payment. "
                    "It is a keyword screen and a draft, not legal advice: it does not search patent databases and cannot judge "
                    "novelty. See a patent attorney before filing, and before publishing anything you want to protect.",
-        })
-    if tradebot and tradebot.get("installed"):
-        entries.append({
-            "module": "TradeBot",
-            "runs": "TradeBot's round runs on Cloudflare every 5 minutes; the Indodax sender on a PC asks it once a minute. "
-                    "This card re-reads TradeBot's public status page once a minute. Where this PC is set up for it "
-                    "(tradebot_private.json), TradeBot's own page is made again every few minutes.",
-            "auto": "Shows the chain on the TradeBot page, step by step, with its state right now: the bot's round, the sender on the PC, "
-                    "the copies at Indodax, the real-money gate and the Telegram control. Switches and counts only: no amount, "
-                    "coin or result is on the status page or on this card. Offline it shows the last known answer, says so, "
-                    "and raises no to-do. Above the steps, on your own dashboard only, it shows TradeBot's own page: free rupiah, "
-                    "coins held, the plan, what it needs before a buy or a sale, and the history. That page is a copy made on "
-                    "this PC; it says when it was made and warns when it is old. "
-                    "ReachPilot only reads: it cannot buy, sell, pause or change a setting.",
-            "you": "Control it in Telegram: /indodax shows the state, /indodax pause stops new buys, /indodax resume lifts it. "
-                   "Real money can only be switched on at the PC that runs the sender (API key in .env, run-windows.ps1 -Check, "
-                   "real mode with the sentence typed by hand). A silent sender or a tripped safety stop shows up in To do, "
-                   "urgent when real money is in play. Trading can lose money; nothing here promises a result.",
         })
     if gmail and gmail.get("installed"):
         entries.append({
@@ -2695,7 +2369,7 @@ def build(linkedin_overview: dict | None) -> dict:
     for key, reader in (("jobs", jobs_section), ("email", email_section), ("promote", promote_section),
                         ("channels", channels_section), ("podcast", podcast_section),
                         ("podcast_promotion", podcast_promotion_section), ("launch", launch_section),
-                        ("patents", patents_section), ("tradebot", tradebot_section),
+                        ("patents", patents_section),
                         ("readers", readers_section), ("shorts", shorts_section), ("replies", replies_section),
                         ("gmail", gmail_section), ("inbox", inbox_section)):
         try:
@@ -2718,7 +2392,6 @@ def build(linkedin_overview: dict | None) -> dict:
             + podcast_promotion_todo(sections.get("podcast_promotion"))
             + launch_todo(sections.get("launch"))
             + patents_todo(sections.get("patents"))
-            + tradebot_todo(sections.get("tradebot"))
             + shorts_todo(sections.get("shorts"))
             + replies_todo(sections.get("replies"))
             + gmail_todo(sections.get("gmail"))
@@ -2726,5 +2399,5 @@ def build(linkedin_overview: dict | None) -> dict:
             key=lambda item: item["priority"],
         ),
         "help": help_sections(tasks, sections.get("podcast"), sections.get("launch"), sections.get("patents"),
-                              sections.get("tradebot"), sections.get("gmail")),
+                              sections.get("gmail")),
     }

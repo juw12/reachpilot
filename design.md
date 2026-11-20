@@ -65,7 +65,7 @@ Change a colour and these numbers must be computed again, not estimated.
   the block to its heading. Under the page head sit small mono tools: "Fold all" / "Open all" and "Arrange". Arrange
   turns the page into a list of its blocks, each a dashed row with Up and Down (a side-by-side row moves as one and
   its two blocks swap inside it), plus "Reset order". Both are remembered in this browser (`rp-folded`, `rp-order`)
-  and put back each time the page is drawn. To do (sorted by urgency) and TradeBot are not arranged.
+  and put back each time the page is drawn. To do (sorted by urgency) is not arranged.
 - A button for a whole list ("Retry all", "Send all now") sits first in its block with one line on what it does. A
   button that cannot be taken back asks once before it runs (`data-confirm`).
 - One rule system: an ink rule under a block heading, a hairline between rows and between cells. Each block brings

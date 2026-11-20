@@ -431,31 +431,6 @@ only reads a public `summary.json` that the tested project publishes; it never w
 file can't be reached, the card shows the last good answer and says so. Steps that should not be public go in
 `launch_private.json` next to the code; that file is git-ignored and is shown only on this dashboard.
 
-**TradeBot page.** The **TradeBot** page shows how the trading bot's Indodax copies work, as five steps with the
-state of each one right now: the round on Cloudflare, the sender on a PC, the copies at Indodax, the real-money
-gate and the Telegram control. It reads only the bot's public status page (`TRADEBOT_STATUS_URL` in `hub.py`),
-which carries switches and counts and no amount, coin or result. The card is read only: nothing on it can trade,
-pause or open real money. Pausing and resuming are done in Telegram, and real money is switched on only on the
-PC that runs the sender. A silent sender or a tripped safety stop becomes a to-do, urgent when real money is in
-play. When the status page can't be reached, the card shows the last known answer and raises no to-do from it.
-
-Above the steps the page can also show **TradeBot's own page**: free rupiah, coins held, the plan, what it needs
-before a buy or a sale, and the history. TradeBot makes that page itself (`TradeBot.exe --phone-file FILE`);
-ReachPilot only reads the file and asks for a new one when it is more than four minutes old. It is shown only where
-`tradebot_private.json` (git-ignored, next to the code) says where the file is:
-
-```json
-{
-  "page_file": "C:\\path\\to\\tradebot\\phone_page.html",
-  "page_command": ["C:\\path\\to\\tradebot\\TradeBot.exe", "--phone-file", "C:\\path\\to\\tradebot\\phone_page.html"],
-  "page_cwd": "C:\\path\\to\\tradebot"
-}
-```
-
-The page carries amounts, so it stays on your own dashboard and in the phone snapshot (a private place); the public
-demo has none. It sits in a frame that has no rights over the dashboard, says when the copy was made and warns
-in red when no newer copy has come for 20 minutes. Without `page_command` the file is only read.
-
 **Inbox card.** The top of the **Email** page can show what one mailbox holds that only you can deal with: money
 waiting on a form, a sign-in to confirm, a person who asked for something. Everything else in that mailbox was read
 and needs nothing, so it is not listed. ReachPilot does not read the mailbox for this card: whatever went through
