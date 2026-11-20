@@ -486,6 +486,26 @@ Settings live under `auto` in `launch_private.json`; contact lists, mail texts, 
 `data/launch_auto/` (both git-ignored). A send that may not have gone out is not retried, so nobody gets a mail
 twice. `python launch_auto.py show` prints what each row is doing.
 
+**This PC card.** Overview can show the housekeeping jobs of the same PC that have nothing to do with posting
+(a weekly clean-up, a backup, a sync), so one page answers "is everything on this laptop still running". Name
+them in `upkeep_private.json` (git-ignored, next to the code); the card is shown only where that file exists:
+
+```json
+{"jobs": [{"name": "Laptop clean-up", "about": "Every Monday: empties old work folders",
+           "task": "Laptop clean-up",
+           "status": "C:\\path\\to\\status.json", "report": "C:\\path\\to\\last-report.md",
+           "keep": ["python", "C:\\path\\to\\laptop_cleanup.py", "--keep"]}]}
+```
+
+`task` is a task in Task Scheduler's top folder (a launchd agent on a Mac): the card shows its last run, the
+result and the next run, and **Run now** starts it. The other keys are optional. `status` is a file the job
+writes after a run: `{"ran": "2026-11-20 13:04", "ok": true, "summary": "Freed 1.2 GB.", "attention": ["..."],
+"free_bytes": {"C:": 52000000000}, "coming": [{"name": "old-folder", "bytes": 1200000, "idle_days": 31,
+"after": "2026-11-27"}]}`. `coming` lists what the job removes next: each row gets a **Keep** button when `keep`
+names a command, and that command is only ever handed a folder name from that list. `report` is a file **Open
+report** opens on the PC. A failed run, a line in `attention` and the folders about to be removed also land in
+To do. The phone copy shows the card too; Run now and Keep work from there, Open report does not.
+
 **Shorts.** `python shorts.py install` adds an hourly task (`\ReachPilot\Shorts`) for a channel of short videos
 that something else makes. Each finished video has a small post file next to it (`*_post.json`: id, title,
 caption, hashtags, video). The task copies finished videos into `data/shorts/`, gives the next one a public

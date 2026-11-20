@@ -5824,5 +5824,131 @@ check(mac_install.call_args[0][:2] == ("LinkedIn posts", [sys.executable, str(au
 check("data/tasks/" in (code_folder / ".gitignore").read_text(encoding="utf-8").split(),
       "mac tasks: the notes about each run are git-ignored")
 
+# ---- hub: the "This PC" card - housekeeping jobs named in a private file; their status files are not trusted
+upkeep_home = Path(tempfile.mkdtemp(prefix="rp-upkeep-"))
+upkeep_real = hub.UPKEEP_PRIVATE
+try:
+    hub.UPKEEP_PRIVATE = upkeep_home / "upkeep_private.json"
+    hub._cache.pop("upkeep_tasks", None)
+    check(hub.upkeep_section() == {"installed": False} and hub.upkeep_todo(hub.upkeep_section()) == [] and hub.upkeep_todo(None) == [],
+          "hub upkeep: no file means no card and nothing in To do")
+    for odd in ("", "[]", '{"jobs": "x"}', '{"jobs": [{"task": "No name"}, 7]}'):
+        hub.UPKEEP_PRIVATE.write_text(odd, encoding="utf-8")
+        check(hub.upkeep_section() == {"installed": False}, f"hub upkeep: a file that is not the card's shape shows nothing ({odd[:12]})")
+    upkeep_status = upkeep_home / "status.json"
+    upkeep_report = upkeep_home / "last-report.md"
+    upkeep_kept = upkeep_home / "kept.txt"
+    upkeep_keeper = upkeep_home / "keeper.py"
+    upkeep_keeper.write_text("import sys\nfrom pathlib import Path\n"
+                             "if sys.argv[1] == 'refuse-me':\n    sys.exit('No folder is called refuse-me.')\n"
+                             "Path(__file__).with_name('kept.txt').write_text(sys.argv[1])\n", encoding="utf-8")
+    upkeep_status.write_text(json.dumps({
+        "ran": "2026-11-20 13:04", "ok": True, "summary": "Freed 64 MB.  " + "x" * 400, "free_bytes": {"C:": 52000000000, "E:": "lots"},
+        "attention": ["Move the key", 7, ""],
+        "coming": [{"name": "session_b", "bytes": 3 * 1048576, "idle_days": 31, "after": "2026-11-28"},
+                   {"name": "session_a", "bytes": 1048576, "idle_days": 40, "after": "2026-11-27"},
+                   {"name": "..\\evil", "bytes": 1}, {"name": "has space", "bytes": 1}, "text", {"bytes": 5},
+                   {"name": "refuse-me", "bytes": "big", "idle_days": -1, "after": "soon"}]}), encoding="utf-8")
+    hub.UPKEEP_PRIVATE.write_text(json.dumps({"jobs": [
+        {"name": "Clean-up", "about": "Every Monday", "task": "Laptop clean-up", "status": str(upkeep_status),
+         "report": str(upkeep_report), "keep": ["python", str(upkeep_keeper)]},
+        {"name": "Backup", "task": "..\\Other\\Task"},
+        {"name": "Sync", "task": "RepoSync", "keep": "not a list", "status": 5},
+        {"task": "Nameless"}]}), encoding="utf-8")
+    upkeep_asked = []
+
+    def upkeep_schtasks(command, **options):
+        upkeep_asked.append(command)
+        failed = command[3] == "\\RepoSync"
+        table = ('"TaskName","Next Run Time","Status","Last Run Time","Last Result"\n'
+                 f'"{command[3]}","11/23/2026 1:00:00 PM","Ready","11/20/2026 1:04:00 PM","{1 if failed else 0}"\n')
+        return subprocess.CompletedProcess(command, 0, table if command[1] == "/query" else "", "")
+
+    with mock.patch.object(hub.machine, "IS_MAC", False), mock.patch.object(hub.subprocess, "run", side_effect=upkeep_schtasks):
+        upkeep = hub.upkeep_section()
+        upkeep_run_answer = hub.run_action("upkeep:run:0")
+    hub._cache.pop("upkeep_tasks", None)
+    cleanup_job, backup_job, sync_job = upkeep["jobs"]
+    check(upkeep["installed"] and [job["name"] for job in upkeep["jobs"]] == ["Clean-up", "Backup", "Sync"]
+          and [job["index"] for job in upkeep["jobs"]] == [0, 1, 2],
+          "hub upkeep: every named job is on the card, a job without a name is left out")
+    check(cleanup_job["task"]["installed"] and cleanup_job["task"]["ok"] and cleanup_job["task"]["last_run"] == "Fri 20 Nov · 13:04"
+          and backup_job["task"] is None and sync_job["task"]["ok"] is False
+          and sorted(command[3] for command in upkeep_asked if command[1] == "/query") == ["\\Laptop clean-up", "\\RepoSync"],
+          "hub upkeep: a task is read from Task Scheduler's top folder by its name; a name with a backslash is never asked for")
+    check(cleanup_job["ran"] == "2026-11-20 13:04" and cleanup_job["ok"] is True and len(cleanup_job["summary"]) == 300
+          and cleanup_job["attention"] == ["Move the key"] and cleanup_job["free"] == [{"drive": "C:", "bytes": 52000000000}]
+          and [(row["name"], row["bytes"], row["idle_days"], row["after"]) for row in cleanup_job["coming"]]
+          == [("refuse-me", 0, None, ""), ("session_a", 1048576, 40, "2026-11-27"), ("session_b", 3 * 1048576, 31, "2026-11-28")],
+          "hub upkeep: the status file is read value by value: long text is cut, odd values and odd folder names are dropped")
+    check(cleanup_job["has_report"] and cleanup_job["can_keep"] and not sync_job["can_keep"] and not sync_job["has_report"]
+          and sync_job["summary"] == "" and sync_job["coming"] == [] and str(upkeep_home) not in json.dumps(upkeep),
+          "hub upkeep: the card carries names, sizes and dates, and no path of this PC")
+    upkeep_asks = hub.upkeep_todo(upkeep)
+    check([(item["priority"], item["title"], item.get("failed", False)) for item in upkeep_asks]
+          == [(2, "Clean-up: 1 thing(s) only you can do", False), (3, "Clean-up: 3 old folder(s) will be removed from 2026-11-27", False),
+              (2, "Sync failed on its last run", True)]
+          and upkeep_asks[0]["links"] == [{"label": "Move the key", "url": "", "note": ""}]
+          and upkeep_asks[1]["links"][1] == {"label": "session_a", "url": "", "note": "1 MB · idle 40 days · from 2026-11-27"}
+          and upkeep_asks[2]["action"] == "upkeep:run:2" and all(item["module"] == "This PC" for item in upkeep_asks)
+          and not any("actions" in row for item in upkeep_asks for row in item["links"]),
+          "hub upkeep: To do lists what needs me, the folders about to be removed, and a failed run with Run again")
+    check(upkeep_run_answer.startswith("Clean-up started") and ["schtasks", "/run", "/tn", "\\Laptop clean-up"] in upkeep_asked,
+          "hub upkeep: Run now starts the job's own task")
+    check(hub.run_action("upkeep:keep:0:session_a") == "session_a is kept: Clean-up will leave it alone."
+          and upkeep_kept.read_text(encoding="utf-8") == "session_a",
+          "hub upkeep: Keep hands the folder name to the job's keep command")
+    upkeep_kept.unlink()
+
+    def upkeep_refuses(name):
+        try:
+            hub.run_action(name)
+        except ValueError as refusal:
+            return str(refusal)
+        return ""
+
+    check(all(upkeep_refuses(name) for name in ("upkeep:keep:0:session_zzz", "upkeep:keep:0:..\\evil", "upkeep:keep:0:", "upkeep:keep:0",
+                                                 "upkeep:keep:2:session_a", "upkeep:keep:9:session_a", "upkeep:run:1", "upkeep:run:x",
+                                                 "upkeep:run:0:extra", "upkeep:open:0", "upkeep:nonsense:0", "upkeep:"))
+          and not upkeep_kept.exists(),
+          "hub upkeep: Keep only takes a name from the job's own list; an unknown job, verb or folder is refused and runs nothing")
+    check(upkeep_refuses("upkeep:keep:0:refuse-me") == "No folder is called refuse-me.",
+          "hub upkeep: when the keep command fails, its last line is the answer")
+    upkeep_report.write_text("# report", encoding="utf-8")
+    with mock.patch.object(hub.machine, "open_path") as upkeep_opened:
+        upkeep_open_answer = hub.run_action("upkeep:open:0")
+    check(upkeep_open_answer == "Report opened." and upkeep_opened.call_args[0] == (upkeep_report,),
+          "hub upkeep: Open report opens the job's report file on this PC")
+    check(hub.phone_allowed("upkeep:run:0") and hub.phone_allowed("upkeep:keep:0:session_a")
+          and not hub.phone_allowed("upkeep:open:0") and not hub.phone_allowed("upkeep:") and not hub.phone_allowed("upkeep"),
+          "hub upkeep: Run now and Keep run from the phone, Open report does not")
+    with mock.patch.object(hub.machine, "IS_MAC", True), \
+         mock.patch.object(hub.machine, "task_info", side_effect=lambda name: {"name": name, "installed": True, "state": "Ready",
+                                                                             "last_run": "", "next_run": "", "last_result": "0", "ok": True}), \
+         mock.patch.object(hub.machine, "start_task") as upkeep_mac_run, \
+         mock.patch.object(hub.subprocess, "run", side_effect=AssertionError("no schtasks on a Mac")):
+        upkeep_mac = hub.upkeep_section()
+        hub.run_action("upkeep:run:2")
+    hub._cache.pop("upkeep_tasks", None)
+    check(upkeep_mac["jobs"][0]["task"]["installed"] and upkeep_mac_run.call_args[0] == ("RepoSync",),
+          "hub upkeep: on a Mac the jobs are read from launchd and Run now starts the agent")
+finally:
+    hub.UPKEEP_PRIVATE = upkeep_real
+    hub._cache.pop("upkeep_tasks", None)
+    shutil.rmtree(upkeep_home, ignore_errors=True)
+upkeep_page = (Path(__file__).parent / "dashboard.html").read_text(encoding="utf-8")
+upkeep_hub = (Path(__file__).parent / "hub.py").read_text(encoding="utf-8")
+check("${upkeepCard(h.upkeep)}" in upkeep_page and "if (!upkeep || !upkeep.installed) return \"\";" in upkeep_page
+      and "upkeep:keep:${job.index}:${row.name}" in upkeep_page and "upkeep:run:${job.index}" in upkeep_page
+      and "upkeep:open:${job.index}" in upkeep_page and '"this pc": "overview"' in upkeep_page
+      and '("upkeep", upkeep_section)' in upkeep_hub and 'upkeep_todo(sections.get("upkeep"))' in upkeep_hub,
+      "hub upkeep: Overview draws the card with Run now, Open report and Keep, and hides it where it is not set up")
+check("upkeep_private.json" in (Path(__file__).parent / ".gitignore").read_text(encoding="utf-8").split(),
+      "hub upkeep: the list of this PC's jobs stays out of the repository")
+check(all(word not in upkeep_hub.split("# ------------------------------------------------------------------ this PC")[1]
+          .split("# ------------------------------------------------------------------ everything")[0]
+          for word in ("Users\\\\", "E:\\\\", "juwen")),
+      "hub upkeep: the public code names no folder of anyone's PC")
+
 print("\nALL PASSED" if not failures else f"\n{len(failures)} FAILED")
 sys.exit(1 if failures else 0)

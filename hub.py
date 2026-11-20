@@ -21,6 +21,10 @@ inbox_private.json (git-ignored), written by whatever went through that mailbox;
 What I answer to a mail on the card or in To do (inbox_action) is kept in inbox_answers.json (git-ignored): the card,
 To do and whatever went through the mailbox all read that one file.
 
+The "This PC" card (upkeep_section) shows the housekeeping jobs of this PC that have nothing to do with promotion but
+that I want to see in the same place: a clean-up, a backup, a sync. It reads upkeep_private.json (git-ignored), which
+names the scheduled tasks and where each one leaves its status; it shows only where that file exists.
+
 This file only reads their files, builds the "what I need from you" list, and runs a short whitelist of actions.
 Every reader is defensive: a missing or half-written file shows as "not set up" instead of breaking the dashboard.
 """
@@ -108,42 +112,39 @@ def stamp(path: Path) -> str | None:
 
 # ------------------------------------------------------------------ scheduled tasks
 
+def _task_row(name: str, folder: str = TASK_FOLDER) -> dict:
+    """Last/next run and last result of one scheduled task (schtasks; launchd on a Mac)."""
+    if machine.IS_MAC:
+        return machine.task_info(name)
+    try:
+        output = subprocess.run(
+            ["schtasks", "/query", "/tn", folder + name, "/fo", "CSV", "/v"],
+            capture_output=True, text=True, timeout=10, creationflags=NO_WINDOW,
+        ).stdout
+        rows = list(csv.DictReader(output.splitlines()))
+        unknown = False
+    except Exception:
+        # No answer (a busy PC makes schtasks miss the 10 seconds) is not the same as "not installed".
+        rows, unknown = [], True
+    if not rows:
+        return {"name": name, "installed": False, "unknown": unknown}
+    row = rows[0]
+    last_result = row.get("Last Result", "").strip()
+    return {
+        "name": name,
+        "installed": True,
+        "state": row.get("Status", "").strip(),
+        # 267011 = never run: schtasks then reports a placeholder date (30 Nov 1999), so show nothing
+        "last_run": "" if last_result == "267011" else _pretty_task_time(row.get("Last Run Time", "")),
+        "next_run": _pretty_task_time(row.get("Next Run Time", "")),
+        "last_result": last_result,
+        "ok": last_result in ("0", "267009", "267011", "267014"),  # success, running, never run, terminated by us
+    }
+
+
 def task_status() -> dict:
     """Last/next run and last result of every ReachPilot task (schtasks; launchd on a Mac; cached 2 minutes)."""
-    def build():
-        result = {}
-        for key, name in TASKS.items():
-            if machine.IS_MAC:
-                result[key] = machine.task_info(name)
-                continue
-            try:
-                output = subprocess.run(
-                    ["schtasks", "/query", "/tn", TASK_FOLDER + name, "/fo", "CSV", "/v"],
-                    capture_output=True, text=True, timeout=10, creationflags=NO_WINDOW,
-                ).stdout
-                rows = list(csv.DictReader(output.splitlines()))
-                unknown = False
-            except Exception:
-                # No answer (a busy PC makes schtasks miss the 10 seconds) is not the same as "not installed".
-                rows, unknown = [], True
-            if not rows:
-                result[key] = {"name": name, "installed": False, "unknown": unknown}
-                continue
-            row = rows[0]
-            last_result = row.get("Last Result", "").strip()
-            result[key] = {
-                "name": name,
-                "installed": True,
-                "state": row.get("Status", "").strip(),
-                # 267011 = never run: schtasks then reports a placeholder date (30 Nov 1999), so show nothing
-                "last_run": "" if last_result == "267011" else _pretty_task_time(row.get("Last Run Time", "")),
-                "next_run": _pretty_task_time(row.get("Next Run Time", "")),
-                "last_result": last_result,
-                "ok": last_result in ("0", "267009", "267011", "267014"),  # success, running, never run, terminated by us
-            }
-        return result
-
-    return cached("tasks", 120, build)
+    return cached("tasks", 120, lambda: {key: _task_row(name) for key, name in TASKS.items()})
 
 
 def _pretty_task_time(raw: str) -> str:
@@ -1867,6 +1868,7 @@ PHONE_VERBS = {
     "replies": {"send", "say", "skip", "mode"},
     "gmail": {"check", "mode"},  # an answer to a mail is only sent from the PC: the phone copy carries no mail text
     "inbox": None,  # every answer on the inbox card only writes inbox_answers.json
+    "upkeep": {"run", "keep"},  # Open report opens a file on the PC
 }
 PHONE_PC_ONLY = "This button only works on your PC: it opens a window or a file there."
 # What the window asks when one platform is connected again (channels_setup:<platform>).
@@ -1998,6 +2000,8 @@ def run_action(name: str) -> str:
         return gmail_answers.action(name)
     if name.startswith("inbox:"):
         return inbox_action(name)
+    if name.startswith("upkeep:"):
+        return upkeep_action(name)
     raise ValueError(f"Unknown action: {name}")
 
 
@@ -2361,6 +2365,167 @@ def gmail_todo(section: dict | None) -> list[dict]:
     return items
 
 
+# ------------------------------------------------------------------ this PC (housekeeping jobs: clean-up, backup, sync)
+
+UPKEEP_PRIVATE = ROOT / "upkeep_private.json"  # git-ignored: which scheduled jobs of this PC the card shows
+UPKEEP_JOBS, UPKEEP_ROWS = 8, 60
+# A task in Task Scheduler's top folder, by its name: no backslash, so never a path into another folder.
+UPKEEP_TASK = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._()-]{0,59}")
+UPKEEP_FOLDER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,119}")
+UPKEEP_DAY = re.compile(r"\d{4}-\d{2}-\d{2}")
+UPKEEP_MOMENT = re.compile(r"\d{4}-\d{2}-\d{2}( \d{2}:\d{2})?")
+UPKEEP_NO_STATUS = {"ran": "", "ok": None, "summary": "", "attention": [], "coming": [], "free": []}
+
+
+def _upkeep_jobs() -> list[dict]:
+    """The jobs named in upkeep_private.json; [] where the file is missing or is not this shape."""
+    try:
+        data = json.loads(UPKEEP_PRIVATE.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return []
+    jobs = []
+    for job in (data.get("jobs") if isinstance(data, dict) else None) or []:
+        if not isinstance(job, dict) or not _inbox_text(job.get("name"), 60):
+            continue
+        task = _inbox_text(job.get("task"), 60)
+        keep = job.get("keep")
+        jobs.append({
+            "name": _inbox_text(job.get("name"), 60),
+            "about": _inbox_text(job.get("about"), 200),
+            "task": task if UPKEEP_TASK.fullmatch(task) else "",
+            "status": job.get("status") if isinstance(job.get("status"), str) else "",
+            "report": job.get("report") if isinstance(job.get("report"), str) else "",
+            "keep": keep if isinstance(keep, list) and keep and all(isinstance(part, str) and part for part in keep) else [],
+        })
+    return jobs[:UPKEEP_JOBS]
+
+
+def _upkeep_status(path: str) -> dict:
+    """What a job wrote about its last run (its status file), every value checked and cut:
+
+    {"ran": "2026-11-20 13:04", "ok": true, "summary": "Freed 1.2 GB.", "attention": ["..."],
+     "free_bytes": {"C:": 52000000000},
+     "coming": [{"name": "session_abc", "bytes": 1200000, "idle_days": 31, "after": "2026-11-27"}]}
+
+    A job without such a file shows its scheduled task only."""
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8-sig")) if path else None
+    except (OSError, ValueError):
+        data = None
+    if not isinstance(data, dict):
+        return dict(UPKEEP_NO_STATUS)
+    coming = []
+    for row in data.get("coming") if isinstance(data.get("coming"), list) else []:
+        name = row.get("name") if isinstance(row, dict) else None
+        if isinstance(name, str) and UPKEEP_FOLDER.fullmatch(name):
+            coming.append({"name": name, "bytes": _inbox_count(row.get("bytes")) or 0, "idle_days": _inbox_count(row.get("idle_days")),
+                           "after": _inbox_when(row.get("after"), UPKEEP_DAY)})
+    free = data.get("free_bytes") if isinstance(data.get("free_bytes"), dict) else {}
+    attention = data.get("attention") if isinstance(data.get("attention"), list) else []
+    return {
+        "ran": _inbox_when(data.get("ran"), UPKEEP_MOMENT),
+        "ok": data.get("ok") if isinstance(data.get("ok"), bool) else None,
+        "summary": _inbox_text(data.get("summary"), 300),
+        "attention": [line for line in (_inbox_text(item, 300) for item in attention[:UPKEEP_ROWS]) if line],
+        "coming": sorted(coming, key=lambda row: (row["after"], row["name"]))[:UPKEEP_ROWS],
+        "free": [{"drive": _inbox_text(drive, 8), "bytes": size} for drive, size in sorted(free.items())[:6]
+                 if _inbox_count(size) is not None and _inbox_text(drive, 8)],
+    }
+
+
+def upkeep_section() -> dict:
+    """The housekeeping jobs of this PC, from upkeep_private.json (git-ignored, next to the code):
+
+    {"jobs": [{"name": "Laptop clean-up", "about": "Every Monday: removes old work folders",
+               "task": "Laptop clean-up", "status": "C:\\...\\status.json", "report": "C:\\...\\last-report.md",
+               "keep": ["python", "C:\\...\\laptop_cleanup.py", "--keep"]}]}
+
+    "task" is the name of a task in Task Scheduler's top folder (a launchd agent on a Mac): the card shows when it
+    last ran, how that ended and when it runs next, and Run now starts it. "status" is a file the job writes after
+    each run (see _upkeep_status); "report" is a file Open report opens on this PC. "keep" is a command that takes
+    one folder name: it is offered per folder the job is about to remove, and only for the names in the status file.
+    Not set up where the file is missing. The paths stay on this PC: the card carries names, sizes and dates."""
+    jobs = _upkeep_jobs()
+    if not jobs:
+        return {"installed": False}
+    tasks = cached("upkeep_tasks", 120, lambda: {job["task"]: _task_row(job["task"], "\\") for job in jobs if job["task"]})
+    rows = []
+    for index, job in enumerate(jobs):
+        rows.append({"index": index, "name": job["name"], "about": job["about"], "task": tasks.get(job["task"]),
+                     "has_report": bool(job["report"]), "can_keep": bool(job["keep"]), **_upkeep_status(job["status"])})
+    return {"installed": True, "jobs": rows}
+
+
+def upkeep_todo(section: dict | None) -> list[dict]:
+    """A job whose last run failed, what a job says needs a look, and the folders a job is about to remove."""
+    items = []
+    for job in (section or {}).get("jobs") or []:
+        task = job.get("task") or {}
+        name = job["name"]
+        if (task.get("installed") and not task.get("ok")) or job.get("ok") is False:
+            items.append({
+                "priority": 2, "module": "This PC", "title": f"{name} failed on its last run",
+                "detail": job.get("summary") or f"Task Scheduler result {task.get('last_result') or 'unknown'}.",
+                "action": f"upkeep:run:{job['index']}" if task.get("installed") else None,
+                "action_label": "Run again" if task.get("installed") else None, "failed": True,
+                "links": [{"label": line, "url": "", "note": ""} for line in job.get("attention") or []],
+            })
+        elif job.get("attention"):
+            items.append({
+                "priority": 2, "module": "This PC", "title": f"{name}: {len(job['attention'])} thing(s) only you can do",
+                "detail": "The job goes on working; these stay on the list until they are done.",
+                "action": None, "action_label": None,
+                "links": [{"label": line, "url": "", "note": ""} for line in job["attention"]],
+            })
+        coming = job.get("coming") or []
+        if coming:
+            first = min((row["after"] for row in coming if row["after"]), default="the next run")
+            items.append({
+                "priority": 3, "module": "This PC",
+                "title": f"{name}: {len(coming)} old folder(s) will be removed from {first}",
+                "detail": "Nothing in them changed for weeks. Press Keep on the This PC card (Overview) for one you still need.",
+                "action": None, "action_label": None,
+                "links": [{"label": row["name"], "url": "",
+                           "note": " · ".join(part for part in (
+                               f"{row['bytes'] / 1048576:,.0f} MB",
+                               f"idle {row['idle_days']} days" if row["idle_days"] is not None else "",
+                               f"from {row['after']}" if row["after"] else "") if part)} for row in coming],
+            })
+    return items
+
+
+def upkeep_action(name: str) -> str:
+    """upkeep:run:<job> starts the job's task, upkeep:open:<job> opens its report on this PC,
+    upkeep:keep:<job>:<folder> hands one folder name from the job's own list to its keep command."""
+    _, verb, rest = (name.split(":", 2) + ["", ""])[:3]
+    number, _, argument = rest.partition(":")
+    jobs = _upkeep_jobs()
+    if not number.isdigit() or int(number) >= len(jobs):
+        raise ValueError(f"Unknown action: {name}")
+    job = jobs[int(number)]
+    if verb == "run" and job["task"] and not argument:
+        if machine.IS_MAC:
+            machine.start_task(job["task"])
+        else:
+            subprocess.run(["schtasks", "/run", "/tn", "\\" + job["task"]], capture_output=True, creationflags=NO_WINDOW)
+        _cache.pop("upkeep_tasks", None)
+        return f"{job['name']} started; the card updates when the run is done."
+    if verb == "open" and not argument:
+        if not job["report"] or not Path(job["report"]).is_file():
+            raise ValueError(f"{job['name']} has not written a report yet.")
+        machine.open_path(Path(job["report"]))
+        return "Report opened."
+    if verb == "keep" and job["keep"]:
+        if argument not in {row["name"] for row in _upkeep_status(job["status"])["coming"]}:
+            raise ValueError("That folder is not on the list of folders to be removed.")
+        command = [str(PYTHON) if job["keep"][0] == "python" else job["keep"][0], *job["keep"][1:], argument]
+        done = subprocess.run(command, capture_output=True, text=True, timeout=120, creationflags=NO_WINDOW)
+        if done.returncode != 0:
+            raise ValueError(((done.stderr or done.stdout or "").strip().splitlines() or ["It could not be kept."])[-1][:300])
+        return f"{argument} is kept: {job['name']} will leave it alone."
+    raise ValueError(f"Unknown action: {name}")
+
+
 # ------------------------------------------------------------------ everything for the dashboard
 
 def build(linkedin_overview: dict | None) -> dict:
@@ -2371,7 +2536,7 @@ def build(linkedin_overview: dict | None) -> dict:
                         ("podcast_promotion", podcast_promotion_section), ("launch", launch_section),
                         ("patents", patents_section),
                         ("readers", readers_section), ("shorts", shorts_section), ("replies", replies_section),
-                        ("gmail", gmail_section), ("inbox", inbox_section)):
+                        ("gmail", gmail_section), ("inbox", inbox_section), ("upkeep", upkeep_section)):
         try:
             sections[key] = reader()
         except Exception as error:  # one broken module must not take the dashboard down
@@ -2395,7 +2560,8 @@ def build(linkedin_overview: dict | None) -> dict:
             + shorts_todo(sections.get("shorts"))
             + replies_todo(sections.get("replies"))
             + gmail_todo(sections.get("gmail"))
-            + inbox_todo(sections.get("inbox")),
+            + inbox_todo(sections.get("inbox"))
+            + upkeep_todo(sections.get("upkeep")),
             key=lambda item: item["priority"],
         ),
         "help": help_sections(tasks, sections.get("podcast"), sections.get("launch"), sections.get("patents"),
