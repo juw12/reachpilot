@@ -181,6 +181,12 @@
 .todo.answered .actions .btn { width: auto; }
   .todo li .btn { min-height: 28px; margin: 2px 0 2px 6px; padding: 2px 10px; font-size: 13px; }
 .todo li .answers { display: inline-block; white-space: nowrap; }
+  /* This PC: one block per housekeeping job, a hairline between them */
+  .upkeep .job + .job { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+  .upkeep .when { display: block; margin-top: 2px; font: 12px/1.5 var(--mono); color: var(--muted); }
+  .upkeep .hint { margin-top: 3px; overflow-wrap: anywhere; }
+  .upkeep ul { margin: 6px 0 0; padding-left: 18px; }
+  .upkeep li .btn { min-height: 28px; margin: 2px 0 2px 6px; padding: 2px 10px; font-size: 13px; }
   .note-form { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
   .note-form input { flex: 1 1 260px; min-height: 34px; max-width: 100%; padding: 6px 8px; border: 1px solid var(--line-strong);
     border-radius: 6px; background: var(--surface); color: var(--ink); font: inherit; }
@@ -365,7 +371,7 @@
     .todo { display: block; }
     .todo .actions { flex-direction: row; flex-wrap: wrap; margin-top: 10px; }
     .todo .actions .btn { width: auto; }
-    .todo li .btn, .btn.small, .note-form input { min-height: 44px; }
+    .todo li .btn, .upkeep li .btn, .btn.small, .note-form input { min-height: 44px; }
     td a, .todo li a, .launch-links a, details summary { display: inline-flex; align-items: center; min-height: 44px; min-width: 44px; }
     .patents .filing input { min-height: 44px; }
     .patents td.ready b, .patents td.screen b { display: inline; margin-right: 8px; }
@@ -998,7 +1004,7 @@ function link(url, label) {
   return url ? `<a href="${esc(url)}" target="_blank" rel="noopener">${esc(label)}</a>` : esc(label);
 }
 
-const MODULE_TAB = { jobs: "jobs", "job search": "jobs", "e-mail": "email", email: "email", linkedin: "linkedin", promote: "promote", "creator outreach": "promote", podcast: "podcast", patents: "patents", launch: "launch", replies: "reach", gmail: "reach" };
+const MODULE_TAB = { jobs: "jobs", "job search": "jobs", "e-mail": "email", email: "email", linkedin: "linkedin", promote: "promote", "creator outreach": "promote", podcast: "podcast", patents: "patents", launch: "launch", replies: "reach", gmail: "reach", "this pc": "overview" };
 
 function todoKey(item) {
   return `${item.module}|${item.title}|${item.detail}`;
@@ -1369,6 +1375,40 @@ function shortsCard(c) {
   </div>`;
 }
 
+// This PC's own housekeeping jobs (hub.upkeep_section reads upkeep_private.json): a clean-up, a backup, a sync. Not drawn
+// where that file is missing. Run now starts the job's scheduled task, Keep takes one folder off a job's "will be
+// removed" list (hub.upkeep_action). The card carries names, sizes and dates, never a path.
+function upkeepCard(upkeep) {
+  if (!upkeep || !upkeep.installed) return "";
+  const size = (bytes) => (bytes >= 1073741824 ? `${(bytes / 1073741824).toFixed(1)} GB` : `${Math.round(bytes / 1048576)} MB`);
+  const jobs = (upkeep.jobs || []).map((job) => {
+    const task = job.task && job.task.installed ? job.task : null;
+    const failed = (task && !task.ok) || job.ok === false;
+    const state = failed ? `<span class="badge bad">Failed</span>`
+      : task && !task.last_run && !job.ran ? `<span class="badge grey">Not run yet</span>`
+      : task || job.ran ? `<span class="badge good">OK</span>` : `<span class="badge grey">No scheduled task</span>`;
+    const when = [task && task.last_run ? `ran ${esc(task.last_run)}` : job.ran ? `ran ${esc(niceDate(job.ran))}` : "",
+      task && task.next_run ? `next ${esc(task.next_run)}` : ""].filter(Boolean).join(" · ");
+    const coming = job.coming || [];
+    const first = coming.map((row) => row.after).filter(Boolean).sort()[0];
+    const list = coming.length ? `<details data-keep="${esc(`upkeep-coming:${job.index}`)}">
+        <summary>${num(coming.length)} old folder${coming.length === 1 ? "" : "s"} (${size(coming.reduce((sum, row) => sum + row.bytes, 0))}) will be removed${first ? ` from ${esc(niceDate(first))}` : ""}</summary>
+        <ul>${coming.map((row) => `<li>${esc(row.name)} <span class="hint">· ${size(row.bytes)}${row.idle_days === null ? "" : ` · idle ${num(row.idle_days)} days`}${row.after ? ` · from ${esc(niceDate(row.after))}` : ""}</span>${
+          job.can_keep ? `<span class="answers"><button class="btn ghost" data-action="${esc(`upkeep:keep:${job.index}:${row.name}`)}" data-now>Keep</button></span>` : ""}</li>`).join("")}</ul>
+      </details>` : "";
+    const free = (job.free || []).map((drive) => `${esc(drive.drive)} ${size(drive.bytes)} free`).join(" · ");
+    return `<div class="job">
+      <div><b>${esc(job.name)}</b> ${state}${when ? ` <span class="when">${when}</span>` : ""}</div>
+      ${job.about ? `<div class="hint">${esc(job.about)}</div>` : ""}
+      ${job.summary || free ? `<div class="hint">${[esc(job.summary), free].filter(Boolean).join(" ")}</div>` : ""}
+      ${(job.attention || []).map((line) => `<div class="hint"><span class="badge warn">Needs you</span> ${esc(line)}</div>`).join("")}
+      ${list}
+      <div class="actions">${task ? actionButton(`upkeep:run:${job.index}`, "Run now", true) : ""}${job.has_report ? actionButton(`upkeep:open:${job.index}`, "Open report", true) : ""}</div>
+    </div>`;
+  }).join("");
+  return `<div class="card module upkeep" id="upkeep-card"><h3>This PC <span class="hint">clean-up, backup, sync</span></h3>${jobs}</div>`;
+}
+
 function renderOverview(d) {
   keepingState(document.getElementById("overview"), () => drawOverview(d));
 }
@@ -1441,6 +1481,7 @@ function drawOverview(d) {
       </div>`).join("")}
       ${readers.map(readersCard).join("")}
       ${shorts.map(shortsCard).join("")}
+      ${upkeepCard(h.upkeep)}
       ${patents ? `<div class="card module">
         <h3>Patents <button class="btn ghost" data-goto="patents">Open</button></h3>
         ${patents.has_scan ? `<div class="big">${patentHeadline(patents.counts)}</div>

@@ -56,5 +56,8 @@ replies.log
 inbox_private.json
 inbox_answers.json
 
+# This PC card: which housekeeping jobs of this PC it shows and where they leave their status (hub.py upkeep_section)
+upkeep_private.json
+
 # A Mac: when each scheduled task last ran and how it ended (machine.py run_task)
 data/tasks/

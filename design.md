@@ -82,6 +82,10 @@ Change a colour and these numbers must be computed again, not estimated.
   only "Secured", which ends a "Not me" alarm, is filled), a note field behind "Add a note", and "Undo". An
   answered mail shrinks to one muted line with its answer as a badge. The same buttons sit small behind each
   mail's link in To do.
+- The "This PC" card on Overview (housekeeping jobs): one block per job with a hairline between them. The job's name
+  in bold, its state as a badge with a word (OK, Failed, Not run yet), last and next run in mono; below it what the
+  last run did in muted text. Folders a job is about to remove sit behind one blue summary line, each with a small
+  quiet Keep button, the same size as an answer button in To do.
 
 ## Space, radius, shadow, motion
 
