@@ -4767,13 +4767,71 @@ with tempfile.TemporaryDirectory() as disclose_folder:
     finally:
         hub.PODCAST, hub.subprocess.run, hub.subprocess.Popen = disclose_real
 
+# Podcast: podcast:tellsearch tells the IndexNow search engines from the PC, through the first door its network leaves
+# open. The script runs against a stand-in podcast module here: a proxy that lets only Bing through.
+with tempfile.TemporaryDirectory() as tellsearch_folder:
+    tellsearch_home = Path(tellsearch_folder)
+    (tellsearch_home / "podcast.py").write_text(
+        "import json\n"
+        "from pathlib import Path\n"
+        "ASKED = Path(__file__).with_name('asked.json')\n"
+        "OPEN = json.loads(Path(__file__).with_name('open.json').read_text())\n"
+        "def load_config():\n"
+        "    return json.loads(Path(__file__).with_name('config.json').read_text())\n"
+        "def load_episodes():\n"
+        "    return [{'slug': '2026-11-21-ep006'}, {'slug': '2026-11-20-ep005'}]\n"
+        "class Answer:\n"
+        "    def __init__(self, status_code):\n"
+        "        self.status_code = status_code\n"
+        "class Net:\n"
+        "    def __init__(self, config):\n"
+        "        pass\n"
+        "    def get(self, url, timeout=25):\n"
+        "        asked = json.loads(ASKED.read_text()) if ASKED.exists() else []\n"
+        "        ASKED.write_text(json.dumps(asked + [url]))\n"
+        "        door = url.split('/')[2]\n"
+        "        if OPEN.get(door) is None:\n"
+        "            raise ConnectionError('Tunnel connection failed: 403 Forbidden')\n"
+        "        return Answer(OPEN[door])\n", encoding="utf-8")
+    tellsearch_config = {"publish": {"base_url": "https://example.github.io/show"}, "search": {"indexnow_key": "abc123"}}
+    (tellsearch_home / "config.json").write_text(json.dumps(tellsearch_config), encoding="utf-8")
+    tellsearch_real = hub.PODCAST
+    hub.PODCAST = tellsearch_home
+    try:
+        (tellsearch_home / "open.json").write_text(json.dumps({"www.bing.com": 202}), encoding="utf-8")
+        tellsearch_line = hub.run_action("podcast:tellsearch")
+        tellsearch_asked = json.loads((tellsearch_home / "asked.json").read_text())
+        check(tellsearch_line == "Search engines: api.indexnow.org closed (ConnectionError); www.bing.com took 2 of 2 pages.",
+              f"podcast: the search engines are told through the first open door, and the answer names the closed one ({tellsearch_line})")
+        check(len(tellsearch_asked) == 3 and "url=https%3A%2F%2Fexample.github.io%2Fshow%2Fepisodes%2F2026-11-21-ep006.html" in tellsearch_asked[2]
+              and "keyLocation=https%3A%2F%2Fexample.github.io%2Fabc123.txt" in tellsearch_asked[1]
+              and not any("yandex" in url for url in tellsearch_asked),
+              "podcast: the listen page and the newest episode page are sent with the key's address; no door after the open one is asked")
+        (tellsearch_home / "open.json").write_text(json.dumps({"www.bing.com": 403}), encoding="utf-8")
+        try:
+            hub.run_action("podcast:tellsearch")
+            check(False, "podcast: when every door is closed the button fails and says how each one answered")
+        except RuntimeError as tellsearch_error:
+            check("could not be told from this PC" in str(tellsearch_error) and "www.bing.com answered HTTP 403" in str(tellsearch_error)
+                  and "yandex.com closed" in str(tellsearch_error),
+                  f"podcast: when every door is closed the button fails and says how each one answered ({tellsearch_error})")
+        (tellsearch_home / "config.json").write_text(json.dumps({"publish": tellsearch_config["publish"]}), encoding="utf-8")
+        try:
+            hub.run_action("podcast:tellsearch")
+            check(False, "podcast: without the key in the podcast config nothing is sent")
+        except RuntimeError as tellsearch_error:
+            check("no search.indexnow_key" in str(tellsearch_error), "podcast: without the key in the podcast config nothing is sent")
+    finally:
+        hub.PODCAST = tellsearch_real
+
 # Phone buttons: a name pressed on the phone runs only if it needs nothing on the PC's screen (phone_action.py).
 import phone_action  # noqa: E402
 import phone_snapshot  # noqa: E402
 
 for phone_name in ("promote:retryall", "promote:sendall", "promote:send:12", "promote:pause", "promote:covered:yt:UC1|https://youtu.be/x",
                    "linkedin_toggle_pause", "linkedin_run_now", "jobs_search_now", "email_run_now", "podcast:approve:all",
-                   "podcast:review:off", "podcast:listed:spotify", "podcast:disclose", "patents:decide:demo:file",
+                   "podcast:review:off", "podcast:listed:spotify", "podcast:disclose", "podcast:tellsearch",
+                   "patents:decide:demo:file",
                    "patents:filed:demo:2026-11-01:63/123,456",
                    "launch:followup:demo", "launch:approve_invites:demo", "shorts:pause:demo", "inbox:mine:google-1"):
     check(hub.phone_allowed(phone_name), f"phone buttons: {phone_name} runs from the phone")
