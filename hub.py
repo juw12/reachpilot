@@ -928,10 +928,17 @@ if not any(" took " in line and " took none" not in line for line in report):
 """
 
 
+PODCAST_TELLSEARCH_SECONDS = 540  # under the 10 minutes Cairn gives a button pressed on the phone
+
+
 def podcast_tell_search() -> str:
     """podcast:tellsearch - tell the search engines now, and say which door this PC's network leaves open."""
-    done = subprocess.run([str(PYTHON), "-c", PODCAST_TELLSEARCH_SCRIPT], cwd=PODCAST, capture_output=True, text=True,
-                          encoding="utf-8", timeout=240, creationflags=NO_WINDOW)
+    try:
+        done = subprocess.run([str(PYTHON), "-c", PODCAST_TELLSEARCH_SCRIPT], cwd=PODCAST, capture_output=True, text=True,
+                              encoding="utf-8", timeout=PODCAST_TELLSEARCH_SECONDS, creationflags=NO_WINDOW)
+    except subprocess.TimeoutExpired:
+        # seen on 21 Nov: with an episode being voiced and its video rendered, loading the module alone took minutes
+        raise RuntimeError(f"This PC was too busy to finish in {PODCAST_TELLSEARCH_SECONDS // 60} minutes. Press it again later.")
     lines = [line.strip() for line in ((done.stdout or "") + "\n" + (done.stderr or "")).splitlines() if line.strip()]
     if done.returncode != 0:
         raise RuntimeError(lines[-1] if lines else "The search engines could not be told.")

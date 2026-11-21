@@ -4821,6 +4821,20 @@ with tempfile.TemporaryDirectory() as tellsearch_folder:
             check(False, "podcast: without the key in the podcast config nothing is sent")
         except RuntimeError as tellsearch_error:
             check("no search.indexnow_key" in str(tellsearch_error), "podcast: without the key in the podcast config nothing is sent")
+        tellsearch_run = hub.subprocess.run
+
+        def tellsearch_too_slow(command, **kwargs):
+            raise hub.subprocess.TimeoutExpired(command, kwargs.get("timeout"))
+
+        hub.subprocess.run = tellsearch_too_slow
+        try:
+            hub.run_action("podcast:tellsearch")
+            check(False, "podcast: a PC too busy to finish says so in one short line")
+        except RuntimeError as tellsearch_error:
+            check(str(tellsearch_error) == "This PC was too busy to finish in 9 minutes. Press it again later.",
+                  f"podcast: a PC too busy to finish says so in one short line ({str(tellsearch_error)[:80]})")
+        finally:
+            hub.subprocess.run = tellsearch_run
     finally:
         hub.PODCAST = tellsearch_real
 
