@@ -541,10 +541,12 @@ caption, hashtags, video). The task copies finished videos into `data/shorts/`, 
 address on your Pages site and schedules it in Buffer for X on the next posting day you set (for example Monday,
 Wednesday, Friday and Sunday at 12:00). Buffer publishes it at that time, also when this PC is off.
 
-- **One at a time.** Never more than one post waits in Buffer. A post that went out is never sent again, and a
-  post Buffer already took is found again instead of being created twice.
-- **You can stop it in two places.** Pause on the card removes the waiting post from Buffer. Deleting the post in
-  Buffer yourself pauses the channel too. Nothing goes out until Resume.
+- **One at a time, or a few days ahead.** One post waits in Buffer. With `"ahead": 4` in the channel's settings
+  four wait there, each on its own posting day, so the channel keeps posting for four posting days while this PC
+  is off (at most 8; Buffer's free plan holds 10). A post that went out is never sent again, and a post Buffer
+  already took is found again instead of being created twice.
+- **You can stop it in two places.** Pause on the card removes every waiting post from Buffer. Deleting a waiting
+  post in Buffer yourself pauses the channel too and takes the others out. Nothing goes out until Resume.
 - **The card on Overview** shows the next post and its day, how many videos are finished against the target, how
   many went out (with their links), the day the finished videos run out, and what X refused.
 
@@ -666,7 +668,7 @@ again on the next daily run. `python patent_desk.py show` prints the desk.
 | `patents.py` | daily patent screen of your GitHub projects: score, filing date, next step |
 | `patent_desk.py` | daily patent desk: readiness checklist per candidate, provisional draft package, filing follow-up |
 | `launch_auto.py` | hourly launch automations: an answer and one follow-up, invitations after approval, daily checks of a waiting document |
-| `shorts.py` | hourly: a channel's finished short videos, scheduled for X through Buffer one at a time |
+| `shorts.py` | hourly: a channel's finished short videos, scheduled for X through Buffer one per posting day |
 | `replies.py` | every 30 minutes: comments and messages on Bluesky, Mastodon and Dev.to, with an answer you send or that goes by itself |
 | `gmail_answers.py` | the Gmail answers card: what Titip's Autopilot did with new Gmail on this PC, and its buttons |
 | `selfupdate.py` | fast-forward updater used by the dashboard and the Updates task; installs newly required packages |

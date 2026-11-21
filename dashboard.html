@@ -1348,7 +1348,7 @@ function readersCard(r) {
   </div>`;
 }
 
-// Shorts: a channel's finished short videos, scheduled for X one at a time (shorts.py). Read from this PC's files.
+// Shorts: a channel's finished short videos, scheduled for X one per posting day (shorts.py). Read from this PC's files.
 function shortsCard(c) {
   const next = c.next;
   const big = !c.connected ? "X is not connected"
@@ -1369,7 +1369,9 @@ function shortsCard(c) {
     <div class="hint">${nextLine}</div>
     ${meter(c.target ? (100 * c.finished) / c.target : 0, `${c.finished} of ${c.target} videos finished`)}
     <div class="hint">${low}${num(c.finished)} of ${num(c.target)} videos finished &middot; ${num(c.sent)} posted &middot; ${supply}</div>
-    <div class="hint">One post ${esc(c.slots)}. Buffer publishes it at that time, also when this PC is off.</div>
+    <div class="hint">One post ${esc(c.slots)}. ${c.in_buffer > 1 && !c.paused
+      ? `${num(c.in_buffer)} posts already wait in Buffer, so posts keep going out until ${esc(niceDate(c.in_buffer_until))}, also when this PC is off.`
+      : "Buffer publishes it at that time, also when this PC is off."}</div>
     ${c.trouble ? `<div class="hint"><span class="badge warn">Not scheduled yet</span> ${esc(c.trouble)}</div>` : ""}
     ${c.failed.map((p) => `<div class="hint"><span class="badge bad">Refused twice</span> ${esc(p.title)}: ${esc(p.error)}</div>`).join("")}
     ${c.posts.map((p) => `<div class="hint">${esc(niceDate(p.sent_at))} &middot; ${link(p.link, p.title)}</div>`).join("")}

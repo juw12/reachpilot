@@ -4939,7 +4939,8 @@ try:
           and sent_input["text"].startswith("Title k02") and shorts_state["episodes"]["k02"]["status"] == "scheduled",
           "shorts: the next video is scheduled in Buffer for Friday noon local time, with its video and its text")
     again = shorts.schedule("demo", shorts_cfg, shorts_state, shorts_creds, shorts_now, ask=buffer, host=shorts_host)
-    check(buffer.created == 1 and again.startswith("k02 waits in Buffer"), "shorts: never more than one post waits in Buffer")
+    check(buffer.created == 1 and again.startswith("k02 waits in Buffer"),
+          "shorts: without \"ahead\" never more than one post waits in Buffer")
 
     shorts.save_state("demo", shorts_state)
     shorts.SECRETS_FILE.write_text(json.dumps({"channels": {"x": shorts_creds}}), encoding="utf-8")
@@ -5016,6 +5017,55 @@ try:
     check(shorts.refresh(shorts_state, shorts_creds, friday, ask=shorts_offline)[0].startswith("k01: Buffer did not answer")
           and shorts_state["episodes"]["k01"]["status"] == "scheduled" and not shorts_state.get("paused"),
           "shorts: when Buffer does not answer nothing is changed and nothing is scheduled on top")
+
+    # "ahead": several posts wait in Buffer, one per posting day, so the channel keeps posting while this PC is off.
+    ahead_cfg = {**shorts_cfg, "order": ["k02", "k01"], "ahead": 3}
+    ahead_state = {"episodes": {
+        episode_id: {"title": f"Title {episode_id}", "text": f"Text {episode_id}", "status": "waiting"}
+        for episode_id in ("k100", "k26", "k01", "k9", "k02")
+    }}
+    check(shorts.in_order(ahead_cfg, ahead_state["episodes"]) == ["k02", "k01", "k9", "k26", "k100"]
+          and shorts.posts_ahead(ahead_cfg) == 3 and shorts.posts_ahead({}) == 1 and shorts.posts_ahead({"ahead": 0}) == 1
+          and shorts.posts_ahead({"ahead": True}) == 1 and shorts.posts_ahead({"ahead": 50}) == shorts.MAX_AHEAD,
+          "shorts: ids the order does not name follow by number (k9, k26, k100), and \"ahead\" is a number from 1 to 8")
+    ahead_buffer = ShortsBuffer()
+    told = shorts.schedule("demo", ahead_cfg, ahead_state, shorts_creds, shorts_now, ask=ahead_buffer, host=shorts_host)
+    check(told == ("k02: scheduled in Buffer for 2026-11-20 12:00; k01: scheduled in Buffer for 2026-11-22 12:00; "
+                   "k9: scheduled in Buffer for 2026-11-23 12:00")
+          and ahead_buffer.created == 3 and shorts.held_posts(ahead_state) == ["k02", "k01", "k9"]
+          and shorts.schedule("demo", ahead_cfg, ahead_state, shorts_creds, shorts_now, ask=ahead_buffer, host=shorts_host)
+          == "k02 waits in Buffer for 2026-11-20 12:00 and 2 more after it" and ahead_buffer.created == 3,
+          "shorts: with \"ahead\": 3 three posts wait in Buffer, each on its own posting day, and no fourth is added")
+    shorts.save_state("demo", ahead_state)
+    shorts.SECRETS_FILE.write_text(json.dumps({"channels": {"x": shorts_creds}}), encoding="utf-8")
+    shorts.PRIVATE_FILE.write_text(json.dumps({"demo": {**ahead_cfg, "source": str(shorts_source)}}), encoding="utf-8")
+    ahead_card = shorts.card(shorts_now)[0]
+    check(ahead_card["in_buffer"] == 3 and ahead_card["in_buffer_until"] == "2026-11-23" and ahead_card["left"] == 5
+          and ahead_card["next"]["episode"] == "k02" and ahead_card["covered_until"] == "2026-11-27",
+          "shorts: the card says how many posts wait in Buffer, until which day, and when all finished videos run out")
+    ahead_buffer.posts["p1"].update({"status": "sent", "sentAt": "2026-11-20T05:00:07.000Z", "externalLink": "https://x.com/someone/status/2"})
+    shorts.refresh(ahead_state, shorts_creds, friday, ask=ahead_buffer)
+    topped = shorts.schedule("demo", ahead_cfg, ahead_state, shorts_creds, friday, ask=ahead_buffer, host=shorts_host)
+    check(ahead_state["episodes"]["k02"]["status"] == "sent" and topped == "k26: scheduled in Buffer for 2026-11-25 12:00"
+          and shorts.held_posts(ahead_state) == ["k01", "k9", "k26"],
+          "shorts: when one goes out the next video takes the posting day after the last one that waits")
+    del ahead_buffer.posts[ahead_state["episodes"]["k9"]["post_id"]]  # I delete the middle one in Buffer myself
+    notes = shorts.refresh(ahead_state, shorts_creds, friday, ask=ahead_buffer)
+    check(ahead_state["paused"] and shorts.held_posts(ahead_state) == [] and ahead_buffer.posts.keys() == {"p1"}
+          and "k9 was removed in Buffer" in ahead_state["paused_why"] and "k01, k26" in ahead_state["paused_why"]
+          and all(ahead_state["episodes"][episode_id]["status"] == "waiting" for episode_id in ("k01", "k9", "k26"))
+          and ahead_state["episodes"]["k02"]["status"] == "sent",
+          "shorts: removing one waiting post in Buffer pauses the channel and takes the others out too; a sent one stays sent")
+    ahead_state["paused"] = False
+    shorts.schedule("demo", ahead_cfg, ahead_state, shorts_creds, friday, ask=ahead_buffer, host=shorts_host)
+    went_out = ahead_state["episodes"]["k01"]["post_id"]
+    ahead_buffer.posts[went_out].update({"status": "sent", "sentAt": "2026-11-22T05:00:07.000Z"})  # sent, not yet read back
+    shorts.save_state("demo", ahead_state)
+    paused = shorts.action("shorts:pause:demo", ask=ahead_buffer)
+    after_pause = shorts.load_state("demo")
+    check("2 posts were removed from Buffer (k9, k26)" in paused and went_out in ahead_buffer.posts
+          and after_pause["episodes"]["k01"]["status"] == "scheduled" and after_pause["episodes"]["k9"]["status"] == "waiting",
+          "shorts: Pause removes every waiting post, and one that went out a moment ago is not put back in line")
 
     shorts.SECRETS_FILE.write_text(json.dumps({"channels": {"x": {"client_id": "paid api"}}}), encoding="utf-8")
     check(shorts.x_account() is None and shorts.card(friday)[0]["connected"] is False

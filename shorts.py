@@ -1,4 +1,4 @@
-"""Shorts: a channel's finished short videos go to X on fixed days, one at a time, through Buffer.
+"""Shorts: a channel's finished short videos go to X on fixed days, one per posting day, through Buffer.
 
 A channel is a folder of finished videos that something else makes. Next to each video sits a post file
 (<anything>_post.json) with "id", "title", "caption", "hashtags" and "video". Every hour this PC
@@ -9,14 +9,16 @@ A channel is a folder of finished videos that something else makes. Next to each
   3. when nothing waits in Buffer, gives the next video a public address and schedules it for the next posting
      day. Buffer publishes it at that time, also when this PC is off.
 
-Never more than one post waits in Buffer. Removing that post in Buffer, or Pause in the dashboard, stops the
-channel until Resume. An episode that was sent is never sent again.
+One post waits in Buffer unless the channel sets "ahead": then that many wait there, each on its own posting
+day, so the channel keeps posting for that many posting days while this PC is off (at most 8; Buffer's free
+plan holds 10). Removing a waiting post in Buffer, or Pause in the dashboard, takes every waiting post out and
+stops the channel until Resume. An episode that was sent is never sent again.
 
 Channels are configured in shorts_private.json (git-ignored), posting uses the X account that is connected
 through Buffer in secrets.json:
 
     {"mychannel": {"name": "My channel", "source": "D:\\videos\\out", "order": ["k01", "k02"], "target": 21,
-                   "days": ["mon", "wed", "fri", "sun"], "hour": 12, "tags": 2,
+                   "days": ["mon", "wed", "fri", "sun"], "hour": 12, "tags": 2, "ahead": 1,
                    "status_file": "queue_status.json", "not_connected": ["YouTube", "TikTok"]}}
 
     python shorts.py            run once (the scheduled task does this every hour)
@@ -52,6 +54,8 @@ TASK_NAME = "Shorts"
 X_LIMIT = 280
 DEFAULT_TAGS = 2
 DEFAULT_HOUR = 12
+DEFAULT_AHEAD = 1  # posts that wait in Buffer at the same time
+MAX_AHEAD = 8  # Buffer's free plan holds 10 scheduled posts per channel; two stay free for posts made by hand
 DAY_NAMES = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 LEAD_MINUTES = 30  # a post is not scheduled closer to its time than this: Buffer still has to fetch the video
 SETTLED_SECONDS = 600  # a video that changed in the last ten minutes may still be written
@@ -228,10 +232,27 @@ def slots_text(cfg: dict) -> str:
     return f"{names} at {posting_hour(cfg):02d}:00"
 
 
+def posts_ahead(cfg: dict) -> int:
+    """How many posts may wait in Buffer at the same time: "ahead" in the channel's settings, 1 to 8."""
+    ahead = cfg.get("ahead")
+    return min(ahead, MAX_AHEAD) if isinstance(ahead, int) and not isinstance(ahead, bool) and ahead >= 1 else DEFAULT_AHEAD
+
+
+def _by_number(episode_id: str) -> list:
+    """k9 before k26 before k100: the digits in a name count as numbers."""
+    return [int(part) if part.isdigit() else part for part in re.split(r"(\d+)", episode_id)]
+
+
 def in_order(cfg: dict, episodes: dict) -> list[str]:
-    """Episode ids in the configured order; the ones the order does not name come after, by name."""
+    """Episode ids in the configured order; the ones the order does not name come after, by name and number."""
     order = [str(item) for item in cfg.get("order") or []]
-    return sorted(episodes, key=lambda episode_id: (order.index(episode_id) if episode_id in order else len(order), episode_id))
+    return sorted(episodes, key=lambda episode_id: (order.index(episode_id) if episode_id in order else len(order), _by_number(episode_id)))
+
+
+def held_posts(state: dict) -> list[str]:
+    """Episode ids that wait in Buffer, the one that goes out first at the front."""
+    held = [episode_id for episode_id, episode in state["episodes"].items() if episode.get("status") == "scheduled"]
+    return sorted(held, key=lambda episode_id: str(state["episodes"][episode_id].get("due") or ""))
 
 
 # ------------------------------------------------------------------ step 1: take in finished videos
@@ -296,9 +317,37 @@ def _buffer(creds: dict, query: str, variables: dict, what: str) -> dict:
     return channels.buffer_graphql(creds["api_key"], query, variables, what)
 
 
+def _take_back(state: dict, creds: dict, ask=_buffer) -> tuple[list[str], dict[str, str]]:
+    """Take every waiting post out of Buffer and put its video back in line: (ids removed, {id still there: why}).
+    A post that went out in the meantime is left alone; the next run records it as sent."""
+    removed, stuck = [], {}
+    for episode_id in held_posts(state):
+        episode = state["episodes"][episode_id]
+        try:
+            try:
+                post = (ask(creds, POST_STATE, {"input": {"id": episode["post_id"]}}, "Buffer post") or {}).get("post") or {}
+            except Exception as error:
+                if "post not found" not in str(error).lower():
+                    raise
+                post = None  # already gone from Buffer
+            if post is not None:
+                if post.get("status") == "sent":
+                    continue
+                gone = (ask(creds, DELETE_POST, {"input": {"id": episode["post_id"]}}, "Remove from Buffer") or {}).get("deletePost") or {}
+                if not gone.get("id"):
+                    raise RuntimeError(gone.get("message") or "Buffer did not confirm")
+            episode.update({"status": "waiting", "post_id": "", "due": ""})
+            removed.append(episode_id)
+        except Exception as error:
+            stuck[episode_id] = str(error)[:80]
+    return removed, stuck
+
+
 def refresh(state: dict, creds: dict, now: datetime, ask=_buffer) -> list[str]:
-    """Read back every post that waits in Buffer. A post I removed there pauses the channel."""
+    """Read back every post that waits in Buffer. A post I removed there pauses the channel, and the posts that
+    wait behind it are taken out of Buffer too, so nothing goes out until Resume."""
     notes = []
+    removed_by_hand = []
     for episode_id, episode in state["episodes"].items():
         if episode.get("status") != "scheduled" or not episode.get("post_id"):
             continue
@@ -310,7 +359,7 @@ def refresh(state: dict, creds: dict, now: datetime, ask=_buffer) -> list[str]:
                 continue
             episode.update({"status": "waiting", "post_id": "", "due": ""})
             state["paused"] = True
-            state["paused_why"] = f"The post for {episode_id} was removed in Buffer."
+            removed_by_hand.append(episode_id)
             notes.append(f"{episode_id}: removed in Buffer, channel paused")
             continue
         status = post.get("status")
@@ -324,6 +373,15 @@ def refresh(state: dict, creds: dict, now: datetime, ask=_buffer) -> list[str]:
             episode["status"] = "failed" if episode["tries"] >= MAX_TRIES else "waiting"
             episode["post_id"] = ""
             notes.append(f"{episode_id}: failed ({episode['error'][:80]})")
+    if removed_by_hand:
+        state["paused_why"] = f"The post for {' and '.join(removed_by_hand)} was removed in Buffer."
+        taken, stuck = _take_back(state, creds, ask)
+        if taken:
+            state["paused_why"] += f" The {len(taken)} behind it ({', '.join(taken)}) left Buffer too and wait here."
+            notes.append(f"{', '.join(taken)}: taken out of Buffer because the channel is paused")
+        if stuck:
+            state["paused_why"] += f" Still in Buffer and going out: {', '.join(stuck)}."
+            notes.append(f"{', '.join(stuck)}: could not be taken out of Buffer")
     return notes
 
 
@@ -370,17 +428,32 @@ def _already_waiting(creds: dict, text: str, ask) -> dict | None:
 
 
 def schedule(channel_id: str, cfg: dict, state: dict, creds: dict, now: datetime, ask=_buffer, host=_public_video) -> str:
-    """Put the next waiting video into Buffer for the next posting time. One post at a time."""
+    """Keep the next waiting videos in Buffer, each on its own posting time: one, or as many as "ahead" says."""
     if state.get("paused"):
         return "paused"
-    held = next((episode_id for episode_id, episode in state["episodes"].items() if episode.get("status") == "scheduled"), None)
+    notes = []
+    while len(held_posts(state)) < posts_ahead(cfg):
+        episode_id = next_episode(cfg, state)
+        if not episode_id:
+            break
+        # The slot after the last post that already waits, and never closer than the lead time.
+        after = [now + timedelta(minutes=LEAD_MINUTES)]
+        after += [moment for moment in (_moment(state["episodes"][held].get("due"), now) for held in held_posts(state)) if moment]
+        note = _schedule_one(channel_id, state, episode_id, next_slot(max(after), cfg), creds, now, ask, host)
+        notes.append(note)
+        if state["episodes"][episode_id].get("status") != "scheduled":
+            break  # no address or Buffer refused: the next run tries again, nothing is scheduled past it
+    if notes:
+        return "; ".join(notes)
+    held = held_posts(state)
     if held:
-        return f"{held} waits in Buffer for {state['episodes'][held].get('due', '?')}"
-    episode_id = next_episode(cfg, state)
-    if not episode_id:
-        return "no finished video is waiting"
+        more = f" and {len(held) - 1} more after it" if len(held) > 1 else ""
+        return f"{held[0]} waits in Buffer for {state['episodes'][held[0]].get('due', '?')}{more}"
+    return "no finished video is waiting"
+
+
+def _schedule_one(channel_id: str, state: dict, episode_id: str, due: datetime, creds: dict, now: datetime, ask, host) -> str:
     episode = state["episodes"][episode_id]
-    due = next_time(cfg, now)
     try:
         post = _already_waiting(creds, episode["text"], ask)
         if post is None:
@@ -447,17 +520,18 @@ def card(now: datetime | None = None) -> list[dict]:
         order = in_order(cfg, episodes)
         sent = [episode_id for episode_id in order if episodes[episode_id].get("status") == "sent"]
         failed = [episode_id for episode_id in order if episodes[episode_id].get("status") == "failed"]
-        held = next((episode_id for episode_id in order if episodes[episode_id].get("status") == "scheduled"), None)
+        held = held_posts(state)
         waiting = [episode_id for episode_id in order if episodes[episode_id].get("status") == "waiting"]
         upcoming = None
         if held:
-            upcoming = {"episode": held, "title": episodes[held].get("title", ""), "due": episodes[held].get("due", ""),
+            upcoming = {"episode": held[0], "title": episodes[held[0]].get("title", ""), "due": episodes[held[0]].get("due", ""),
                         "state": "scheduled"}
         elif waiting and not state.get("paused"):
             upcoming = {"episode": waiting[0], "title": episodes[waiting[0]].get("title", ""),
                         "due": _stamp(next_time(cfg, now)), "state": "planned"}
-        # The day the last finished video goes out: one posting time for each video after the next one.
-        last_due = _moment(upcoming["due"], now) if upcoming else None
+        # The day the last finished video goes out: one posting time for each video after the last one in Buffer.
+        buffer_until = _moment(episodes[held[-1]].get("due"), now) if held else None
+        last_due = buffer_until or (_moment(upcoming["due"], now) if upcoming else None)
         if last_due:
             for _ in range(len(waiting) - (0 if held else 1)):
                 last_due = next_slot(last_due, cfg)
@@ -473,7 +547,9 @@ def card(now: datetime | None = None) -> list[dict]:
             "finished": len(episodes),
             "target": target,
             "sent": len(sent),
-            "left": len(waiting) + (1 if held else 0),
+            "left": len(waiting) + len(held),
+            "in_buffer": len(held),
+            "in_buffer_until": _stamp(buffer_until)[:10] if buffer_until else "",
             "next": upcoming,
             "covered_until": _stamp(last_due)[:10] if last_due else "",
             "posts": [{"episode": episode_id, "title": episodes[episode_id].get("title", ""),
@@ -507,19 +583,14 @@ def action(name: str, ask=_buffer) -> str:
         state["paused"] = True
         state["paused_why"] = "Paused in the dashboard."
         message = "Paused. Nothing waits in Buffer."
-        creds = x_account()
-        for episode_id, episode in state["episodes"].items():
-            if episode.get("status") != "scheduled":
-                continue
-            try:
-                removed = (ask(creds, DELETE_POST, {"input": {"id": episode["post_id"]}}, "Remove from Buffer") or {}).get("deletePost") or {}
-                if not removed.get("id"):
-                    raise RuntimeError(removed.get("message") or "Buffer did not confirm")
-                episode.update({"status": "waiting", "post_id": "", "due": ""})
-                message = f"Paused. The post for {episode_id} was removed from Buffer."
-            except Exception as error:
-                message = (f"Paused, but the post for {episode_id} is still in Buffer ({str(error)[:80]}). "
-                           "Delete it at https://publish.buffer.com if it must not go out.")
+        removed, stuck = _take_back(state, x_account(), ask)
+        if len(removed) == 1:
+            message = f"Paused. The post for {removed[0]} was removed from Buffer."
+        elif removed:
+            message = f"Paused. {len(removed)} posts were removed from Buffer ({', '.join(removed)})."
+        if stuck:
+            message = (f"Paused, but the post for {', '.join(stuck)} is still in Buffer ({next(iter(stuck.values()))}). "
+                       "Delete it at https://publish.buffer.com if it must not go out.")
         save_state(channel_id, state)
         return message
 
@@ -550,6 +621,8 @@ def show() -> None:
     for row in card():
         print(f"== {row['name']} on X {row['account']}{' (paused)' if row['paused'] else ''}")
         print(f"   {row['finished']} of {row['target']} videos finished, {row['sent']} sent, {row['left']} waiting; {row['slots']}")
+        if row["in_buffer"] > 1:
+            print(f"   {row['in_buffer']} posts wait in Buffer, the last one for {row['in_buffer_until']}")
         if row["next"]:
             print(f"   next: {row['next']['episode']} {row['next']['due']} ({row['next']['state']}) {row['next']['title']}")
         for post in row["posts"]:
