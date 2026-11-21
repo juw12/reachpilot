@@ -464,11 +464,38 @@ DEMO = {
     ],
 }
 
-DEMO["hub"]["todo"] = sorted(DEMO["hub"]["todo"] + hub.patents_todo(PATENTS), key=lambda item: item["priority"])
+def search_page(url, kind, issues=(), told=day(-1), google="", listed=True):
+    return {"url": url, "kind": kind, "title": "", "issues": list(issues), "in_sitemap": listed, "told": told if listed else "",
+            "google": google, "crawled": day(-2) if google == "in Google" else "", "status": 200, "on_site": True}
+
+
+SEARCH = {
+    "installed": True, "ran": f"{TODAY} 06:40", "host": "demo.github.io", "sitemap": "https://demo.github.io/sitemap.xml",
+    "google_connected": True, "door": "api.indexnow.org", "notes": ["told 2 new or changed page(s) through api.indexnow.org"],
+    "counts": {"projects": 4, "pages": 7, "trouble": 2, "in_sitemap": 7, "told": 7, "in_google": 3, "asked_google": 5},
+    "projects": [
+        {"name": "lab-notes", "trouble": 1, "pages": [
+            search_page("https://demo.github.io/lab-notes/", "site", google="in Google"),
+            search_page("https://demo.github.io/watch/lab-notes/", "watch", ["its title is only 9 characters (\"Lab notes\")"])]},
+        {"name": "torque-log", "trouble": 1, "pages": [
+            search_page("https://demo.github.io/torque-log/", "site", ["has no description, so a search result shows whatever text comes first"])]},
+        {"name": "pocket-cad", "trouble": 0, "pages": [
+            search_page("https://demo.github.io/pocket-cad/", "site", google="in Google"),
+            search_page("https://demo.github.io/p/pocket-cad/", "landing", google="not in Google yet")]},
+        {"name": "fixture-kit", "trouble": 0, "pages": [
+            search_page("https://demo.github.io/fixture-kit/", "site", google="in Google"),
+            search_page("https://demo.github.io/p/fixture-kit/", "landing", google="not in Google yet", told=day(0))]},
+    ],
+}
+DEMO["hub"]["findable"] = SEARCH
+import findable  # noqa: E402  (the real To do rule)
+
+DEMO["hub"]["todo"] = sorted(DEMO["hub"]["todo"] + hub.patents_todo(PATENTS) + findable.todo(SEARCH), key=lambda item: item["priority"])
 DEMO["hub"]["help"] += [entry for entry in hub.help_sections({}, None, None, PATENTS) if entry["module"] == "Patents"]
 
 ACTION_REPLIES = {
     "patents_run_now": "Demo: on your PC this reads every repository you own again and updates this card in about a minute.",
+    "findable_run_now": "Demo: on your PC this reads every project page again, updates the sitemap and tells the search engines what changed.",
     "jobs_apply": "Demo: on your PC this opens the apply session, which fills each form and waits for you to press Submit.",
     "email_open_leads": "Demo: on your PC this opens the list of good jobs that have no recruiter e-mail.",
 }
@@ -535,7 +562,13 @@ def build(source: Path) -> Path:
     page = page.replace('url("/fonts/', 'url("fonts/')
     assert "<b>This PC</b>" in page, "the sidebar status line moved: update the demo label"
     page = page.replace("<b>This PC</b>", "<b>Demo data</b>", 1)
-    page = page.replace("<title>ReachPilot</title>", "<title>ReachPilot - demo</title>", 1)
+    page = page.replace(
+        "<title>ReachPilot</title>",
+        "<title>ReachPilot demo: a posting schedule made from your GitHub projects</title>\n"
+        '<meta name="description" content="ReachPilot writes each post from a repo\'s real facts, posts it to LinkedIn and '
+        'other platforms, and shows reach, to-dos and whether search engines can find each project. A live dashboard with made-up data.">',
+        1,
+    )
     shim = SHIM % (json.dumps(DEMO, ensure_ascii=False), json.dumps(ACTION_REPLIES))
     page = page.replace("<head>", "<head>\n" + shim, 1)
     assert page.count("<main>") == 1, "the demo banner goes first inside <main>"

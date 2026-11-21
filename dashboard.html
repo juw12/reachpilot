@@ -138,6 +138,9 @@
   .badge.warn { background: var(--amber-soft); color: var(--amber); }
   .badge.bad { background: var(--red-soft); color: var(--red); }
   .badge.grey { background: var(--sunken); color: var(--ink-2); }
+  table.findable td { vertical-align: top; }
+  table.findable td:nth-child(n+4), table.findable .badge { white-space: nowrap; }
+  table.findable td:nth-child(2) { overflow-wrap: anywhere; }
   .note-badge { display: block; width: fit-content; max-width: 100%; margin-top: 4px; white-space: normal; }
   .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 34px; padding: 6px 14px;
     border: 1px solid var(--blue); border-radius: 6px; background: var(--blue); color: #fff; font: inherit; font-weight: 500;
@@ -446,6 +449,7 @@
         <button role="tab" data-tab="podcast" hidden>Podcast</button>
         <button role="tab" data-tab="launch" hidden>Launch tests</button>
         <button role="tab" data-tab="patents" hidden>Patents</button>
+        <button role="tab" data-tab="search" hidden>Search</button>
       </div>
       <div class="nav-group folded" data-group="jobsearch" role="presentation">
         <button type="button" class="nav-label" aria-expanded="false">Job search<span class="tab-count group-count"></span><svg class="chev" viewBox="0 0 12 12" width="12" height="12" aria-hidden="true"><path d="M3 4.5 6 7.5 9 4.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
@@ -477,6 +481,7 @@
   <section id="podcast" hidden></section>
   <section id="launch" hidden></section>
   <section id="patents" hidden></section>
+  <section id="search" hidden></section>
   <section id="jobs" hidden></section>
   <section id="email" hidden></section>
   <section id="log" hidden></section>
@@ -1007,7 +1012,7 @@ function link(url, label) {
   return url ? `<a href="${esc(url)}" target="_blank" rel="noopener">${esc(label)}</a>` : esc(label);
 }
 
-const MODULE_TAB = { jobs: "jobs", "job search": "jobs", "e-mail": "email", email: "email", linkedin: "linkedin", promote: "promote", "creator outreach": "promote", podcast: "podcast", patents: "patents", launch: "launch", replies: "reach", gmail: "reach", "this pc": "overview", submissions: "overview" };
+const MODULE_TAB = { jobs: "jobs", "job search": "jobs", "e-mail": "email", email: "email", linkedin: "linkedin", promote: "promote", "creator outreach": "promote", podcast: "podcast", patents: "patents", search: "search", launch: "launch", replies: "reach", gmail: "reach", "this pc": "overview", submissions: "overview" };
 
 function todoKey(item) {
   return `${item.module}|${item.title}|${item.detail}`;
@@ -1576,6 +1581,61 @@ function renderPatents(d) {
       ${pageHead("Projects", "Patents", "A keyword screen of every repository you own, and the desk that follows each candidate. Not legal advice; ReachPilot files nothing.")}
       ${patentCard(p) || `<div class="empty">The patent screen isn't set up.</div>`}
       ${patentDeskCard(p)}`;
+  });
+}
+
+// Search: can a search engine find each project (findable.py). One row per page; pages with something in the way first.
+function searchPageRow(project, page, first) {
+  const kinds = { site: "site", landing: "landing page", watch: "watch page", extra: "page" };
+  const health = page.issues.length
+    ? `<span class="badge bad">in the way</span> <span class="hint">${esc(page.issues.join("; "))}</span>`
+    : `<span class="badge good">can be found</span>`;
+  const map = !page.on_site ? `<span class="hint">another site</span>`
+    : page.in_sitemap ? `<span class="badge good">listed</span>` : `<span class="badge grey">left out</span>`;
+  const google = page.google === "in Google" ? `<span class="badge good">in Google</span>${page.crawled ? ` <span class="hint">read ${esc(niceDate(page.crawled))}</span>` : ""}`
+    : page.google ? `<span class="badge warn">not yet</span>` : `<span class="hint">–</span>`;
+  return `<tr>
+      <td>${first ? `<b>${esc(project.name)}</b>` : ""}</td>
+      <td>${link(page.url, page.url.replace(/^https?:\/\//, ""))} <span class="hint">${esc(kinds[page.kind] || "page")}</span></td>
+      <td>${health}</td>
+      <td>${map}</td>
+      <td>${page.told ? esc(niceDate(page.told)) : `<span class="hint">–</span>`}</td>
+      <td>${google}</td>
+    </tr>`;
+}
+
+function renderSearch(d) {
+  const s = d.hub.findable;
+  moduleTab("search", Boolean(s && s.installed));
+  const section = document.getElementById("search");
+  if (!s || !s.installed) {
+    section.innerHTML = `${pageHead("Projects", "Search", "Whether search engines can find each project.")}<div class="empty">The search check isn't set up on this PC: <code>python findable.py install</code></div>`;
+    return;
+  }
+  const c = s.counts || {};
+  const rows = s.projects.map((project) => project.pages.map((page, index) => searchPageRow(project, page, index === 0)).join("")).join("");
+  const google = s.google_connected
+    ? kpi("In Google", `${num(c.in_google)}<span class="hint"> of ${num(c.asked_google)} asked</span>`, "asked through Search Console, a few pages a day")
+    : kpi("Google", "not connected", "connect Search Console once: see To do");
+  keepingState(section, () => {
+    section.innerHTML = `
+      ${pageHead("Projects", "Search", "Every page a project has, read once a day the way a search engine reads it. ReachPilot removes what would keep a page out and tells the search engines; when a page shows up is their decision.")}
+      <div class="grid">
+        ${kpi("Pages", num(c.pages), `${num(c.projects)} projects`)}
+        ${kpi("Something in the way", num(c.trouble), c.trouble ? "listed first below" : "nothing keeps a search engine out")}
+        ${kpi("In the sitemap", num(c.in_sitemap), s.sitemap ? link(s.sitemap, s.sitemap.replace(/^https?:\/\//, "")) : "no sitemap written")}
+        ${kpi("Told to Bing and Yandex", num(c.told), s.door ? `through ${esc(s.door)}` : "IndexNow, no account needed")}
+        ${google}
+      </div>
+      <div class="card">
+        <h3>Pages <span class="hint">checked ${esc(s.ran)}</span></h3>
+        ${(s.notes || []).length ? `<p class="hint">${s.notes.map(esc).join(" · ")}</p>` : ""}
+        <div class="actions">${actionButton("findable_run_now", "Check now", true)}</div>
+        <div class="scroll" tabindex="0" role="region" aria-label="Every project page and whether search engines can find it" style="margin-top:8px"><table class="findable">
+          <thead><tr><th>Project</th><th>Page</th><th>Search engines</th><th>Sitemap</th><th>Told</th><th>Google</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table></div>
+      </div>`;
   });
 }
 
@@ -2178,6 +2238,7 @@ async function load() {
     renderPodcast(data);
     renderLaunch(data);
     renderPatents(data);
+    renderSearch(data);
     renderSchedule(data);
     renderReach(data);
     renderGithub(data);

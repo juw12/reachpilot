@@ -91,5 +91,14 @@
       "https://bsky.app/profile/juw12.bsky.social",
       "https://dev.to/juw12"
     ]
+  },
+  "findable": {
+    "extra_pages": [
+      "https://juw12.github.io/brain/"
+    ],
+    "not_for_search": [
+      "vector-relay",
+      "open-problems-lab"
+    ]
   }
 }

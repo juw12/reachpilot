@@ -134,6 +134,13 @@ def page(subjects: list[RepoFacts], user: str, video_url: str = "", credits=()) 
     else:
         body = "".join(_card(facts) for facts in subjects)
         body += f'<a class="cta" href="https://github.com/{html.escape(user, quote=True)}">See them all on GitHub</a>'
+    # What a search result shows: the name alone ("Cairn") says nothing to someone who has never heard of it.
+    headline = title
+    if single and lead:
+        room = 68 - len(title)
+        short = lead if len(lead) <= room else lead[:room].rsplit(" ", 1)[0].rstrip(" ,;:.-")
+        headline = f"{title}: {short}" if len(short) >= 12 else title
+    described = f'<meta name="description" content="{html.escape(lead[:300], quote=True)}">' if lead else ""
     social = ""
     if video_url:
         social = (
@@ -144,7 +151,7 @@ def page(subjects: list[RepoFacts], user: str, video_url: str = "", credits=()) 
     return (
         '<!doctype html><html lang="en"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
-        f"<title>{html.escape(title)}</title>{social}<style>{style}</style></head><body>"
+        f"<title>{html.escape(headline)}</title>{described}{social}<style>{style}</style></head><body>"
         f'<header><p class="path">{html.escape(path)}</p><h1>{html.escape(title)}</h1>'
         + (f'<p class="lead">{html.escape(lead)}</p>' if lead else "")
         + ('<div class="chips">' + "".join(f"<span>{html.escape(chip)}</span>" for chip in chips) + "</div>" if chips else "")
