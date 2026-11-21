@@ -887,7 +887,55 @@ def podcast_section() -> dict:
     return cached(f"podcast:{int(max(mtimes)) if mtimes else 0}", 60, build)
 
 
-PODCAST_VERBS = {"approve", "skip", "review", "open", "disclose"}
+PODCAST_VERBS = {"approve", "skip", "review", "open", "disclose", "tellsearch"}
+
+# Run inside the podcast module: tells the IndexNow search engines (Bing, Yandex and the ones they pass it on to)
+# that the listen page and the newest episode page changed, through each door in turn, over the module's own
+# network route. Prints one line: which door took the pages and which were closed. Google has no such door.
+PODCAST_TELLSEARCH_SCRIPT = """
+import urllib.parse
+import podcast
+config = podcast.load_config()
+key = (config.get("search") or {}).get("indexnow_key", "").strip()
+if not key:
+    raise SystemExit("The podcast config has no search.indexnow_key yet; it comes with the next update of the module.")
+base = config["publish"]["base_url"].rstrip("/")
+site = urllib.parse.urlsplit(base)
+pages = [base + "/"] + [base + "/episodes/" + episode["slug"] + ".html" for episode in podcast.load_episodes()[:1]]
+net = podcast.Net(config)
+report = []
+for door in ("api.indexnow.org", "www.bing.com", "yandex.com"):
+    taken = 0
+    why = ""
+    for page in pages:
+        query = urllib.parse.urlencode({"url": page, "key": key, "keyLocation": site.scheme + "://" + site.netloc + "/" + key + ".txt"})
+        try:
+            status = net.get("https://" + door + "/indexnow?" + query, timeout=15).status_code
+        except Exception as error:
+            why = "closed (" + type(error).__name__ + ")"
+            break
+        if status in (200, 202):
+            taken += 1
+        else:
+            why = "answered HTTP " + str(status)
+            break
+    report.append(door + (" took " + str(taken) + " of " + str(len(pages)) + " pages" if taken else " " + (why or "took none")))
+    if taken == len(pages):
+        break
+print("Search engines: " + "; ".join(report) + ".")
+if not any(" took " in line and " took none" not in line for line in report):
+    raise SystemExit("Search engines could not be told from this PC: " + "; ".join(report) + ".")
+"""
+
+
+def podcast_tell_search() -> str:
+    """podcast:tellsearch - tell the search engines now, and say which door this PC's network leaves open."""
+    done = subprocess.run([str(PYTHON), "-c", PODCAST_TELLSEARCH_SCRIPT], cwd=PODCAST, capture_output=True, text=True,
+                          encoding="utf-8", timeout=240, creationflags=NO_WINDOW)
+    lines = [line.strip() for line in ((done.stdout or "") + "\n" + (done.stderr or "")).splitlines() if line.strip()]
+    if done.returncode != 0:
+        raise RuntimeError(lines[-1] if lines else "The search engines could not be told.")
+    return next((line for line in reversed(lines) if line.startswith("Search engines:")), lines[-1] if lines else "Done.")
 
 # Run inside the podcast module, with its own Python: it knows the office proxy and what holds its lock.
 # Prints one word: "busy" (a build holds the lock, so the code is not touched), "pulled" or "pull failed".
@@ -947,10 +995,10 @@ def podcast_action(name: str) -> str:
         raise ValueError("The site folder isn't there yet (no episodes built).")
     if verb in PROMOTION_VERBS:
         return podcast_promotion_action(verb, argument)
-    if verb == "disclose":
+    if verb in ("disclose", "tellsearch"):
         if not (PODCAST / "podcast.py").exists():
             raise ValueError("The podcast module is not on this PC.")
-        return podcast_disclose()
+        return podcast_disclose() if verb == "disclose" else podcast_tell_search()
     if verb not in PODCAST_VERBS:
         raise ValueError(f"Unknown action: {name}")
     for key in [key for key in _cache if key.startswith("podcast:")]:
