@@ -25,6 +25,8 @@ CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)  # 0x08000000 on W
 RESERVED_NAMES = {"go", "p", "assets", "static", "demo", "watch", "reachpilot-showcase"}
 DEMO_REUSE_DAYS = 60  # a hosted clip is replaced only this often, so the Pages repo does not grow with every post
 DEMO_LIVE_WAIT_SECONDS = 150  # GitHub Pages usually serves a pushed file within a minute or two
+GIT_SECONDS = 120
+PUSH_SECONDS = 600  # a 4 MB video took longer than two minutes to push from the office network (21 Nov 2026)
 
 GO_PAGE = """<!doctype html>
 <html lang="en">
@@ -114,7 +116,7 @@ def _git(args: list[str], cwd: Path) -> subprocess.CompletedProcess:
         cwd=cwd,
         capture_output=True,
         text=True,
-        timeout=120,
+        timeout=PUSH_SECONDS if args[:1] == ["push"] else GIT_SECONDS,
         creationflags=CREATE_NO_WINDOW,
     )
 

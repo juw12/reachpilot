@@ -1919,6 +1919,20 @@ with tempfile.TemporaryDirectory() as temp_dir:
         check(never_live == "" and push_failed == "" and no_checkout == "",
               "demo hosting: no link is handed out unless the clip is really live")
 
+        # A push gets more time than the other git commands: a video is megabytes on a slow line
+        git_seconds = {}
+
+        def fake_git_run(command, **options):
+            git_seconds[command[1]] = options["timeout"]
+            return subprocess.CompletedProcess(command, 0, "", "")
+
+        with mock.patch("trylinks.subprocess.run", fake_git_run):
+            trylinks._git(["push", "--quiet"], pages)
+            trylinks._git(["pull", "--ff-only", "--quiet"], pages)
+        check(git_seconds == {"push": trylinks.PUSH_SECONDS, "pull": trylinks.GIT_SECONDS}
+              and trylinks.PUSH_SECONDS >= 600 > trylinks.GIT_SECONDS,
+              f"demo hosting: a push may take ten minutes, the other git commands two ({git_seconds})")
+
         # A copy that is ahead and behind at once is rebased, so the next push is accepted
         pull_calls = []
         pull_codes = {}
