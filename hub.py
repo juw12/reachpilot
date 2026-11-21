@@ -887,7 +887,7 @@ def podcast_section() -> dict:
     return cached(f"podcast:{int(max(mtimes)) if mtimes else 0}", 60, build)
 
 
-PODCAST_VERBS = {"approve", "skip", "review", "open", "disclose", "tellsearch"}
+PODCAST_VERBS = {"approve", "skip", "review", "open", "disclose", "tellsearch", "searchlog"}
 
 # Run inside the podcast module: tells the IndexNow search engines (Bing, Yandex and the ones they pass it on to)
 # that the listen page and the newest episode page changed, through each door in turn, over the module's own
@@ -899,6 +899,25 @@ config = podcast.load_config()
 key = (config.get("search") or {}).get("indexnow_key", "").strip()
 if not key:
     raise SystemExit("The podcast config has no search.indexnow_key yet; it comes with the next update of the module.")
+if hasattr(podcast, "INDEXNOW_DOORS"):
+    # the module's own notice, the one a publish sends: this is the real thing, and it is written to podcast.log
+    import logging
+    closed = []
+    class Closed(logging.Handler):
+        def emit(self, record):
+            text = record.getMessage()
+            if text.startswith("search engines: ") and ("could not be reached" in text or "answered HTTP" in text):
+                closed.append(text.split("search engines: ", 1)[1].split("/")[2])
+    podcast.setup_logging()
+    podcast.log.addHandler(Closed())
+    told = podcast.tell_search_engines(config, podcast.Net(config))
+    doors = [door.split("/")[2] for door in podcast.INDEXNOW_DOORS]
+    shut = [door for door in doors if door in closed]
+    note = (" (closed here: " + ", ".join(shut) + ")") if shut else ""
+    if told:
+        print("Search engines: the podcast's own notice, as after a publish, was accepted for " + str(len(told)) + " page(s)" + note + ".")
+        raise SystemExit(0)
+    raise SystemExit("Search engines could not be told from this PC: no door took the podcast's own notice" + note + ".")
 base = config["publish"]["base_url"].rstrip("/")
 site = urllib.parse.urlsplit(base)
 pages = [base + "/"] + [base + "/episodes/" + episode["slug"] + ".html" for episode in podcast.load_episodes()[:1]]
@@ -928,11 +947,35 @@ if not any(" took " in line and " took none" not in line for line in report):
 """
 
 
-PODCAST_TELLSEARCH_SECONDS = 540  # under the 10 minutes Cairn gives a button pressed on the phone
+PODCAST_TELLSEARCH_SECONDS = 360  # with the update before it, under the 10 minutes Cairn gives a phone button
+
+
+def podcast_search_log() -> str:
+    """podcast:searchlog - the newest line of podcast.log about telling the search engines, so the phone can see
+    whether the last publish got its notice out. Reads the end of the file only; starts nothing."""
+    try:
+        with open(PODCAST / "podcast.log", "rb") as file:
+            file.seek(0, 2)
+            file.seek(max(0, file.tell() - 600_000))
+            tail = file.read().decode("utf-8", errors="replace")
+    except OSError:
+        raise ValueError("podcast.log is not there yet.")
+    wanted = ("search engines told about", "search engines not told about")
+    lines = [line.strip() for line in tail.splitlines() if any(text in line for text in wanted)]
+    if not lines:
+        return "podcast.log has no line about the search engines in its newest part."
+    return "Newest in podcast.log: " + " ".join(lines[-1].split())[:300]
 
 
 def podcast_tell_search() -> str:
-    """podcast:tellsearch - tell the search engines now, and say which door this PC's network leaves open."""
+    """podcast:tellsearch - tell the search engines now, and say which door this PC's network leaves open.
+    The podcast module is brought up to date first when no episode is being built, so the notice sent is the one
+    its next publish will send; an older module is asked through the doors by this script instead."""
+    try:
+        subprocess.run([str(PYTHON), "-c", PODCAST_UPDATE_SCRIPT], cwd=PODCAST, capture_output=True, text=True,
+                       encoding="utf-8", timeout=200, creationflags=NO_WINDOW)
+    except (OSError, subprocess.SubprocessError):
+        pass  # not updated: the notice still goes out, through whatever this copy of the module has
     try:
         done = subprocess.run([str(PYTHON), "-c", PODCAST_TELLSEARCH_SCRIPT], cwd=PODCAST, capture_output=True, text=True,
                               encoding="utf-8", timeout=PODCAST_TELLSEARCH_SECONDS, creationflags=NO_WINDOW)
@@ -1006,6 +1049,8 @@ def podcast_action(name: str) -> str:
         if not (PODCAST / "podcast.py").exists():
             raise ValueError("The podcast module is not on this PC.")
         return podcast_disclose() if verb == "disclose" else podcast_tell_search()
+    if verb == "searchlog":
+        return podcast_search_log()
     if verb not in PODCAST_VERBS:
         raise ValueError(f"Unknown action: {name}")
     for key in [key for key in _cache if key.startswith("podcast:")]:

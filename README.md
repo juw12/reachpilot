@@ -418,7 +418,9 @@ and a language index.
 The action `podcast:disclose` (also from the phone) voices again the published episodes whose sign-off does not say
 the voices are AI: it brings the podcast module up to date when no episode is being built, then starts the module's
 own `python podcast.py disclose` in the background. `podcast:tellsearch` tells the IndexNow search engines (Bing, Yandex)
-about the listen page and the newest episode from this PC and says which door its network leaves open.
+about the listen page and the newest episode from this PC and says which door its network leaves open; it updates the
+podcast module first when no episode is being built and then sends the module's own notice, the one a publish sends.
+`podcast:searchlog` answers with the newest line of `podcast.log` about that notice.
 
 When the podcast module ships `promotion.py`, a **Podcast** tab tracks its promotion: which directories list the show
 (with Mark as submitted for the ones that can't be checked), downloads per week and per episode from OP3, series compared,

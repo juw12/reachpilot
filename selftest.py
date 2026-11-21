@@ -4831,10 +4831,60 @@ with tempfile.TemporaryDirectory() as tellsearch_folder:
             hub.run_action("podcast:tellsearch")
             check(False, "podcast: a PC too busy to finish says so in one short line")
         except RuntimeError as tellsearch_error:
-            check(str(tellsearch_error) == "This PC was too busy to finish in 9 minutes. Press it again later.",
+            check(str(tellsearch_error) == f"This PC was too busy to finish in {hub.PODCAST_TELLSEARCH_SECONDS // 60} minutes. Press it again later.",
                   f"podcast: a PC too busy to finish says so in one short line ({str(tellsearch_error)[:80]})")
         finally:
             hub.subprocess.run = tellsearch_run
+
+        # A podcast module that has the notice itself (INDEXNOW_DOORS): the button sends that one, the one a publish sends.
+        (tellsearch_home / "podcast.py").write_text(
+            "import json\n"
+            "import logging\n"
+            "from pathlib import Path\n"
+            "INDEXNOW_DOORS = ('https://api.indexnow.org/indexnow', 'https://www.bing.com/indexnow', 'https://yandex.com/indexnow')\n"
+            "log = logging.getLogger('podcast-stand-in')\n"
+            "def setup_logging():\n"
+            "    handler = logging.FileHandler(Path(__file__).with_name('podcast.log'), encoding='utf-8')\n"
+            "    handler.setFormatter(logging.Formatter('%(asctime)s %(levelname)s %(message)s', '%Y-%m-%d %H:%M:%S'))\n"
+            "    log.addHandler(handler)\n"
+            "    log.setLevel(logging.INFO)\n"
+            "def load_config():\n"
+            "    return json.loads(Path(__file__).with_name('config.json').read_text())\n"
+            "class Net:\n"
+            "    def __init__(self, config):\n"
+            "        pass\n"
+            "def tell_search_engines(config, net):\n"
+            "    took = json.loads(Path(__file__).with_name('took.json').read_text())\n"
+            "    log.info('search engines: %s could not be reached (%s)', INDEXNOW_DOORS[0], 'ProxyError')\n"
+            "    if took:\n"
+            "        log.info('search engines told about %d page(s)', len(took))\n"
+            "    else:\n"
+            "        log.info('search engines not told about %s: no door took it', 'https://example.github.io/show/')\n"
+            "    return took\n", encoding="utf-8")
+        (tellsearch_home / "config.json").write_text(json.dumps(tellsearch_config), encoding="utf-8")
+        (tellsearch_home / "took.json").write_text(json.dumps(["https://example.github.io/show/", "https://example.github.io/show/episodes/x.html"]),
+                                                   encoding="utf-8")
+        try:
+            hub.run_action("podcast:searchlog")
+            check(False, "podcast: the log button says so when there is no podcast.log")
+        except ValueError:
+            check(True, "podcast: the log button says so when there is no podcast.log")
+        tellsearch_line = hub.run_action("podcast:tellsearch")
+        check(tellsearch_line == "Search engines: the podcast's own notice, as after a publish, was accepted for 2 page(s) "
+                                 "(closed here: api.indexnow.org).",
+              f"podcast: a module that has the notice itself sends its own, and the answer names the closed door ({tellsearch_line})")
+        searchlog_line = hub.run_action("podcast:searchlog")
+        check(searchlog_line.startswith("Newest in podcast.log: 20") and searchlog_line.endswith("INFO search engines told about 2 page(s)"),
+              f"podcast: the log button gives the newest line about the search engines, with its time ({searchlog_line})")
+        (tellsearch_home / "took.json").write_text("[]", encoding="utf-8")
+        try:
+            hub.run_action("podcast:tellsearch")
+            check(False, "podcast: the module's own notice that no door took fails with the closed door named")
+        except RuntimeError as tellsearch_error:
+            check("no door took the podcast's own notice (closed here: api.indexnow.org)" in str(tellsearch_error),
+                  f"podcast: the module's own notice that no door took fails with the closed door named ({tellsearch_error})")
+        check("search engines not told about" in hub.run_action("podcast:searchlog"),
+              "podcast: the log button then shows the failed notice, not the older good one")
     finally:
         hub.PODCAST = tellsearch_real
 
@@ -4844,7 +4894,7 @@ import phone_snapshot  # noqa: E402
 
 for phone_name in ("promote:retryall", "promote:sendall", "promote:send:12", "promote:pause", "promote:covered:yt:UC1|https://youtu.be/x",
                    "linkedin_toggle_pause", "linkedin_run_now", "jobs_search_now", "email_run_now", "podcast:approve:all",
-                   "podcast:review:off", "podcast:listed:spotify", "podcast:disclose", "podcast:tellsearch",
+                   "podcast:review:off", "podcast:listed:spotify", "podcast:disclose", "podcast:tellsearch", "podcast:searchlog",
                    "patents:decide:demo:file",
                    "patents:filed:demo:2026-11-01:63/123,456",
                    "launch:followup:demo", "launch:approve_invites:demo", "shorts:pause:demo", "inbox:mine:google-1"):
