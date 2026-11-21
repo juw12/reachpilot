@@ -863,6 +863,24 @@ try:
     check(len(inbox_asks) == 1 and inbox_asks[0]["priority"] == 1 and inbox_asks[0]["title"] == "Inbox: Money"
           and inbox_asks[0]["module"] == "Email" and [row["label"] for row in inbox_asks[0]["links"]] == [item["title"] for item in money],
           "hub inbox: only a 'needs you' group goes to To do, with its mails as links")
+    check(inbox["stale"] is False and not any("not gone through" in row["title"] for row in inbox_asks),
+          "hub inbox: a card that does not say it is gone through by itself is never called stale")
+    inbox_long_ago, inbox_just_now = "2026-11-19 10:05", datetime.now().strftime("%Y-%m-%d %H:%M")
+    for every, checked, stale in ((30, inbox_long_ago, True), (30, inbox_just_now, False), (30, None, True), (30, "2026-11-19", True),
+                                  (True, inbox_long_ago, False), ("30", inbox_long_ago, False), (0, inbox_long_ago, False)):
+        hub.INBOX_PRIVATE.write_text(json.dumps({"account": "me@example.com", "every_minutes": every, "checked_at": checked,
+                                                 "groups": [{"title": "Money", "priority": 1, "items": [{"title": "T"}]}]}), encoding="utf-8")
+        inbox_rows_now = hub.inbox_todo(hub.inbox_section())
+        check(hub.inbox_section()["stale"] is stale
+              and [row["title"] for row in inbox_rows_now] == (["Inbox: not gone through for more than a day"] if stale else []) + ["Inbox: Money"]
+              and (not stale or ((checked or "never") in inbox_rows_now[0]["detail"] and inbox_rows_now[0]["priority"] == 2
+                                 and inbox_rows_now[0]["links"] == [])),
+              f"hub inbox: gone through by itself and not for more than a day is one line in To do ({every!r}, {checked})")
+    check(hub._inbox_stale(30, "2026-11-19 10:05", datetime(2026, 11, 20, 12, 4)) is False
+          and hub._inbox_stale(30, "2026-11-19 10:05", datetime(2026, 11, 20, 12, 6)) is True,
+          "hub inbox: stale starts 26 hours after the last time the mailbox was gone through")
+    check(("inbox" in hub.TASKS) == (hub.MODULES / "inbox" / "keeper.py").exists() and hub.TASKS.get("inbox", "Inbox") == "Inbox",
+          "hub inbox: the task that goes through the mailbox is watched only where that private module is present")
     hub.INBOX_PRIVATE.write_text(json.dumps({"account": "not an address", "groups": [{"items": [{"title": "T", "search": "x"}]}]}), encoding="utf-8")
     check(hub.inbox_section()["groups"][0]["items"][0]["url"] is None and hub.inbox_section()["groups"][0]["title"] == "Other",
           "hub inbox: without a real account address there is no link")

@@ -19,7 +19,8 @@ candidates from there: readiness, the filing package, and the dates before and a
 The inbox card (inbox_section) shows what a mailbox holds that only I can deal with. It reads
 inbox_private.json (git-ignored), written by whatever went through that mailbox; it shows only where that file exists.
 What I answer to a mail on the card or in To do (inbox_action) is kept in inbox_answers.json (git-ignored): the card,
-To do and whatever went through the mailbox all read that one file.
+To do and whatever went through the mailbox all read that one file. A mailbox that is gone through by itself (the
+file says "every_minutes") and was not for more than a day is a line in To do, so an automation that stopped shows.
 
 The "This PC" card (upkeep_section) shows the housekeeping jobs of this PC that have nothing to do with promotion but
 that I want to see in the same place: a clean-up, a backup, a sync. It reads upkeep_private.json (git-ignored), which
@@ -88,6 +89,8 @@ if (ROOT / "data" / "shorts").exists():  # only where `python shorts.py install`
     TASKS["shorts"] = "Shorts"
 if (ROOT / "data" / "replies").exists():  # only where `python replies.py install` has been run
     TASKS["replies"] = "Replies"
+if (MODULES / "inbox" / "keeper.py").exists():  # only where the private module that goes through the mailbox is present
+    TASKS["inbox"] = "Inbox"
 PYTHONW = machine.hidden_python()  # pythonw.exe on Windows; the running Python on a Mac
 PYTHON = machine.console_python()
 NO_WINDOW = machine.NO_WINDOW
@@ -480,6 +483,7 @@ INBOX_ANSWERS = ROOT / "inbox_answers.json"
 INBOX_GROUPS, INBOX_ITEMS = 12, 40
 INBOX_KEY = re.compile(r"[a-z0-9][a-z0-9_-]{0,39}")
 INBOX_NOTE = 300
+INBOX_STALE_HOURS = 26  # a mailbox that is gone through by itself and was not for this long: say so in To do
 # What a mail asks decides what I can answer. "Not me" settles nothing: the mail stays open until I press "Secured".
 INBOX_ASKS = {"confirm": ("mine", "not_mine"), "do": ("done", "skip"), "know": ("seen",)}
 INBOX_NEXT = {"not_mine": ("secured",)}
@@ -504,6 +508,18 @@ def _inbox_when(value, shape: re.Pattern) -> str:
 
 def _inbox_count(value) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
+
+
+def _inbox_stale(every, checked_at: str, now: datetime | None = None) -> bool:
+    """True when the file says the mailbox is gone through by itself ("every_minutes": 30) and the last time is more
+    than INBOX_STALE_HOURS ago, or was never written."""
+    if isinstance(every, bool) or not isinstance(every, int) or every <= 0:
+        return False
+    try:
+        last = datetime.strptime(checked_at, "%Y-%m-%d %H:%M" if " " in checked_at else "%Y-%m-%d")
+    except ValueError:
+        return True
+    return (now or datetime.now()) - last > timedelta(hours=INBOX_STALE_HOURS)
 
 
 def _inbox_answers() -> dict:
@@ -536,7 +552,9 @@ def inbox_section() -> dict:
                  "items": [{"title": "...", "detail": "...", "from": "...", "date": "2026-11-17",
                             "unread": true, "search": "subject:(...)", "key": "shop-payout", "ask": "do"}]}]}
 
-    Whatever went through the mailbox writes that file; this only reads it. Every text is cut to a length and shown
+    Whatever went through the mailbox writes that file; this only reads it. "every_minutes" in the file says it is
+    gone through by itself that often; "stale" comes back true when that has not happened for more than a day.
+    Every text is cut to a length and shown
     as text. A link is never taken from the file: it is built here, from the account and the item's own search words,
     and always opens Gmail's search. Not set up where the file is missing or is not this shape.
 
@@ -602,6 +620,7 @@ def inbox_section() -> dict:
         "installed": True,
         "account": account,
         "checked_at": _inbox_when(data.get("checked_at"), INBOX_MOMENT),
+        "stale": _inbox_stale(data.get("every_minutes"), _inbox_when(data.get("checked_at"), INBOX_MOMENT)),
         "read": _inbox_count(data.get("read")),
         "still_unread": _inbox_count(data.get("still_unread")),
         "note": _inbox_text(data.get("note"), 400),
@@ -615,10 +634,19 @@ def inbox_section() -> dict:
 def inbox_todo(section: dict | None) -> list[dict]:
     """One line in To do per group of the inbox card that still holds a mail for me, with those mails as links and
     their answers as buttons. An urgent group: every mail I have not answered. Another group: only the unanswered mails
-    that ask for something. A mail I said was not me is urgent wherever it sits."""
+    that ask for something. A mail I said was not me is urgent wherever it sits. One more line when the mailbox is
+    gone through by itself and that has not happened for more than a day."""
     if not section or not section.get("installed"):
         return []
     todo = []
+    if section.get("stale"):
+        todo.append({
+            "priority": 2, "module": "Email", "title": "Inbox: not gone through for more than a day",
+            "detail": f"Last time: {section['checked_at'] or 'never'}. New mail in {section['account'] or 'the inbox'} is "
+                      "not sorted until it runs again. It only runs while you are away from the PC and the PC is on "
+                      "and unlocked; if that was the case, look at the scheduled task 'Inbox'.",
+            "action": None, "action_label": None, "links": [],
+        })
     for group in section["groups"]:
         urgent = group["priority"] == 1
         waiting = [item for item in group["items"]

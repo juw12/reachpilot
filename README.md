@@ -455,6 +455,10 @@ come from strangers' mail, so each one is cut to a length and shown as plain tex
 the file: **Open in Gmail** is built from the account and the item's `search` words and only ever opens Gmail's
 own search. The card stays on your own dashboard and in the phone snapshot; the public demo has none.
 
+If the mailbox is gone through by itself, the file can say how often with `"every_minutes": 30`. Then a
+`checked_at` older than 26 hours becomes a line in **To do** (*Inbox: not gone through for more than a day*), so
+an automation that stopped does not go unnoticed. Without `every_minutes` the card is taken as a one-off.
+
 A mail with a `key` (lower-case letters, digits, `-`, `_`) can be **answered on the card**. `ask` says what it
 wants: `"confirm"` gives *It was me* / *Not me*, `"do"` gives *Done* / *Won't do*, anything else gives *Seen*.
 *Not me* settles nothing: the mail turns urgent and waits until you changed that password and press *Secured*.
