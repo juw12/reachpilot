@@ -859,7 +859,53 @@ def podcast_section() -> dict:
     return cached(f"podcast:{int(max(mtimes)) if mtimes else 0}", 60, build)
 
 
-PODCAST_VERBS = {"approve", "skip", "review", "open"}
+PODCAST_VERBS = {"approve", "skip", "review", "open", "disclose"}
+
+# Run inside the podcast module, with its own Python: it knows the office proxy and what holds its lock.
+# Prints one word: "busy" (a build holds the lock, so the code is not touched), "pulled" or "pull failed".
+PODCAST_UPDATE_SCRIPT = """
+import podcast
+try:
+    busy = podcast.LOCK_PATH.exists() and podcast.process_alive(int(podcast.LOCK_PATH.read_text().strip()))
+except (OSError, ValueError):
+    busy = False
+if busy:
+    print("busy")
+else:
+    config = podcast.load_config()
+    root = podcast.repo_root()
+    proxy = (config.get("proxy") or "").strip() or None
+    done = podcast.git(["pull", "--ff-only", "origin", "main"], root, proxy, timeout=240) if root else None
+    print("pulled" if done is not None and done.returncode == 0 else "pull failed")
+"""
+
+
+def podcast_disclose() -> str:
+    """podcast:disclose - voice again the published episodes whose sign-off does not say the voices are AI.
+    The work is the podcast module's own (python podcast.py disclose: it waits behind a running build, voices,
+    builds the site and publishes). This only brings that module up to date when no build is running, and
+    starts the command in the background: it takes far longer than a button may wait."""
+    state = "pull failed"
+    try:
+        update = subprocess.run([str(PYTHON), "-c", PODCAST_UPDATE_SCRIPT], cwd=PODCAST, capture_output=True, text=True,
+                                encoding="utf-8", timeout=280, creationflags=NO_WINDOW)
+        state = (update.stdout.strip().splitlines() or ["pull failed"])[-1]
+    except (OSError, subprocess.SubprocessError):
+        pass
+    try:
+        known = "def cmd_disclose" in (PODCAST / "podcast.py").read_text(encoding="utf-8")
+    except OSError:
+        known = False
+    if not known:
+        if state == "busy":
+            raise RuntimeError("An episode is being built, and the podcast code on this PC is from before this button. "
+                               "Press it again when the build is done.")
+        raise RuntimeError("The podcast code on this PC is from before this button and could not be updated "
+                           "(git pull did not work). It updates at the next scheduled run.")
+    subprocess.Popen([str(PYTHONW), str(PODCAST / "podcast.py"), "disclose"], cwd=PODCAST, creationflags=NO_WINDOW)
+    if state == "busy":
+        return "Started. It waits for the episode that is being built, then voices the older episodes again and publishes."
+    return "Started: the older episodes are being voiced again so they say the voices are AI. The site is published when they are done."
 
 
 def podcast_action(name: str) -> str:
@@ -873,6 +919,10 @@ def podcast_action(name: str) -> str:
         raise ValueError("The site folder isn't there yet (no episodes built).")
     if verb in PROMOTION_VERBS:
         return podcast_promotion_action(verb, argument)
+    if verb == "disclose":
+        if not (PODCAST / "podcast.py").exists():
+            raise ValueError("The podcast module is not on this PC.")
+        return podcast_disclose()
     if verb not in PODCAST_VERBS:
         raise ValueError(f"Unknown action: {name}")
     for key in [key for key in _cache if key.startswith("podcast:")]:

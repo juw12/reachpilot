@@ -4683,13 +4683,66 @@ phone_main = (Path(__file__).parent / "phone_snapshot.py").read_text(encoding="u
 check(phone_main.index("leave_low_priority()") < phone_main.index("build("),
       "phone page: the build fixes its priority first, so Task Scheduler answers it on a busy PC")
 
+# Podcast: podcast:disclose (voice the older episodes again so they say the voices are AI) brings the podcast module
+# up to date only when no build is running, then starts the module's own command in the background.
+with tempfile.TemporaryDirectory() as disclose_folder:
+    disclose_home = Path(disclose_folder)
+    disclose_real = (hub.PODCAST, hub.subprocess.run, hub.subprocess.Popen)
+    disclose_asked, disclose_started, disclose_says = [], [], ["pulled"]
+
+    class DiscloseUpdate:
+        returncode, stderr = 0, ""
+
+        def __init__(self, command, **kwargs):
+            disclose_asked.append((command, kwargs.get("cwd")))
+            self.stdout = disclose_says[0] + "\n"
+
+    class DiscloseStart:
+        def __init__(self, command, **kwargs):
+            disclose_started.append(command)
+
+    hub.PODCAST, hub.subprocess.run, hub.subprocess.Popen = disclose_home, DiscloseUpdate, DiscloseStart
+    try:
+        try:
+            hub.run_action("podcast:disclose")
+            check(False, "podcast: the re-voice button says so when the podcast module is not on this PC")
+        except ValueError:
+            check(not disclose_asked, "podcast: the re-voice button says so when the podcast module is not on this PC")
+        (disclose_home / "podcast.py").write_text("def cmd_run(config):\n    pass\n", encoding="utf-8")
+        for said, expected in (("busy", "Press it again when the build is done"), ("pull failed", "could not be updated")):
+            disclose_says[0] = said
+            try:
+                hub.run_action("podcast:disclose")
+                check(False, f"podcast: an older podcast module is not started ({said})")
+            except RuntimeError as disclose_error:
+                check(expected in str(disclose_error) and not disclose_started,
+                      f"podcast: an older podcast module is not started, and the button says why ({said})")
+        (disclose_home / "podcast.py").write_text("def cmd_disclose(config):\n    pass\n", encoding="utf-8")
+        disclose_says[0] = "pulled"
+        disclose_message = hub.run_action("podcast:disclose")
+        check(disclose_message.startswith("Started") and len(disclose_started) == 1
+              and disclose_started[0][-2:] == [str(disclose_home / "podcast.py"), "disclose"],
+              "podcast: the re-voice button starts 'podcast.py disclose' once, in the background")
+        disclose_says[0] = "busy"
+        check("waits for the episode that is being built" in hub.run_action("podcast:disclose") and len(disclose_started) == 2,
+              "podcast: with a build running and the command already there, it starts and waits behind the build")
+        check(all(command[1] == "-c" and command[2] == hub.PODCAST_UPDATE_SCRIPT and folder == disclose_home
+                  for command, folder in disclose_asked),
+              "podcast: the update before it runs inside the podcast module's own folder")
+        compile(hub.PODCAST_UPDATE_SCRIPT, "podcast_update", "exec")
+        check(hub.PODCAST_UPDATE_SCRIPT.index("busy") < hub.PODCAST_UPDATE_SCRIPT.index('"pull"'),
+              "podcast: the update looks at the build lock before it pulls")
+    finally:
+        hub.PODCAST, hub.subprocess.run, hub.subprocess.Popen = disclose_real
+
 # Phone buttons: a name pressed on the phone runs only if it needs nothing on the PC's screen (phone_action.py).
 import phone_action  # noqa: E402
 import phone_snapshot  # noqa: E402
 
 for phone_name in ("promote:retryall", "promote:sendall", "promote:send:12", "promote:pause", "promote:covered:yt:UC1|https://youtu.be/x",
                    "linkedin_toggle_pause", "linkedin_run_now", "jobs_search_now", "email_run_now", "podcast:approve:all",
-                   "podcast:review:off", "podcast:listed:spotify", "patents:decide:demo:file", "patents:filed:demo:2026-11-01:63/123,456",
+                   "podcast:review:off", "podcast:listed:spotify", "podcast:disclose", "patents:decide:demo:file",
+                   "patents:filed:demo:2026-11-01:63/123,456",
                    "launch:followup:demo", "launch:approve_invites:demo", "shorts:pause:demo", "inbox:mine:google-1"):
     check(hub.phone_allowed(phone_name), f"phone buttons: {phone_name} runs from the phone")
 for phone_name in ("jobs_apply", "jobs_open_tracker", "open_answers", "email_open_leads", "email_preview", "email_test",
