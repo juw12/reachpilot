@@ -127,18 +127,19 @@ def short_lead(lead: str, room: int) -> str:
     late enough, else between words, and never on a word that leaves the reader hanging ("from a")."""
     if len(lead) <= room:
         return lead.rstrip(" .")
+    def whole(text: str) -> str:  # never stop inside brackets
+        if text.count("(") > text.count(")"):
+            text = text[:text.rfind("(")]
+        return text.rstrip(" ,;:.-")
+
     cut = lead[:room + 1]
-    if cut.count("(") > cut.count(")"):  # never stop inside brackets
-        cut = cut[:cut.rfind("(")]
-        if len(cut.strip()) >= room * 0.5:
-            return cut.rstrip(" ,;:.")
     clause = max(cut.rfind(mark) for mark in (", ", "; ", ": ", ". ", " ("))
-    if clause >= room * 0.5:
-        return cut[:clause].rstrip(" ,;:.")
+    if clause >= room * 0.5 and len(whole(cut[:clause])) >= room * 0.5:
+        return whole(cut[:clause])
     words = cut.rsplit(" ", 1)[0].split(" ")
     while len(words) > 1 and words[-1].lower().strip(",;:") in TRAILING:
         words.pop()
-    return " ".join(words).rstrip(" ,;:.-")
+    return whole(" ".join(words))
 
 
 def page(subjects: list[RepoFacts], user: str, video_url: str = "", credits=()) -> str:
