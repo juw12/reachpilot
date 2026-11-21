@@ -119,6 +119,28 @@ def _card(facts: RepoFacts) -> str:
     )
 
 
+TRAILING = {"a", "an", "the", "of", "with", "from", "and", "or", "in", "to", "for", "on", "as", "by", "your", "its", "that"}
+
+
+def short_lead(lead: str, room: int) -> str:
+    """The start of a sentence that fits a search result's title: cut where a clause ends when one ends
+    late enough, else between words, and never on a word that leaves the reader hanging ("from a")."""
+    if len(lead) <= room:
+        return lead.rstrip(" .")
+    cut = lead[:room + 1]
+    if cut.count("(") > cut.count(")"):  # never stop inside brackets
+        cut = cut[:cut.rfind("(")]
+        if len(cut.strip()) >= room * 0.5:
+            return cut.rstrip(" ,;:.")
+    clause = max(cut.rfind(mark) for mark in (", ", "; ", ": ", ". ", " ("))
+    if clause >= room * 0.5:
+        return cut[:clause].rstrip(" ,;:.")
+    words = cut.rsplit(" ", 1)[0].split(" ")
+    while len(words) > 1 and words[-1].lower().strip(",;:") in TRAILING:
+        words.pop()
+    return " ".join(words).rstrip(" ,;:.-")
+
+
 def page(subjects: list[RepoFacts], user: str, video_url: str = "", credits=()) -> str:
     """One self-contained page about one project, or a card per project. Every word comes from the repos."""
     single = len(subjects) == 1
@@ -137,8 +159,7 @@ def page(subjects: list[RepoFacts], user: str, video_url: str = "", credits=()) 
     # What a search result shows: the name alone ("Cairn") says nothing to someone who has never heard of it.
     headline = title
     if single and lead:
-        room = 68 - len(title)
-        short = lead if len(lead) <= room else lead[:room].rsplit(" ", 1)[0].rstrip(" ,;:.-")
+        short = short_lead(lead, 68 - len(title))
         headline = f"{title}: {short}" if len(short) >= 12 else title
     described = f'<meta name="description" content="{html.escape(lead[:300], quote=True)}">' if lead else ""
     social = ""

@@ -6500,6 +6500,11 @@ findable_watch_title = findable_watch_page.split("<title>")[1].split("</title>")
 check(findable_watch_title.startswith("Alpha: ") and len(findable_watch_title) <= 70 and '<meta name="description" content="' in findable_watch_page
       and "<h1>Alpha</h1>" in findable_watch_page,
       f"search: a watch page's title says what the project is, and it has a description ({findable_watch_title})")
+check(findable_showcase.short_lead("My public brain: work I can show, published from a private Cairn brain", 61) == "My public brain: work I can show"
+      and findable_showcase.short_lead("Walks new engineers through clunky work software (PLM, SRM, ERP), click by click", 61) == "Walks new engineers through clunky work software"
+      and findable_showcase.short_lead("Reads the manual for you and answers from it with the page number", 40) == "Reads the manual for you and answers"
+      and findable_showcase.short_lead("Keeps an old computer quick.", 60) == "Keeps an old computer quick",
+      "search: a title is cut where a clause ends, or between words, never on a word that leaves the reader hanging")
 findable_page_source = (Path(__file__).parent / "dashboard.html").read_text(encoding="utf-8")
 findable_hub_source = (Path(__file__).parent / "hub.py").read_text(encoding="utf-8")
 check('<button role="tab" data-tab="search" hidden>Search</button>' in findable_page_source and '<section id="search" hidden></section>' in findable_page_source
