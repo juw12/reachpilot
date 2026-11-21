@@ -60,6 +60,8 @@ DAY_NAMES = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 LEAD_MINUTES = 30  # a post is not scheduled closer to its time than this: Buffer still has to fetch the video
 SETTLED_SECONDS = 600  # a video that changed in the last ten minutes may still be written
 MAX_TRIES = 2  # a post that X refused goes back in line once; after the second refusal it is left for me
+NETWORK_TRIES = 3  # the office line drops a connection now and then, mostly on the hour when every task starts
+NETWORK_PAUSE_SECONDS = 20  # before the second try; twice as long before the third
 SHOWN_POSTS = 5
 
 CHANNEL = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
@@ -452,30 +454,46 @@ def schedule(channel_id: str, cfg: dict, state: dict, creds: dict, now: datetime
     return "no finished video is waiting"
 
 
+def _line_dropped(error: Exception) -> bool:
+    """The connection failed (proxy, TLS, no answer in time): nothing says Buffer refused anything."""
+    import requests
+
+    return isinstance(error, (requests.exceptions.ConnectionError, requests.exceptions.Timeout))
+
+
 def _schedule_one(channel_id: str, state: dict, episode_id: str, due: datetime, creds: dict, now: datetime, ask, host) -> str:
     episode = state["episodes"][episode_id]
-    try:
-        post = _already_waiting(creds, episode["text"], ask)
-        if post is None:
-            url = host(channel_id, episode_id, channel_dir(channel_id) / f"{episode_id}.mp4")
-            if not url:
-                episode["error"] = "The video has no public address yet; the next run tries again."
-                return f"{episode_id}: no public address for the video yet"
-            created = (ask(creds, SCHEDULE_POST, {"input": {
-                "text": episode["text"],
-                "channelId": creds["channel_id"],
-                "schedulingType": "automatic",
-                "mode": "customScheduled",
-                "dueAt": due.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z"),
-                "assets": [{"video": {"url": url}}],
-            }}, "Schedule via Buffer") or {}).get("createPost") or {}
-            post = created.get("post")
-            if not post:
-                raise RuntimeError(f"Buffer did not take the post: {created.get('message') or created}")
-            episode["video_url"] = url
-    except Exception as error:
-        episode["error"] = str(error)[:200]
-        return f"{episode_id}: FAILED {str(error)[:160]}"
+    for attempt in range(1, NETWORK_TRIES + 1):
+        asked_to_create = False
+        try:
+            post = _already_waiting(creds, episode["text"], ask)
+            if post is None:
+                url = host(channel_id, episode_id, channel_dir(channel_id) / f"{episode_id}.mp4")
+                if not url:
+                    episode["error"] = "The video has no public address yet; the next run tries again."
+                    return f"{episode_id}: no public address for the video yet"
+                asked_to_create = True
+                created = (ask(creds, SCHEDULE_POST, {"input": {
+                    "text": episode["text"],
+                    "channelId": creds["channel_id"],
+                    "schedulingType": "automatic",
+                    "mode": "customScheduled",
+                    "dueAt": due.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+                    "assets": [{"video": {"url": url}}],
+                }}, "Schedule via Buffer") or {}).get("createPost") or {}
+                post = created.get("post")
+                if not post:
+                    raise RuntimeError(f"Buffer did not take the post: {created.get('message') or created}")
+                episode["video_url"] = url
+            break
+        except Exception as error:
+            # A dropped line is tried again a moment later, but never once Buffer was asked to create the post:
+            # it may have taken it, and the next run looks for it before it creates anything.
+            if attempt < NETWORK_TRIES and not asked_to_create and _line_dropped(error):
+                time.sleep(NETWORK_PAUSE_SECONDS * attempt)
+                continue
+            episode["error"] = str(error)[:200]
+            return f"{episode_id}: FAILED {str(error)[:160]}"
     due = _moment(post.get("dueAt"), now) or due
     episode.update({"status": "scheduled", "post_id": post["id"], "due": _stamp(due), "error": ""})
     return f"{episode_id}: scheduled in Buffer for {_stamp(due)}"

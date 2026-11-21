@@ -5081,6 +5081,47 @@ try:
           and after_pause["episodes"]["k01"]["status"] == "scheduled" and after_pause["episodes"]["k9"]["status"] == "waiting",
           "shorts: Pause removes every waiting post, and one that went out a moment ago is not put back in line")
 
+    # A dropped line (proxy, TLS) is tried again in the same run, except once Buffer was asked to create the post.
+    import requests as shorts_requests
+
+    class DroppingBuffer(ShortsBuffer):
+        def __init__(self, drops, on):
+            super().__init__()
+            self.drops, self.on = drops, on
+
+        def __call__(self, creds, query, variables, what):
+            if what == self.on and self.drops:
+                self.drops -= 1
+                if what == "Schedule via Buffer":
+                    super().__call__(creds, query, variables, what)  # Buffer took it, the answer never arrived
+                raise shorts_requests.exceptions.SSLError("EOF occurred in violation of protocol")
+            return super().__call__(creds, query, variables, what)
+
+    def drop_state():
+        return {"episodes": {"k01": {"title": "Title k01", "text": "Text k01", "status": "waiting"}}}
+
+    with mock.patch("shorts.time.sleep") as drop_pause:
+        twice, twice_state = DroppingBuffer(2, "Buffer channel"), drop_state()
+        came_back = shorts.schedule("demo", shorts_cfg, twice_state, shorts_creds, shorts_now, ask=twice, host=shorts_host)
+        pauses = [call.args[0] for call in drop_pause.call_args_list]
+        always, always_state = DroppingBuffer(99, "Buffer queue"), drop_state()
+        gave_up = shorts.schedule("demo", shorts_cfg, always_state, shorts_creds, shorts_now, ask=always, host=shorts_host)
+        tries_made = 99 - always.drops
+        drop_pause.reset_mock()
+        creating, creating_state = DroppingBuffer(1, "Schedule via Buffer"), drop_state()
+        not_twice = shorts.schedule("demo", shorts_cfg, creating_state, shorts_creds, shorts_now, ask=creating, host=shorts_host)
+        pauses_at_create = drop_pause.call_count
+        next_run = shorts.schedule("demo", shorts_cfg, creating_state, shorts_creds, shorts_now, ask=creating, host=shorts_host)
+    check("k01: scheduled in Buffer" in came_back and twice.created == 1
+          and pauses == [shorts.NETWORK_PAUSE_SECONDS, 2 * shorts.NETWORK_PAUSE_SECONDS],
+          f"shorts: a line that drops twice is tried a third time in the same run ({came_back}, pauses {pauses})")
+    check("FAILED" in gave_up and tries_made == shorts.NETWORK_TRIES and always.created == 0
+          and always_state["episodes"]["k01"]["status"] == "waiting",
+          f"shorts: a line that stays down is given up after {shorts.NETWORK_TRIES} tries and nothing is scheduled ({tries_made})")
+    check("FAILED" in not_twice and pauses_at_create == 0 and "scheduled in Buffer" in next_run and creating.created == 1
+          and len(creating.posts) == 1,
+          "shorts: a line that drops while Buffer creates the post is not tried again, so no post is made twice")
+
     shorts.SECRETS_FILE.write_text(json.dumps({"channels": {"x": {"client_id": "paid api"}}}), encoding="utf-8")
     check(shorts.x_account() is None and shorts.card(friday)[0]["connected"] is False
           and "X is not connected through Buffer" in shorts.run(friday),
