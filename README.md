@@ -602,6 +602,28 @@ Titip that is closed, a last look that failed and a look that is more than 30 mi
 senders and subjects only: what a mail says and its suggested answer stay on the PC, and an answer cannot be sent
 from the phone (Check now and the two modes can be pressed there).
 
+**Search.** `python findable.py install` adds a daily task (`\ReachPilot\Search`, 06:40) and a **Search** page
+under Projects. A page nobody links to and no sitemap names is found late or never, so once a day ReachPilot reads
+every page your projects have (the site each repo names, its landing page and its watch page, plus addresses under
+`"findable": {"extra_pages": [...]}` in `config.json`) the way a search engine reads it, and
+
+- writes down what would keep a page out: it does not answer, it says `noindex`, it has no title or no
+  description. Those pages are first on the Search page and one line in To do. A project listed under
+  `"not_for_search"` may say `noindex` on purpose;
+- keeps one `sitemap.xml` for the whole Pages site with every page that may be found, named in `robots.txt`, and
+  pushes it only when it changed;
+- tells the IndexNow search engines (Bing, Yandex and the ones they pass it on to) which pages are new or changed,
+  through the first of three doors the network leaves open. No account is needed: the site shows its own key file;
+- asks Google, where the Search Console bridge is connected, whether each page is in its index (40 pages a run,
+  each answer kept three days) and hands it the sitemap. Google has no door without a sign-in, so this is the one
+  step that needs you once: [`findable_bridge.gs`](findable_bridge.gs) is a small Apps Script that runs as you and
+  answers only those two questions; its four steps are at the top of the file, its address and token go in
+  `secrets.json` under `"search_console"`. Until then the page says "not connected" and To do carries the line.
+
+`python findable.py show` prints the page, `python findable.py check NAME` exits 1 when a page of that project
+cannot be found (a gate for other tools). Nothing here posts anywhere or touches a project's own repo, and when a
+page shows up in a search engine stays that search engine's decision.
+
 **Patent screen.** `python patents.py install` adds a daily task (`\ReachPilot\Patent screen`, every day 09:00) and a
 **Patents** page. Each run reads the description and README of every repository you own, private ones included
 when `gh` is signed in, and answers three questions per project:
@@ -672,6 +694,8 @@ again on the next daily run. `python patent_desk.py show` prints the desk.
 | `patent_desk.py` | daily patent desk: readiness checklist per candidate, provisional draft package, filing follow-up |
 | `launch_auto.py` | hourly launch automations: an answer and one follow-up, invitations after approval, daily checks of a waiting document |
 | `shorts.py` | hourly: a channel's finished short videos, scheduled for X through Buffer one per posting day |
+| `findable.py` | daily: can a search engine find each project page; the Pages site's sitemap; IndexNow; Google through the bridge |
+| `findable_bridge.gs` | the Search Console bridge: an Apps Script of your own that answers whether a page is in Google |
 | `replies.py` | every 30 minutes: comments and messages on Bluesky, Mastodon and Dev.to, with an answer you send or that goes by itself |
 | `gmail_answers.py` | the Gmail answers card: what Titip's Autopilot did with new Gmail on this PC, and its buttons |
 | `selfupdate.py` | fast-forward updater used by the dashboard and the Updates task; installs newly required packages |

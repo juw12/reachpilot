@@ -22,6 +22,10 @@ What I answer to a mail on the card or in To do (inbox_action) is kept in inbox_
 To do and whatever went through the mailbox all read that one file. A mailbox that is gone through by itself (the
 file says "every_minutes") and was not for more than a day is a line in To do, so an automation that stopped shows.
 
+The Search page (findable_section) shows what findable.py found on its daily pass: every page a project has, what
+would keep a search engine out of it, whether the Pages site's sitemap names it, when Bing and Yandex were told, and,
+where a Search Console bridge is connected, whether Google has it. It shows only where that task ran on this PC.
+
 The "This PC" card (upkeep_section) shows the housekeeping jobs of this PC that have nothing to do with promotion but
 that I want to see in the same place: a clean-up, a backup, a sync. It reads upkeep_private.json (git-ignored), which
 names the scheduled tasks and where each one leaves its status; it shows only where that file exists.
@@ -87,6 +91,8 @@ if (ROOT / "data" / "launch_auto").exists():  # only where `python launch_auto.p
     TASKS["launch"] = "Launch automations"
 if (ROOT / "data" / "shorts").exists():  # only where `python shorts.py install` has been run
     TASKS["shorts"] = "Shorts"
+if (ROOT / "data" / "findable").exists():  # only where `python findable.py install` has been run
+    TASKS["findable"] = "Search"
 if (ROOT / "data" / "replies").exists():  # only where `python replies.py install` has been run
     TASKS["replies"] = "Replies"
 if (MODULES / "inbox" / "keeper.py").exists():  # only where the private module that goes through the mailbox is present
@@ -2040,7 +2046,7 @@ def _start_task(key: str) -> None:
 # Buttons pressed on the phone (phone_action.py). Only what needs nothing on this PC's screen: a button that
 # opens a window, a file or a sign-in is left out, and so is every name not listed here.
 PHONE_PLAIN = {"jobs_search_now", "email_run_now", "linkedin_run_now", "linkedin_toggle_pause", "patents_run_now",
-               "launch_run_now", "shorts_run_now", "replies_run_now"}
+               "launch_run_now", "shorts_run_now", "replies_run_now", "findable_run_now"}
 PHONE_VERBS = {
     "promote": PROMOTE_VERBS,
     "podcast": (PODCAST_VERBS - {"open"}) | PROMOTION_VERBS,
@@ -2167,6 +2173,11 @@ def run_action(name: str) -> str:
         import shorts
 
         return shorts.action(name)
+    if name == "findable_run_now":
+        runner = PYTHONW if PYTHONW.exists() else Path(sys.executable)
+        subprocess.Popen([str(runner), str(ROOT / "findable.py")], cwd=ROOT, creationflags=NO_WINDOW)
+        _cache.pop("tasks", None)
+        return "Search check started: every project page is read again. The page updates in a few minutes."
     if name == "replies_run_now":
         runner = PYTHONW if PYTHONW.exists() else Path(sys.executable)
         subprocess.Popen([str(runner), str(ROOT / "replies.py")], cwd=ROOT, creationflags=NO_WINDOW)
@@ -2388,6 +2399,22 @@ def shorts_todo(section: dict | None) -> list[dict]:
                            "note": (video.get("error") or "no reason recorded")[:200]} for video in refused],
             })
     return items
+
+
+# ------------------------------------------------------------------ search (can a search engine find each project)
+
+def findable_section() -> dict:
+    """What findable.py found on its last daily pass over every project page, read from its file. No network."""
+    import findable
+
+    status = findable.card()
+    return {"installed": bool(status), **(status or {})}
+
+
+def findable_todo(section: dict | None) -> list[dict]:
+    import findable
+
+    return findable.todo(section)
 
 
 # ------------------------------------------------------------------ replies (comments and messages on the platforms)
@@ -2856,6 +2883,7 @@ def build(linkedin_overview: dict | None) -> dict:
                         ("podcast_promotion", podcast_promotion_section), ("launch", launch_section),
                         ("patents", patents_section),
                         ("readers", readers_section), ("shorts", shorts_section), ("replies", replies_section),
+                        ("findable", findable_section),
                         ("gmail", gmail_section), ("inbox", inbox_section), ("upkeep", upkeep_section),
                         ("submissions", submissions_section)):
         try:
@@ -2879,6 +2907,7 @@ def build(linkedin_overview: dict | None) -> dict:
             + launch_todo(sections.get("launch"))
             + patents_todo(sections.get("patents"))
             + shorts_todo(sections.get("shorts"))
+            + findable_todo(sections.get("findable"))
             + replies_todo(sections.get("replies"))
             + gmail_todo(sections.get("gmail"))
             + inbox_todo(sections.get("inbox"))

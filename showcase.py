@@ -119,6 +119,29 @@ def _card(facts: RepoFacts) -> str:
     )
 
 
+TRAILING = {"a", "an", "the", "of", "with", "from", "and", "or", "in", "to", "for", "on", "as", "by", "your", "its", "that"}
+
+
+def short_lead(lead: str, room: int) -> str:
+    """The start of a sentence that fits a search result's title: cut where a clause ends when one ends
+    late enough, else between words, and never on a word that leaves the reader hanging ("from a")."""
+    if len(lead) <= room:
+        return lead.rstrip(" .")
+    def whole(text: str) -> str:  # never stop inside brackets
+        if text.count("(") > text.count(")"):
+            text = text[:text.rfind("(")]
+        return text.rstrip(" ,;:.-")
+
+    cut = lead[:room + 1]
+    clause = max(cut.rfind(mark) for mark in (", ", "; ", ": ", ". ", " ("))
+    if clause >= room * 0.5 and len(whole(cut[:clause])) >= room * 0.5:
+        return whole(cut[:clause])
+    words = cut.rsplit(" ", 1)[0].split(" ")
+    while len(words) > 1 and words[-1].lower().strip(",;:") in TRAILING:
+        words.pop()
+    return whole(" ".join(words))
+
+
 def page(subjects: list[RepoFacts], user: str, video_url: str = "", credits=()) -> str:
     """One self-contained page about one project, or a card per project. Every word comes from the repos."""
     single = len(subjects) == 1
@@ -134,6 +157,12 @@ def page(subjects: list[RepoFacts], user: str, video_url: str = "", credits=()) 
     else:
         body = "".join(_card(facts) for facts in subjects)
         body += f'<a class="cta" href="https://github.com/{html.escape(user, quote=True)}">See them all on GitHub</a>'
+    # What a search result shows: the name alone ("Cairn") says nothing to someone who has never heard of it.
+    headline = title
+    if single and lead:
+        short = short_lead(lead, 68 - len(title))
+        headline = f"{title}: {short}" if len(short) >= 12 else title
+    described = f'<meta name="description" content="{html.escape(lead[:300], quote=True)}">' if lead else ""
     social = ""
     if video_url:
         social = (
@@ -144,7 +173,7 @@ def page(subjects: list[RepoFacts], user: str, video_url: str = "", credits=()) 
     return (
         '<!doctype html><html lang="en"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
-        f"<title>{html.escape(title)}</title>{social}<style>{style}</style></head><body>"
+        f"<title>{html.escape(headline)}</title>{described}{social}<style>{style}</style></head><body>"
         f'<header><p class="path">{html.escape(path)}</p><h1>{html.escape(title)}</h1>'
         + (f'<p class="lead">{html.escape(lead)}</p>' if lead else "")
         + ('<div class="chips">' + "".join(f"<span>{html.escape(chip)}</span>" for chip in chips) + "</div>" if chips else "")

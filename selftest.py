@@ -6375,5 +6375,196 @@ check(all(word not in upkeep_hub.split("# --------------------------------------
           for word in ("Users\\\\", "E:\\\\", "juwen")),
       "hub submissions: the public code names no folder of anyone's PC")
 
+# Search (findable.py): every project page is read the way a search engine reads it, the Pages site keeps one sitemap of
+# the pages that may be found, the IndexNow search engines are told what is new, and the page says what is in the way.
+import datetime as findable_time
+
+import findable
+
+findable_home = Path(tempfile.mkdtemp())
+findable_real = (findable.DATA_DIR, findable.STATUS_FILE, findable.STATE_FILE, findable.CONFIG_FILE, findable.SECRETS_FILE)
+try:
+    findable.DATA_DIR = findable_home / "data"
+    findable.STATUS_FILE, findable.STATE_FILE = findable.DATA_DIR / "status.json", findable.DATA_DIR / "state.json"
+    findable.CONFIG_FILE, findable.SECRETS_FILE = findable_home / "config.json", findable_home / "secrets.json"
+    findable.CONFIG_FILE.write_text(json.dumps({"github_user": "Me", "findable": {"extra_pages": ["https://me.github.io/brain/", "ftp://no"]}}), encoding="utf-8")
+    findable_site = findable_home / "pages"
+    for findable_page in ("p/alpha/index.html", "p/tool/index.html", "watch/alpha/index.html"):
+        (findable_site / findable_page).parent.mkdir(parents=True, exist_ok=True)
+        (findable_site / findable_page).write_text("<html></html>", encoding="utf-8")
+    (findable_site / "p" / "landing.json").write_text(json.dumps({
+        "https://github.com/me/alpha": {"name": "Alpha", "landing": "https://me.github.io/p/alpha/"},
+        "https://github.com/me/mono/tree/main/apps/tool": {"name": "Tool", "landing": "https://me.github.io/p/tool/"},
+    }), encoding="utf-8")
+    (findable_site / "robots.txt").write_text("User-agent: *\nAllow: /\n\nSitemap: https://me.github.io/show/sitemap.xml\n", encoding="utf-8")
+    findable_key = "0123456789abcdef0123456789abcdef"
+    (findable_site / f"{findable_key}.txt").write_text(findable_key + "\n", encoding="utf-8")
+    (findable_site / "notes.txt").write_text("not a key\n", encoding="utf-8")
+
+    def findable_html(title="A page about alpha things", description="What alpha does, said in one full sentence for a search result.", extra="", body="word " * 60):
+        described = f'<meta name="description" content="{description}">' if description else ""
+        return f"<html><head><title>{title}</title>{described}{extra}</head><body><script>var hidden = 'not counted';</script>{body}</body></html>"
+
+    findable_web = {
+        "https://me.github.io/alpha/": (200, findable_html(), {"Last-Modified": "Sat, 21 Nov 2026 10:00:00 GMT"}),
+        "https://me.github.io/p/alpha/": (200, findable_html(extra='<link rel="canonical" href="https://me.github.io/p/alpha/">'), {}),
+        "https://me.github.io/watch/alpha/": (200, findable_html(title="Alpha", description=""), {}),
+        "https://me.github.io/p/tool/": (200, findable_html(extra='<meta content="noindex, follow" name="robots">'), {}),
+        "https://beta.example/": (200, findable_html(), {}),
+        "https://me.github.io/gone/": (404, "", {}),
+        "https://me.github.io/alias/": (200, findable_html(extra="<link href='https://me.github.io/alpha/' rel='canonical'>"), {}),
+        "https://me.github.io/moved/": (200, '<html><head><meta http-equiv="refresh" content="0; url=/alpha/"></head></html>', {}),
+        "https://me.github.io/brain/": (200, findable_html(), {"X-Robots-Tag": "all"}),
+    }
+    findable_repos = [
+        {"name": "alpha", "homepage": "https://me.github.io/alpha"}, {"name": "beta", "homepage": "https://beta.example/"},
+        {"name": "gone", "homepage": "https://me.github.io/gone/"}, {"name": "alias", "homepage": "https://me.github.io/alias/"},
+        {"name": "moved", "homepage": "https://me.github.io/moved/"}, {"name": "nosite", "homepage": ""},
+    ]
+
+    def findable_fetch(url):
+        status, body, headers = findable_web.get(url, (404, "", {}))
+        return {"status": status, "url": url, "text": body, "headers": headers}
+
+    findable_read = findable.read_page("https://me.github.io/alpha/", findable_fetch)
+    check((findable_read["title"], findable_read["words"], findable_read["changed"], findable_read["issues"], findable_read["listable"])
+          == ("A page about alpha things", 60 + 4, "2026-11-21", [], True),
+          f"search: a page's title, its words without scripts and the day it changed are read ({findable_read['words']} words)")
+    check(findable.read_page("https://me.github.io/p/tool/", findable_fetch)["issues"] == ["says noindex, so search engines must leave it out"]
+          and findable.read_page("https://me.github.io/gone/", findable_fetch)["issues"] == ["does not answer (404)"]
+          and findable.read_page("https://nowhere.example/", lambda url: {"status": 0, "url": url, "text": "", "headers": {}, "error": "ConnectionError"})["issues"]
+          == ["does not answer (ConnectionError)"],
+          "search: a page that says noindex or does not answer is named as such")
+    findable_watch = findable.read_page("https://me.github.io/watch/alpha/", findable_fetch)
+    check(findable_watch["issues"] == ['its title is only 5 characters ("Alpha")', "has no description, so a search result shows whatever text comes first"],
+          f"search: a title that says nothing and a missing description are both named ({findable_watch['issues']})")
+    check(not findable.read_page("https://me.github.io/alias/", findable_fetch)["listable"]
+          and not findable.read_page("https://me.github.io/moved/", findable_fetch)["listable"]
+          and findable.read_page("https://me.github.io/moved/", findable_fetch)["issues"] == []
+          and findable.read_page("https://me.github.io/p/alpha/", findable_fetch)["listable"],
+          "search: a page whose canonical address is another page, or that sends the reader on, is not listed as its own page")
+
+    findable_moved = lambda url: {"status": 200, "url": url, "headers": {},
+                                  "text": findable_html(extra='<meta name="robots" content="noindex"><link rel="canonical" href="https://me.github.io/alpha/">')}
+    check(findable.read_page("https://me.github.io/old/", findable_moved)["issues"] == []
+          and not findable.read_page("https://me.github.io/old/", findable_moved)["listable"],
+          "search: a page that says noindex and names another page as the real one is kept out on purpose, not a fault")
+
+    findable_posts, findable_pushes = [], []
+
+    def findable_post(url, body):
+        findable_posts.append((url, body))
+        return 0 if "api.indexnow.org" in url else 200
+
+    def findable_run(day=22, **more):
+        return findable.run(now=findable_time.datetime(2026, 11, day, 6, 40), fetch=findable_fetch, repos=findable_repos, checkout=findable_site,
+                            push=lambda checkout, files, message: findable_pushes.append((sorted(files), message)) or "", post=findable_post,
+                            prepare=lambda checkout: True, **more)
+
+    findable_first = findable_run()
+    findable_map = (findable_site / "sitemap.xml").read_text(encoding="utf-8")
+    findable_listed = sorted(findable_map.split("<loc>")[index].split("</loc>")[0] for index in range(1, findable_map.count("<loc>") + 1))
+    check(findable_listed == ["https://me.github.io/alpha/", "https://me.github.io/brain/", "https://me.github.io/p/alpha/", "https://me.github.io/watch/alpha/"]
+          and "<loc>https://me.github.io/alpha/</loc><lastmod>2026-11-21</lastmod>" in findable_map,
+          f"search: the sitemap names every page of the Pages site that may be found, and no other ({findable_listed})")
+    findable_robots = (findable_site / "robots.txt").read_text(encoding="utf-8")
+    check(findable_robots == "User-agent: *\nAllow: /\n\nSitemap: https://me.github.io/show/sitemap.xml\nSitemap: https://me.github.io/sitemap.xml\n"
+          and findable.robots_text(findable_robots, "https://me.github.io/sitemap.xml") == findable_robots
+          and findable.robots_text("", "https://me.github.io/sitemap.xml") == "User-agent: *\nAllow: /\n\nSitemap: https://me.github.io/sitemap.xml\n",
+          "search: robots.txt names the sitemap once and keeps what it already said")
+    check(findable_pushes == [(sorted(["robots.txt", "sitemap.xml", f"{findable_key}.txt"]), "sitemap.xml: 4 pages search engines may find (ReachPilot)")]
+          and sorted(file.name for file in findable_site.glob("*.txt")) == sorted([f"{findable_key}.txt", "notes.txt", "robots.txt"]),
+          "search: the changed files go out in one push, and the key the site already shows is used again")
+    check([url for url, _ in findable_posts] == ["https://api.indexnow.org/indexnow", "https://www.bing.com/indexnow"]
+          and findable_posts[1][1] == {"host": "me.github.io", "key": findable_key, "keyLocation": f"https://me.github.io/{findable_key}.txt", "urlList": findable_posts[1][1]["urlList"]}
+          and sorted(findable_posts[1][1]["urlList"]) == findable_listed
+          and "told 4 new or changed page(s) through www.bing.com" in findable_first,
+          f"search: Bing and Yandex are told through the first door this network leaves open ({findable_first})")
+    findable_posts.clear()
+    findable_pushes.clear()
+    findable_run(23)
+    check(findable_posts == [] and findable_pushes == [([f"{findable_key}.txt"], "sitemap.xml: 4 pages search engines may find (ReachPilot)")],
+          "search: a day on which no page changed tells nobody and rewrites nothing")
+    findable_web["https://me.github.io/brain/"] = (200, findable_html(body="new " * 80), {})
+    findable_run(24)
+    check(len(findable_posts) == 2 and findable_posts[1][1]["urlList"] == ["https://me.github.io/brain/"],
+          "search: only the page that changed is told again")
+
+    findable_section = {"installed": True, **findable.card()}
+    findable_counts = findable_section["counts"]
+    check((findable_counts["projects"], findable_counts["pages"], findable_counts["trouble"], findable_counts["in_sitemap"], findable_counts["told"])
+          == (7, 9, 3, 4, 4) and findable_section["projects"][0]["trouble"] == 1 and not findable_section["google_connected"],
+          f"search: the page counts projects, pages, pages with something in the way, listed and told ({findable_counts})")
+    findable_items = findable.todo(findable_section)
+    check(len(findable_items) == 2 and findable_items[0]["title"] == "3 page(s) have something that keeps search engines out"
+          and {row["url"] for row in findable_items[0]["links"]} == {"https://me.github.io/watch/alpha/", "https://me.github.io/p/tool/", "https://me.github.io/gone/"}
+          and findable_items[1]["title"] == "Connect Google Search Console, once" and findable.todo({"installed": False}) == [],
+          "search: To do lists the pages with something in the way and the one-time Google connection")
+
+    findable_asked = []
+
+    def findable_ask(link, payload):
+        findable_asked.append((link["url"], payload["action"], payload["url"]))
+        if payload["action"] == "sitemap":
+            return {"ok": True}
+        return {"verdict": "PASS" if payload["url"] in ("https://me.github.io/alpha/", "https://me.github.io/p/alpha/") else "NEUTRAL", "coverage": "Submitted and indexed", "crawled": "2026-11-23T04:00:00Z"}
+
+    findable_run(25, link={"url": "https://script.example/exec", "token": "t"}, ask=findable_ask)
+    findable_google = {page["url"]: (page["google"], page["crawled"]) for project in findable.card()["projects"] for page in project["pages"]}
+    check(findable_google["https://me.github.io/alpha/"] == ("in Google", "2026-11-23") and findable_google["https://me.github.io/brain/"] == ("not in Google yet", "2026-11-23")
+          and findable_google["https://beta.example/"] == ("", "") and findable.card()["counts"]["in_google"] == 2
+          and ("https://script.example/exec", "sitemap", "https://me.github.io/sitemap.xml") in findable_asked
+          and sum(1 for row in findable_asked if row[1] == "inspect") == 4,
+          f"search: with the bridge connected Google is asked about the listed pages and handed the sitemap ({findable.card()['counts']})")
+    findable_asked.clear()
+    findable_run(26, link={"url": "https://script.example/exec", "token": "t"}, ask=findable_ask)
+    check(findable_asked == [] and len(findable.todo({"installed": True, **findable.card()})) == 1,
+          "search: an answer from Google is kept for three days, and the connect line leaves To do once connected")
+    findable.CONFIG_FILE.write_text(json.dumps({"github_user": "Me", "findable": {"not_for_search": ["Tool"]}}), encoding="utf-8")
+    findable_run(26)
+    check(not any(page["issues"] for project in findable.card()["projects"] if project["name"] == "tool" for page in project["pages"])
+          and findable.card()["counts"]["trouble"] == 2,
+          "search: a project listed under not_for_search may say noindex without a line in To do")
+    findable_stopped = findable.ask_google({"url": "u", "token": "t"}, "https://me.github.io/", ["https://me.github.io/new/"], {}, "2026-11-27",
+                                           lambda link, payload: {"error": "quota"})
+    check(findable_stopped == "Google was not asked about every page: quota", "search: when the bridge refuses, the run says so and goes on")
+    check(findable.check("alpha") == 1 and findable.check("beta") == 0 and findable.check("nobody") == 2,
+          "search: `findable.py check NAME` is a gate: 1 when a page of the project cannot be found")
+    check(findable.tell_indexnow("me.github.io", "k", ["https://me.github.io/a/"], lambda url, body: 0) == {"told": 0, "door": "", "closed": list(findable.INDEXNOW_DOORS)}
+          and findable.tell_indexnow("me.github.io", "k", [], findable_post)["told"] == 0,
+          "search: when every door is closed nothing is marked as told")
+    findable.SECRETS_FILE.write_text(json.dumps({"search_console": {"bridge_url": "http://plain.example/x", "token": "t"}}), encoding="utf-8")
+    findable_plain = findable.bridge()
+    findable.SECRETS_FILE.write_text(json.dumps({"search_console": {"bridge_url": "https://script.example/exec", "token": "t"}}), encoding="utf-8")
+    check(findable_plain is None and findable.bridge() == {"url": "https://script.example/exec", "token": "t"},
+          "search: the bridge is used only over https and only with its token")
+finally:
+    findable.DATA_DIR, findable.STATUS_FILE, findable.STATE_FILE, findable.CONFIG_FILE, findable.SECRETS_FILE = findable_real
+    shutil.rmtree(findable_home, ignore_errors=True)
+import showcase as findable_showcase
+
+findable_subject = gh.RepoFacts(name="alpha", description="Finds the page you lost, in every browser you use, without an account.",
+                                html_url="https://github.com/me/alpha", homepage="", topics=[], language="Python", pushed_at="", license="MIT")
+findable_watch_page = findable_showcase.page([findable_subject], "me")
+findable_watch_title = findable_watch_page.split("<title>")[1].split("</title>")[0]
+check(findable_watch_title.startswith("Alpha: ") and len(findable_watch_title) <= 70 and '<meta name="description" content="' in findable_watch_page
+      and "<h1>Alpha</h1>" in findable_watch_page,
+      f"search: a watch page's title says what the project is, and it has a description ({findable_watch_title})")
+check(findable_showcase.short_lead("My public brain: work I can show, published from a private Cairn brain", 61) == "My public brain: work I can show"
+      and findable_showcase.short_lead("Walks new engineers through clunky work software (PLM, SRM, ERP), click by click", 61) == "Walks new engineers through clunky work software"
+      and findable_showcase.short_lead("Reads the manual for you and answers from it with the page number", 40) == "Reads the manual for you and answers"
+      and findable_showcase.short_lead("Keeps an old computer quick.", 60) == "Keeps an old computer quick",
+      "search: a title is cut where a clause ends, or between words, never on a word that leaves the reader hanging")
+findable_page_source = (Path(__file__).parent / "dashboard.html").read_text(encoding="utf-8")
+findable_hub_source = (Path(__file__).parent / "hub.py").read_text(encoding="utf-8")
+check('<button role="tab" data-tab="search" hidden>Search</button>' in findable_page_source and '<section id="search" hidden></section>' in findable_page_source
+      and "renderSearch(data);" in findable_page_source and 'moduleTab("search", Boolean(s && s.installed));' in findable_page_source
+      and 'actionButton("findable_run_now", "Check now", true)' in findable_page_source and 'search: "search"' in findable_page_source
+      and '("findable", findable_section)' in findable_hub_source and 'findable_todo(sections.get("findable"))' in findable_hub_source
+      and '"findable_run_now"' in findable_hub_source,
+      "search: the dashboard has a Search page with Check now, shown only where the check ran, and To do opens it")
+check("data/findable/" in (Path(__file__).parent / ".gitignore").read_text(encoding="utf-8").split(),
+      "search: what the check found stays out of the repository")
+
 print("\nALL PASSED" if not failures else f"\n{len(failures)} FAILED")
 sys.exit(1 if failures else 0)

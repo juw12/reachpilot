@@ -48,6 +48,10 @@ launch_auto.log
 shorts_private.json
 data/shorts/
 
+# Search: what the daily check of every project page found, and what was told to whom (findable.py)
+data/findable/
+findable.log
+
 # Replies: what people wrote on the platforms and what was answered (replies.py)
 data/replies/
 replies.log
