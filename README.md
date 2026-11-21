@@ -415,6 +415,10 @@ bot check are never automated; they stay by-hand steps. The author's own setup (
 14 projects: 20 launch sites, 15 MCP directories, 10 awesome lists, 3 skills directories, 3 game portals, a code wiki
 and a language index.
 
+The action `podcast:disclose` (also from the phone) voices again the published episodes whose sign-off does not say
+the voices are AI: it brings the podcast module up to date when no episode is being built, then starts the module's
+own `python podcast.py disclose` in the background.
+
 When the podcast module ships `promotion.py`, a **Podcast** tab tracks its promotion: which directories list the show
 (with Mark as submitted for the ones that can't be checked), downloads per week and per episode from OP3, series compared,
 where each episode was announced and the follower counts on those channels. The tab only reads files; when the download
