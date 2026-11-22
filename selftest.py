@@ -3369,6 +3369,68 @@ check("function autoApplyCard" in jobs_page and "autoApplyCard(j.auto_apply)" in
 check("digest.done" in jobs_page and "From the Big tech mail" in jobs_page,
       "dashboard: the Auto-apply card lists the settled jobs of the Big tech mail (digest.done)")
 
+# Jobs tab, "People you know" card (hub.referrals_view): who I know at the companies I apply to, from the file the
+# jobs module writes after every search. Offline, made-up people and companies, a file in a temporary folder.
+REFERRALS_FILE = {
+    "state": "ok", "made": "2030-01-02 07:41", "export_date": "2030-01-01", "connections": 12, "with_employer": 9,
+    "companies": [
+        {"company": "Northwind", "people": [
+            {"name": "Ana Example", "position": "Packaging Engineer", "url": "https://www.linkedin.com/in/ana-example"},
+            {"name": "Budi <b>Sample</b>", "position": "", "url": "javascript:alert(1)"},
+            {"name": "  ", "position": "nobody"}, "not a person"],
+         "jobs": [{"title": "Mechanical Engineer", "location": "Springfield", "score": 87, "status": "New"}, "not a job"]},
+        {"company": "Contoso", "people": [], "jobs": [{"title": "Test Engineer", "score": 70}]},
+        {"company": "Initech", "people": [{"name": "Citra Person", "position": "Process Engineer", "url": ""}], "jobs": []},
+        "not a company",
+    ],
+}
+with tempfile.TemporaryDirectory() as referrals_tmp:
+    referrals_folder = Path(referrals_tmp)
+    check(hub.referrals_view(referrals_folder) is None, "hub referrals: no file, no card")
+    (referrals_folder / "referrals.json").write_text("{broken", encoding="utf-8")
+    check(hub.referrals_view(referrals_folder) is None, "hub referrals: a file that cannot be read gives no card")
+    (referrals_folder / "referrals.json").write_text("[1, 2]", encoding="utf-8")
+    check(hub.referrals_view(referrals_folder) is None, "hub referrals: a file that is not the list gives no card")
+    (referrals_folder / "referrals.json").write_text(json.dumps(REFERRALS_FILE), encoding="utf-8")
+    referrals_card = hub.referrals_view(referrals_folder)
+    check(referrals_card["state"] == "ok" and referrals_card["connections"] == 12 and referrals_card["with_employer"] == 9
+          and referrals_card["export_date"] == "2030-01-01" and referrals_card["names_on_pc"] is False,
+          "hub referrals: the state, the counts and the day of the export are passed on")
+    check([entry["company"] for entry in referrals_card["companies"]] == ["Northwind", "Initech"],
+          "hub referrals: a company without a known person is left out, and so is an entry that is not a company")
+    northwind = referrals_card["companies"][0]
+    check([person["name"] for person in northwind["people"]] == ["Ana Example", "Budi <b>Sample</b>"] and northwind["known"] == 2,
+          "hub referrals: a person without a name is left out; the count says how many are known")
+    check(northwind["people"][0]["url"] == "https://www.linkedin.com/in/ana-example" and northwind["people"][1]["url"] == "",
+          "hub referrals: only a LinkedIn address is kept as a link")
+    check(northwind["jobs"] == [{"title": "Mechanical Engineer", "location": "Springfield", "score": 87, "status": "New"}],
+          "hub referrals: the open jobs at that company are listed, and an entry that is not a job is left out")
+    (referrals_folder / "referrals.json").write_text(json.dumps({"state": "no_export", "how": "Get a copy of your data"}), encoding="utf-8")
+    waiting_card = hub.referrals_view(referrals_folder)
+    check(waiting_card["state"] == "no_export" and waiting_card["how"] == "Get a copy of your data" and waiting_card["companies"] == [],
+          "hub referrals: without an export the card says how to get one")
+    import phone_snapshot as referrals_phone_module
+    referrals_phone = referrals_phone_module.without_referral_names({"hub": {"jobs": {"referrals": json.loads(json.dumps(referrals_card))}}})
+    phone_card = referrals_phone["hub"]["jobs"]["referrals"]
+    check(phone_card["names_on_pc"] is True and all(entry["people"] == [] for entry in phone_card["companies"])
+          and [entry["known"] for entry in phone_card["companies"]] == [2, 1]
+          and "Ana Example" not in json.dumps(referrals_phone) and "linkedin.com/in/" not in json.dumps(referrals_phone)
+          and phone_card["companies"][0]["jobs"] == northwind["jobs"],
+          "phone snapshot: the People you know card keeps the companies, the counts and the jobs; no name, title or profile link leaves the PC")
+    check(referrals_phone_module.without_referral_names({}) == {}
+          and referrals_phone_module.without_referral_names({"hub": {"jobs": {"installed": False}}}) == {"hub": {"jobs": {"installed": False}}}
+          and referrals_phone_module.without_referral_names({"hub": {"jobs": {"referrals": None}}}) == {"hub": {"jobs": {"referrals": None}}},
+          "phone snapshot: no People you know card, nothing to change")
+referrals_js = jobs_page.split("function referralsCard(r) {")[1].split("\nfunction renderJobs(d) {")[0]
+check("function referralsCard" in jobs_page and "${referralsCard(j.referrals)}" in jobs_page
+      and '"referrals": referrals' in (Path(__file__).parent / "hub.py").read_text(encoding="utf-8"),
+      "dashboard: the Jobs tab shows the People you know card")
+check("esc(p.name)" in referrals_js and "esc(p.position)" in referrals_js and "esc(entry.company)" in referrals_js
+      and "esc(item.title)" in referrals_js and "link(p.url, p.name)" in referrals_js and "r.names_on_pc" in referrals_js,
+      "dashboard: every word of the People you know card is escaped, and on the phone the names are not drawn")
+check("without_referral_names(" in (Path(__file__).parent / "phone_snapshot.py").read_text(encoding="utf-8").split("def render(")[1],
+      "phone snapshot: the names are taken out when the snapshot is made")
+
 # patent desk (patent_desk.py): readiness, stages, the dates after a filing, history, the package, the daily run.
 # Offline, made-up projects, no PDF (Edge is not on the CI runner) and no folder is opened.
 import patent_desk  # noqa: E402

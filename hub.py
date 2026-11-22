@@ -290,6 +290,48 @@ def auto_apply_view(folder: Path) -> dict | None:
     }
 
 
+def referrals_view(folder: Path) -> dict | None:
+    """Who I already know at the companies I am applying to, read from referrals.json. The jobs module writes
+    that file after every job search (modules/jobs/referrals.py), from LinkedIn's own export of my connections.
+    None where the file is missing, so the Jobs tab has no such card there. The names are other people's:
+    they are shown on this PC, and the phone snapshot carries the counts only (phone_snapshot.without_referral_names)."""
+    try:
+        data = json.loads((folder / "referrals.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+
+    def number(value) -> int:
+        return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+    companies = []
+    for entry in data.get("companies") or []:
+        if not isinstance(entry, dict):
+            continue
+        people = []
+        for person in entry.get("people") or []:
+            if isinstance(person, dict) and str(person.get("name") or "").strip():
+                url = str(person.get("url") or "")
+                people.append({"name": str(person["name"]).strip()[:80], "position": str(person.get("position") or "").strip()[:120],
+                               "url": url if url.startswith("https://www.linkedin.com/") else ""})
+        jobs = [{"title": str(job.get("title") or "")[:120], "location": str(job.get("location") or "")[:80],
+                 "score": number(job.get("score")), "status": str(job.get("status") or "")[:20]}
+                for job in entry.get("jobs") or [] if isinstance(job, dict)]
+        if people:
+            companies.append({"company": str(entry.get("company") or "")[:60], "people": people, "known": len(people), "jobs": jobs[:8]})
+    return {
+        "state": str(data.get("state") or ""),
+        "made": str(data.get("made") or ""),
+        "export_date": str(data.get("export_date") or ""),
+        "connections": number(data.get("connections")),
+        "with_employer": number(data.get("with_employer")),
+        "how": str(data.get("how") or "")[:400],
+        "companies": companies[:40],
+        "names_on_pc": False,
+    }
+
+
 def jobs_section() -> dict:
     tracker = JOBS / "jobs_tracker.xlsx"
     if not tracker.exists():
@@ -378,6 +420,10 @@ def jobs_section() -> dict:
             auto_apply = auto_apply_view(JOBS)
         except Exception:
             auto_apply = None
+        try:  # and so is the list of people I know at these companies
+            referrals = referrals_view(JOBS)
+        except Exception:
+            referrals = None
         found_by_day = count_by_day(as_date(row.get("First seen")) for row in rows)
         applied_by_day = count_by_day(as_date(row.get("Applied on")) for row in applied)
         return {
@@ -403,6 +449,7 @@ def jobs_section() -> dict:
             "fill_me": fill_me,
             "tracker": str(tracker),
             "auto_apply": auto_apply,
+            "referrals": referrals,
         }
 
     return cached(f"jobs:{tracker.stat().st_mtime}", 60, build)

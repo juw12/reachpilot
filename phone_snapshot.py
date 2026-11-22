@@ -162,11 +162,26 @@ def without_submission_details(data: dict) -> dict:
     return data
 
 
+def without_referral_names(data: dict) -> dict:
+    """The "People you know" card on the phone: companies, how many people, and the open jobs. Who they are
+    (name, job title, profile link) is other people's data from an export of their profiles and stays on this PC."""
+    hub = data.get("hub") if isinstance(data.get("hub"), dict) else {}
+    jobs = hub.get("jobs")
+    card = jobs.get("referrals") if isinstance(jobs, dict) else None
+    if isinstance(card, dict):
+        for entry in card.get("companies") or []:
+            if isinstance(entry, dict):
+                entry["known"] = len(entry.get("people") or []) or entry.get("known") or 0
+                entry["people"] = []
+        card["names_on_pc"] = True
+    return data
+
+
 def render(data: dict, page: str, built_at: str) -> str:
     page = page.replace("__RP_TOKEN__", "demo")  # "demo" also turns off the local auto-update poll
     icon = "data:image/svg+xml;base64," + base64.b64encode(ICON.read_bytes()).decode("ascii")
     page = page.replace('src="/icon.svg"', f'src="{icon}"').replace('href="/icon.svg"', f'href="{icon}"')
-    shim = SHIM % (built_at, json.dumps(without_submission_details(without_mail_text(without_local_images(data))), ensure_ascii=False).replace("</", "<\\/"),
+    shim = SHIM % (built_at, json.dumps(without_referral_names(without_submission_details(without_mail_text(without_local_images(data)))), ensure_ascii=False).replace("</", "<\\/"),
                    json.dumps(READ_ONLY))
     return page.replace("<head>", "<head>\n" + shim, 1)
 
