@@ -433,8 +433,13 @@ def run(now: datetime | None = None, fetch=_fetch, repos=None, checkout: Path | 
         host = f"{user.lower()}.github.io"
         state = _read_json(STATE_FILE) or {}
         told = state.setdefault("told", {})  # url -> {"print", "day"}
-        listed = project_pages(user, repos if repos is not None else _repos(user), checkout if have_site else None,
-                               config["extra_pages"], config["skip"])
+        found = repos if repos is not None else _repos(user)
+        if not found:
+            # No answer from GitHub (gh not on this task's PATH, not signed in, no network) is not "no repos": a
+            # sitemap written now would lose every project's own site. On 22 Nov 2026 it lost 47 of 158 pages so.
+            return (f"GitHub gave no list of {user}'s repos (gh not found by this task, not signed in, or no network): "
+                    "nothing done, the sitemap is left as it is")
+        listed = project_pages(user, found, checkout if have_site else None, config["extra_pages"], config["skip"])
 
         projects, rows, to_tell = [], [], []
         for name, pages in listed.items():
