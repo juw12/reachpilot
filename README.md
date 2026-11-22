@@ -25,6 +25,15 @@
 **Safe by design:** official Share on LinkedIn API only (no scraping, no browser bots, no auto-likes), every number in a
 post must exist in your repo, and everything (tokens, history, drafts) stays on your PC in git-ignored files.
 
+## Get it on your device
+
+- **Windows:** [`ReachPilot-Windows-Setup.exe`](https://github.com/juw12/reachpilot/releases/download/desktop/ReachPilot-Windows-Setup.exe) (no admin needed; if Windows says it protected your PC, choose *More info → Run anyway*), or without installing [`ReachPilot-Windows-Portable.zip`](https://github.com/juw12/reachpilot/releases/download/desktop/ReachPilot-Windows-Portable.zip).
+- **Mac:** [`ReachPilot-macOS-AppleSilicon.dmg`](https://github.com/juw12/reachpilot/releases/download/desktop/ReachPilot-macOS-AppleSilicon.dmg) (M1 and newer) or [`ReachPilot-macOS-Intel.dmg`](https://github.com/juw12/reachpilot/releases/download/desktop/ReachPilot-macOS-Intel.dmg). The first time, macOS blocks it because it is not notarized: **System Settings → Privacy & Security → Open Anyway**.
+- **Android:** [`ReachPilot-android.apk`](https://github.com/juw12/reachpilot/releases/download/android/ReachPilot-android.apk): open the file on the phone and allow your browser to install apps once.
+- **iPhone:** open https://juw12.github.io/reachpilot/ in Safari, tap Share, then **Add to Home Screen**.
+
+The Windows, Mac and Android apps open ReachPilot's web page in a window of its own ([`desktop/`](desktop/README.md), [`android/`](android/README.md)) and change with it. That page is a demo with made-up data; ReachPilot's work is done by the program on a PC (Setup, below). Each build is opened on GitHub's machines before it is published: on Windows and on a Mac the page loads, the app starts and can store data; on an Android emulator it installs, opens and stays up. They are not code-signed or notarised, and no real phone or PC has run them yet.
+
 ## Why
 
 I build a lot of side projects. Writing a LinkedIn post for each one, finding a screenshot, picking a time, then doing
