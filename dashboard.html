@@ -1703,6 +1703,37 @@ function autoApplyCard(a) {
     </div>`;
 }
 
+// Who I already know at the companies I am applying to (hub.referrals_view reads referrals.json, which the jobs
+// module writes after every search from LinkedIn's own export). Every application the automation sends is a cold
+// one; this shows where a door exists. Nothing is sent to anyone from here. Not drawn where the file is missing.
+// The names come from an export of other people's profiles, so every word goes through esc(), and on the phone
+// the names are left out (names_on_pc).
+function referralsCard(r) {
+  if (!r || !r.state) return "";
+  const head = `<h3>People you know</h3>`;
+  if (r.state === "no_export") {
+    return `<div class="card">${head}
+      <p class="hint">Every application sent from here is a cold one. This card lists who you already know at these companies, once LinkedIn's export of your connections is in the Downloads folder.</p>
+      <p>${esc(r.how || "")}</p></div>`;
+  }
+  if (r.state === "no_employers") {
+    return `<div class="card">${head}
+      <p>The LinkedIn export of ${esc(niceDate(r.export_date))} lists ${num(r.connections)} people and no employer for any of them, so there is nothing to match. LinkedIn said its export would leave employers out from December 2026.</p></div>`;
+  }
+  const companies = r.companies || [];
+  const withJobs = companies.filter((entry) => (entry.jobs || []).length).length;
+  const person = (p) => `${p.url ? link(p.url, p.name) : `<b>${esc(p.name)}</b>`}${p.position ? ` <span class="hint">${esc(p.position)}</span>` : ""}`;
+  const job = (item) => `${num(item.score)} · ${esc(item.title)}${item.location ? ` · ${esc(item.location)}` : ""}${item.status ? ` · ${esc(item.status)}` : ""}`;
+  return `<div class="card">${head}
+      <p class="hint">Who you already know at the companies you are applying to, from LinkedIn's export of ${esc(niceDate(r.export_date))} (${num(r.with_employer)} connections with an employer). Brought up to date after every job search. Nothing is sent to anyone: who you ask is yours.</p>
+      ${companies.length ? `<p><b>${num(companies.length)}</b> ${companies.length === 1 ? "company" : "companies"} with someone you know · <b>${num(withJobs)}</b> with an open job</p>
+      ${companies.map((entry) => `<details ${(entry.jobs || []).length ? "open" : ""}><summary><b>${esc(entry.company)}</b> · ${num(entry.known)} ${entry.known === 1 ? "person" : "people"}${(entry.jobs || []).length ? ` · ${num(entry.jobs.length)} open ${entry.jobs.length === 1 ? "job" : "jobs"}` : ""}</summary>
+        ${r.names_on_pc ? `<p class="hint">The names are on your PC.</p>` : `<p>${(entry.people || []).map(person).join("<br>")}</p>`}
+        ${(entry.jobs || []).length ? `<p class="hint">${entry.jobs.map(job).join("<br>")}</p>` : `<p class="hint">No open job in the tracker right now.</p>`}
+      </details>`).join("")}` : `<div class="empty">Nobody in the export works at a company you are applying to.</div>`}
+    </div>`;
+}
+
 function renderJobs(d) {
   const j = d.hub.jobs;
   const section = document.getElementById("jobs");
@@ -1732,6 +1763,7 @@ function renderJobs(d) {
       <div class="actions">${actionButton("jobs_apply", "Start apply session")}${actionButton("jobs_search_now", "Search for new jobs now", true)}${actionButton("jobs_open_tracker", "Open tracker (Excel)", true)}${actionButton("open_answers", "Edit my answers", true)}</div>
     </div>
     ${autoApplyCard(j.auto_apply)}
+    ${referralsCard(j.referrals)}
     ${j.needs_you.length ? `<div class="card"><h3>Stopped and waiting for you</h3><div class="scroll" tabindex="0" role="region" aria-label="Scrollable table"><table>
       <thead><tr><th class="num">Score</th><th>Job</th><th>Location</th><th>Site</th><th></th></tr></thead><tbody>${j.needs_you.map(row).join("")}</tbody></table></div></div>` : ""}
     <div class="card"><h3>Today's list</h3>
