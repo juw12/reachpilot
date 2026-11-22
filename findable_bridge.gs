@@ -10,8 +10,17 @@
  *        "oauthScopes": ["https://www.googleapis.com/auth/webmasters",
  *                        "https://www.googleapis.com/auth/script.external_request"]
  *   2. Project Settings > Script Properties: TOKEN = a long random text of your own.
- *   3. Deploy > New deployment > Web app, "Execute as: Me", "Who has access: Anyone". Approve the sign-in.
- *   4. In ReachPilot's secrets.json: "search_console": {"bridge_url": "<the /exec address>", "token": "<TOKEN>"}
+ *   3. A Google Cloud project of your own (console.cloud.google.com). A new script sits in a hidden project in
+ *      which the Search Console API is off, and the bridge then answers "Search Console answered 403":
+ *        a. create a project; APIs & Services > Library > "Google Search Console API" > Enable;
+ *        b. Google Auth Platform > Get started: an app name, your e-mail, audience "External";
+ *        c. Branding: a home page, a privacy policy link (ReachPilot's is docs/privacy.html) and their domain
+ *           under Authorized domains; then Audience > Publish app. Left in "Testing", the approval of step 4
+ *           ends after 7 days;
+ *        d. copy the project number (IAM & Admin > Settings) into the script: Project Settings > Change project.
+ *   4. Deploy > New deployment > Web app, "Execute as: Me", "Who has access: Anyone". Approve the sign-in
+ *      (Google says it has not verified the app: it is yours, so "Advanced" and go on).
+ *   5. In ReachPilot's secrets.json: "search_console": {"bridge_url": "<the /exec address>", "token": "<TOKEN>"}
  */
 function doPost(event) {
   const answer = (data) => ContentService.createTextOutput(JSON.stringify(data)).setMimeType(ContentService.MimeType.JSON);

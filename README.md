@@ -617,8 +617,9 @@ every page your projects have (the site each repo names, its landing page and it
 - asks Google, where the Search Console bridge is connected, whether each page is in its index (40 pages a run,
   each answer kept three days) and hands it the sitemap. Google has no door without a sign-in, so this is the one
   step that needs you once: [`findable_bridge.gs`](findable_bridge.gs) is a small Apps Script that runs as you and
-  answers only those two questions; its four steps are at the top of the file, its address and token go in
-  `secrets.json` under `"search_console"`. Until then the page says "not connected" and To do carries the line.
+  answers only those two questions; its five steps are at the top of the file (one of them is a Google Cloud
+  project of your own with the Search Console API on), its address and token go in `secrets.json` under
+  `"search_console"`. What it reads and where the answers go: [privacy](https://juw12.github.io/reachpilot/privacy.html). Until then the page says "not connected" and To do carries the line.
 
 `python findable.py show` prints the page, `python findable.py check NAME` exits 1 when a page of that project
 cannot be found (a gate for other tools). Nothing here posts anywhere or touches a project's own repo, and when a
