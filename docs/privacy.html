@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ReachPilot privacy: what the Google Search Console connection reads</title>
+<meta name="description" content="ReachPilot runs on your own computer. Its optional Google Search Console connection is a script in your own Google account; this page lists what it reads, where the answers go and how to remove it.">
+<link rel="canonical" href="https://juw12.github.io/reachpilot/privacy.html">
+<meta name="theme-color" content="#f4f1ea">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="icon" href="favicon.ico" sizes="16x16 32x32 48x48">
+<meta property="og:title" content="ReachPilot privacy">
+<meta property="og:description" content="What ReachPilot's optional Google Search Console connection reads, where the answers go and how to remove it.">
+<meta property="og:url" content="https://juw12.github.io/reachpilot/privacy.html">
+<meta property="og:type" content="website">
+<style>
+@font-face {
+  font-family: "Instrument Serif";
+  src: url("fonts/instrument-serif-normal.woff2") format("woff2");
+  font-display: swap;
+}
+@font-face {
+  font-family: "Geist";
+  src: url("fonts/geist-normal.woff2") format("woff2");
+  font-weight: 100 900;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Geist Mono";
+  src: url("fonts/geist-mono-normal.woff2") format("woff2");
+  font-weight: 100 900;
+  font-display: swap;
+}
+:root {
+  --bg: #f4f1ea;
+  --ink: #1b1a17;
+  --ink-2: #4a463e;
+  --muted: #5f5a52;
+  --line: #e1dbcf;
+  --sunken: #ebe6db;
+  --blue: #0a5aa8;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 15.5px/1.6 "Geist", "Segoe UI", system-ui, sans-serif;
+}
+main {
+  max-width: 680px;
+  margin: 0 auto;
+  padding: 56px 24px 72px;
+}
+.label {
+  font: 12px "Geist Mono", Consolas, monospace;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--blue);
+}
+h1 {
+  font: 400 44px/1.1 "Instrument Serif", Georgia, serif;
+  margin: 8px 0 12px;
+}
+.lead {
+  color: var(--ink-2);
+  margin: 0 0 32px;
+}
+h2 {
+  font: 600 14px "Geist", "Segoe UI", system-ui, sans-serif;
+  border-bottom: 1px solid var(--ink);
+  padding-bottom: 6px;
+  margin: 36px 0 12px;
+}
+p,
+ul {
+  margin: 0 0 12px;
+}
+ul {
+  padding-left: 20px;
+}
+li {
+  margin-bottom: 6px;
+}
+a {
+  color: var(--blue);
+}
+code {
+  font: 13px "Geist Mono", Consolas, monospace;
+  background: var(--sunken);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+footer {
+  margin-top: 48px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font: 12px "Geist Mono", Consolas, monospace;
+}
+@media (max-width: 560px) {
+  h1 {
+    font-size: 34px;
+  }
+}
+</style>
+</head>
+<body>
+<main>
+  <div class="label">ReachPilot</div>
+  <h1>Privacy</h1>
+  <p class="lead">ReachPilot is a program you run on your own computer. There is no ReachPilot server and no
+  ReachPilot account, so its author receives nothing from your copy: no posts, no statistics, no logins.</p>
+
+  <h2>What stays on your computer</h2>
+  <p>Your settings, drafts, posting history and the logins for the platforms you connect are kept in files next to
+  the program. Those files are excluded from git, so they are not published when you push your copy.</p>
+
+  <h2>The Google Search Console connection ("ReachPilot Search")</h2>
+  <p>This connection is optional. It is a short Google Apps Script,
+  <a href="https://github.com/juw12/reachpilot/blob/main/findable_bridge.gs"><code>findable_bridge.gs</code></a>,
+  that you paste into your own Google account and approve yourself. It asks for two permissions:</p>
+  <ul>
+    <li><strong>View and manage Search Console data for your verified sites.</strong> Used for two things only: to
+    ask Google whether a page of yours is in its index, and to submit the address of your sitemap.</li>
+    <li><strong>Connect to an external service.</strong> Used only to call Google's own Search Console service for
+    the two things above.</li>
+  </ul>
+  <p>The script answers only requests that carry a password you set, and it returns each answer to the ReachPilot
+  running on your computer, which shows it on the Search page of your dashboard. The script stores nothing. The
+  answers are not sent to the author or to anyone else, not sold, not used for advertising and not used to train
+  any model.</p>
+  <p>ReachPilot's use of information received from Google APIs adheres to the
+  <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data
+  Policy</a>, including the Limited Use requirements.</p>
+
+  <h2>Removing it</h2>
+  <ul>
+    <li>Take back the permission at
+    <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a>.</li>
+    <li>Delete the script at <a href="https://script.google.com/home">script.google.com</a>.</li>
+    <li>Delete <code>search_console</code> from <code>secrets.json</code> in your ReachPilot folder.</li>
+  </ul>
+
+  <h2>Questions</h2>
+  <p>Open an issue at <a href="https://github.com/juw12/reachpilot/issues">github.com/juw12/reachpilot</a>.</p>
+
+  <footer>Last changed 22 November 2026 · <a href="./">ReachPilot demo</a> ·
+  <a href="https://github.com/juw12/reachpilot">Source</a></footer>
+</main>
+</body>
+</html>
