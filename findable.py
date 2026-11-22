@@ -50,6 +50,7 @@ PAGES_CHECKOUT = CODE_DIR / ".pages"  # the same local copy of the Pages site th
 LOG_FILE = CODE_DIR / "findable.log"
 TASK_PATH = "\\ReachPilot\\"
 TASK_NAME = "Search"
+TASK_MINUTES = 90  # the first pass on an office network took 20 minutes for 164 pages (22 Nov 2026); 30 was too close
 
 AGENT = "ReachPilot (https://github.com/juw12/reachpilot)"
 PAGE_SECONDS = 20
@@ -564,14 +565,14 @@ def install_task() -> None:
     """Once a day, hidden, catching up if the PC was off."""
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     if not machine.IS_WINDOWS:  # a Mac: the same schedule as a launchd agent
-        print(machine.install_task(TASK_NAME, [sys.executable, str(Path(__file__).resolve())], CODE_DIR, daily_at="06:40", limit_minutes=30))
+        print(machine.install_task(TASK_NAME, [sys.executable, str(Path(__file__).resolve())], CODE_DIR, daily_at="06:40", limit_minutes=TASK_MINUTES))
         return
     pythonw = Path(sys.executable).with_name("pythonw.exe")
     runner = pythonw if pythonw.exists() else Path(sys.executable)
     script = f"""
 $action = New-ScheduledTaskAction -Execute '{runner}' -Argument '"{Path(__file__).resolve()}"' -WorkingDirectory '{CODE_DIR}'
 $daily = New-ScheduledTaskTrigger -Daily -At 06:40
-$settings = New-ScheduledTaskSettingsSet -Priority 4 -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 30) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+$settings = New-ScheduledTaskSettingsSet -Priority 4 -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes {TASK_MINUTES}) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
 Register-ScheduledTask -TaskPath '{TASK_PATH}' -TaskName '{TASK_NAME}' -Action $action -Trigger $daily -Settings $settings `
     -Description 'Search: check that search engines can find every project page, keep the sitemap, tell Bing and Yandex.' -Force | Out-Null
 Get-ScheduledTask -TaskPath '{TASK_PATH}' -TaskName '{TASK_NAME}' | Select-Object TaskName, State
