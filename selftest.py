@@ -6101,7 +6101,7 @@ with tempfile.TemporaryDirectory() as mac_dir:
     with mock.patch.object(machine, "IS_MAC", True), mock.patch.object(machine, "AGENTS_DIR", mac_agents), \
          mock.patch.object(machine, "TASK_NOTES", mac_notes), mock.patch.object(machine, "_launchctl", side_effect=fake_launchctl), \
          mock.patch.object(machine, "_domain", return_value="gui/501"), \
-         mock.patch.dict(machine.os.environ, {"PATH": "/opt/homebrew/bin:/usr/bin"}):
+         mock.patch.object(machine, "task_path", return_value="/opt/homebrew/bin:/usr/bin"):
         before_install = machine.task_info("LinkedIn posts")
         installed_line = machine.install_task("LinkedIn posts", ["python3", "autopilot.py", "tick"], "/Users/me/reachpilot",
                                               every_minutes=30, at_login=True, limit_minutes=20)
@@ -6128,6 +6128,18 @@ with tempfile.TemporaryDirectory() as mac_dir:
           and launchctl_calls[:2] == [("bootout", "gui/501/io.github.reachpilot.linkedin-posts"), ("bootstrap", "gui/501", str(agent_file))]
           and "every 30 minutes and at sign-in" in installed_line,
           "mac tasks: installing writes a launchd agent that runs every 30 minutes and at sign-in, with the PATH that finds gh, and loads it")
+    tool_folder = Path(tempfile.mkdtemp())
+    (tool_folder / "gh").write_text("#!/bin/sh\n", encoding="utf-8")
+    (tool_folder / "gh").chmod(0o755)
+    empty_folder = Path(tempfile.mkdtemp())
+    with mock.patch.dict(machine.os.environ, {"PATH": str(empty_folder)}), mock.patch.object(machine, "TOOL_FOLDERS", (str(tool_folder),)):
+        short_path = machine.task_path()
+    with mock.patch.dict(machine.os.environ, {"PATH": str(tool_folder)}), mock.patch.object(machine, "TOOL_FOLDERS", ("/nowhere",)):
+        full_path = machine.task_path()
+    with mock.patch.dict(machine.os.environ, {"PATH": str(empty_folder)}), mock.patch.object(machine, "TOOL_FOLDERS", ("/nowhere",)):
+        no_gh_path = machine.task_path()
+    check(short_path == f"{tool_folder}{os.pathsep}{empty_folder}" and full_path == str(tool_folder) and no_gh_path == str(empty_folder),
+          "mac tasks: a task installed from a shell whose PATH does not find gh gets the folder that holds gh in front; a PATH that finds it is kept as it is")
     check(daily["StartCalendarInterval"] == {"Hour": 9, "Minute": 0} and "StartInterval" not in daily and daily["RunAtLoad"] is False,
           "mac tasks: a daily task runs at its hour")
     check(never_ran == {"name": "LinkedIn posts", "installed": True, "state": "Ready", "last_run": "", "next_run": "",
@@ -6523,6 +6535,13 @@ try:
                             push=lambda checkout, files, message: findable_pushes.append((sorted(files), message)) or "", post=findable_post,
                             prepare=lambda checkout: True, **more)
 
+    findable_site_before = sorted(path.name for path in findable_site.iterdir())
+    findable_none = findable.run(now=findable_time.datetime(2026, 11, 22, 6, 40), fetch=findable_fetch, repos=[], checkout=findable_site,
+                                 push=lambda checkout, files, message: findable_pushes.append((sorted(files), message)) or "", post=findable_post,
+                                 prepare=lambda checkout: True)
+    check("nothing done" in findable_none and "gave no list" in findable_none and findable_pushes == [] and findable_posts == []
+          and sorted(path.name for path in findable_site.iterdir()) == findable_site_before and not findable.STATUS_FILE.exists(),
+          "search: when GitHub gives no list of repos the pass stops: no sitemap is written or pushed, nothing is told, the last status stays")
     findable_first = findable_run()
     findable_map = (findable_site / "sitemap.xml").read_text(encoding="utf-8")
     findable_listed = sorted(findable_map.split("<loc>")[index].split("</loc>")[0] for index in range(1, findable_map.count("<loc>") + 1))

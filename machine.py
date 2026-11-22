@@ -178,6 +178,24 @@ def task_plist_path(name: str) -> Path:
     return AGENTS_DIR / f"{task_label(name)}.plist"
 
 
+TOOL_FOLDERS = ("/opt/homebrew/bin", "/usr/local/bin")  # where gh and git are on a Mac when PATH does not say
+
+
+def task_path() -> str:
+    """PATH for a task: the installing terminal's, plus the folder that holds gh when that PATH does not find it.
+
+    An AI app's tool shell can have the same short PATH as launchd. A task installed from it found no gh, GitHub
+    then gave it no list of repos, and the Search task wrote a sitemap without any project's own site.
+    """
+    path = os.environ.get("PATH") or "/usr/bin:/bin:/usr/sbin:/sbin"
+    if shutil.which("gh", path=path):
+        return path
+    for folder in TOOL_FOLDERS:
+        if (Path(folder) / "gh").is_file():
+            return f"{folder}{os.pathsep}{path}"
+    return path
+
+
 def task_plist(name: str, command: list[str], cwd: Path, every_minutes: int = 0, daily_at: str = "",
                at_login: bool = False, limit_minutes: int = 30) -> dict:
     """The launchd agent for one task: command every every_minutes, or once a day at daily_at ("09:00").
@@ -191,7 +209,7 @@ def task_plist(name: str, command: list[str], cwd: Path, every_minutes: int = 0,
         "ProgramArguments": [sys.executable, str(CODE_DIR / "machine.py"), "run", task_slug(name), str(limit_minutes),
                              *[str(part) for part in command]],
         "WorkingDirectory": str(cwd),
-        "EnvironmentVariables": {"PATH": os.environ.get("PATH", "/usr/bin:/bin:/usr/sbin:/sbin"), "PYTHONUTF8": "1"},
+        "EnvironmentVariables": {"PATH": task_path(), "PYTHONUTF8": "1"},
         "ProcessType": "Standard",  # "Background" is throttled; a throttled run did not finish in time on Windows either
         "RunAtLoad": bool(at_login),
     }
