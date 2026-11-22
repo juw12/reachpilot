@@ -612,6 +612,9 @@ every page your projects have (the site each repo names, its landing page and it
   `"not_for_search"` may say `noindex` on purpose;
 - keeps one `sitemap.xml` for the whole Pages site with every page that may be found, named in `robots.txt`, and
   pushes it only when it changed;
+- keeps `watch/index.html` on the Pages site, a page that links to every watch page. No other page links to a
+  watch page, and a search engine finds a page mostly through a link to it. A project under `"not_for_search"` is
+  not named on it;
 - tells the IndexNow search engines (Bing, Yandex and the ones they pass it on to) which pages are new or changed,
   through the first of three doors the network leaves open. No account is needed: the site shows its own key file;
 - asks Google, where the Search Console bridge is connected, whether each page is in its index (40 pages a run,

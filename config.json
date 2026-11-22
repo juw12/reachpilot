@@ -94,7 +94,8 @@
   },
   "findable": {
     "extra_pages": [
-      "https://juw12.github.io/brain/"
+      "https://juw12.github.io/brain/",
+      "https://juw12.github.io/p/"
     ],
     "not_for_search": [
       "morrow",

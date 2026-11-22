@@ -8,12 +8,15 @@ page()           that page: phone-first, self-contained, written from repo facts
 publish_watch()  the same page with the finished video on top, published at https://<user>.github.io/watch/<name>/ :
                  one link that plays the demo. Outreach e-mails link to it and creators who covered the project are
                  credited on it.
+watch_list()     https://<user>.github.io/watch/ : one card per watch page. No other page links to a watch page, and
+                 a search engine finds a page mostly through a link to it. The Search task (findable.py) keeps it.
 """
 from __future__ import annotations
 
 import hashlib
 import html
 import json
+import re
 import time
 import urllib.parse
 from pathlib import Path
@@ -237,6 +240,48 @@ def publish_watch(user: str, facts: RepoFacts, video_url: str, checkout: Path, l
         time.sleep(10)
     log.warning("Watch page for %s was pushed but %s is not live yet", facts.name, url)
     return ""
+
+
+def watch_list(user: str, checkout: Path, leave_out=()) -> str:
+    """watch/index.html for the Pages site: every watch page in the local copy, one card each, read from the
+    pages themselves (their heading and their description). A project named in leave_out (lower case) and a
+    page that says noindex are not listed. "" when nothing is left."""
+    cards, names = [], []
+    for index in sorted((checkout / "watch").glob("*/index.html")):
+        text = index.read_text(encoding="utf-8", errors="replace")
+        if index.parent.name.lower() in leave_out or re.search(r"<meta[^>]*\bnoindex\b", text, re.I):
+            continue
+        heading = re.search(r"<h1>(.*?)</h1>", text, re.S)
+        lead = re.search(r'<meta name="description" content="([^"]*)"', text)
+        name = heading[1].strip() if heading and heading[1].strip() else html.escape(index.parent.name)
+        folder = html.escape(urllib.parse.quote(index.parent.name), quote=True)
+        names.append(html.unescape(name))
+        said = lead[1].strip() if lead else ""
+        if said and said[-1] not in ".!?\u2026":
+            said += "."
+        cards.append(
+            f'<div class="card"><h2><a href="{folder}/">{name}</a></h2>'
+            + (f"<p>{said}</p>" if said else "")
+            + f'<p><a href="{folder}/">Watch the demo</a></p></div>'
+        )
+    if not cards:
+        return ""
+    dark, light = _palette("watch")
+    style = STYLE.replace("LIGHT_LINK", dark).replace("DARK", dark).replace("LIGHT", light)
+    count = f"{len(cards)} projects" if len(cards) > 1 else "one project"
+    address = f"https://{user.lower()}.github.io/watch/"
+    described = f"A short screen recording of each of {count} by {user}: {', '.join(names)}."
+    return (
+        '<!doctype html><html lang="en"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">'
+        f"<title>Demo videos: {count} by {html.escape(user)}, each shown in use</title>"
+        f'<meta name="description" content="{html.escape(described[:300], quote=True)}">'
+        f'<link rel="canonical" href="{html.escape(address, quote=True)}"><style>{style}</style></head><body>'
+        f'<header><p class="path">{html.escape(address.split("//", 1)[-1].rstrip("/"))}</p><h1>Demo videos</h1>'
+        f'<p class="lead">A short screen recording of each project in use, with what it does underneath.</p></header>'
+        f'<main>{"".join(cards)}'
+        f'<a class="cta" href="https://github.com/{html.escape(user, quote=True)}">See the code on GitHub</a></main></body></html>'
+    )
 
 
 def published(index_path: Path, checkout: Path) -> set[str]:

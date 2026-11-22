@@ -6526,26 +6526,33 @@ try:
     findable_first = findable_run()
     findable_map = (findable_site / "sitemap.xml").read_text(encoding="utf-8")
     findable_listed = sorted(findable_map.split("<loc>")[index].split("</loc>")[0] for index in range(1, findable_map.count("<loc>") + 1))
-    check(findable_listed == ["https://me.github.io/alpha/", "https://me.github.io/brain/", "https://me.github.io/p/alpha/", "https://me.github.io/watch/alpha/"]
+    check(findable_listed == ["https://me.github.io/alpha/", "https://me.github.io/brain/", "https://me.github.io/p/alpha/", "https://me.github.io/watch/",
+                              "https://me.github.io/watch/alpha/"]
           and "<loc>https://me.github.io/alpha/</loc><lastmod>2026-11-21</lastmod>" in findable_map,
           f"search: the sitemap names every page of the Pages site that may be found, and no other ({findable_listed})")
+    findable_watch_list = (findable_site / "watch" / "index.html").read_text(encoding="utf-8")
+    findable_list_read = findable.read_page("https://me.github.io/watch/", lambda url: {"status": 200, "url": url, "text": findable_watch_list, "headers": {}})
+    check('<a href="alpha/">alpha</a>' in findable_watch_list and findable_list_read["issues"] == [] and findable_list_read["listable"]
+          and findable_list_read["title"] == "Demo videos: one project by Me, each shown in use"
+          and findable.watch_list("Me", findable_home / "nothing") == "",
+          f"search: the watch pages get a page that links to each of them, and that page can be found itself ({findable_list_read['title']})")
     findable_robots = (findable_site / "robots.txt").read_text(encoding="utf-8")
     check(findable_robots == "User-agent: *\nAllow: /\n\nSitemap: https://me.github.io/show/sitemap.xml\nSitemap: https://me.github.io/sitemap.xml\n"
           and findable.robots_text(findable_robots, "https://me.github.io/sitemap.xml") == findable_robots
           and findable.robots_text("", "https://me.github.io/sitemap.xml") == "User-agent: *\nAllow: /\n\nSitemap: https://me.github.io/sitemap.xml\n",
           "search: robots.txt names the sitemap once and keeps what it already said")
-    check(findable_pushes == [(sorted(["robots.txt", "sitemap.xml", f"{findable_key}.txt"]), "sitemap.xml: 4 pages search engines may find (ReachPilot)")]
+    check(findable_pushes == [(sorted(["robots.txt", "sitemap.xml", "watch/index.html", f"{findable_key}.txt"]), "sitemap.xml: 5 pages search engines may find (ReachPilot)")]
           and sorted(file.name for file in findable_site.glob("*.txt")) == sorted([f"{findable_key}.txt", "notes.txt", "robots.txt"]),
           "search: the changed files go out in one push, and the key the site already shows is used again")
     check([url for url, _ in findable_posts] == ["https://api.indexnow.org/indexnow", "https://www.bing.com/indexnow"]
           and findable_posts[1][1] == {"host": "me.github.io", "key": findable_key, "keyLocation": f"https://me.github.io/{findable_key}.txt", "urlList": findable_posts[1][1]["urlList"]}
           and sorted(findable_posts[1][1]["urlList"]) == findable_listed
-          and "told 4 new or changed page(s) through www.bing.com" in findable_first,
+          and "told 5 new or changed page(s) through www.bing.com" in findable_first,
           f"search: Bing and Yandex are told through the first door this network leaves open ({findable_first})")
     findable_posts.clear()
     findable_pushes.clear()
     findable_run(23)
-    check(findable_posts == [] and findable_pushes == [([f"{findable_key}.txt"], "sitemap.xml: 4 pages search engines may find (ReachPilot)")],
+    check(findable_posts == [] and findable_pushes == [([f"{findable_key}.txt"], "sitemap.xml: 5 pages search engines may find (ReachPilot)")],
           "search: a day on which no page changed tells nobody and rewrites nothing")
     findable_web["https://me.github.io/brain/"] = (200, findable_html(body="new " * 80), {})
     findable_run(24)
@@ -6555,7 +6562,7 @@ try:
     findable_section = {"installed": True, **findable.card()}
     findable_counts = findable_section["counts"]
     check((findable_counts["projects"], findable_counts["pages"], findable_counts["trouble"], findable_counts["in_sitemap"], findable_counts["told"])
-          == (7, 9, 3, 4, 4) and findable_section["projects"][0]["trouble"] == 1 and not findable_section["google_connected"],
+          == (8, 10, 3, 5, 5) and findable_section["projects"][0]["trouble"] == 1 and not findable_section["google_connected"],
           f"search: the page counts projects, pages, pages with something in the way, listed and told ({findable_counts})")
     findable_items = findable.todo(findable_section)
     check(len(findable_items) == 2 and findable_items[0]["title"] == "3 page(s) have something that keeps search engines out"
@@ -6576,7 +6583,7 @@ try:
     check(findable_google["https://me.github.io/alpha/"] == ("in Google", "2026-11-23") and findable_google["https://me.github.io/brain/"] == ("not in Google yet", "2026-11-23")
           and findable_google["https://beta.example/"] == ("", "") and findable.card()["counts"]["in_google"] == 2
           and ("https://script.example/exec", "sitemap", "https://me.github.io/sitemap.xml") in findable_asked
-          and sum(1 for row in findable_asked if row[1] == "inspect") == 4,
+          and sum(1 for row in findable_asked if row[1] == "inspect") == 5,
           f"search: with the bridge connected Google is asked about the listed pages and handed the sitemap ({findable.card()['counts']})")
     findable_asked.clear()
     findable_run(26, link={"url": "https://script.example/exec", "token": "t"}, ask=findable_ask)
@@ -6612,6 +6619,21 @@ findable_watch_title = findable_watch_page.split("<title>")[1].split("</title>")
 check(findable_watch_title.startswith("Alpha: ") and len(findable_watch_title) <= 70 and '<meta name="description" content="' in findable_watch_page
       and "<h1>Alpha</h1>" in findable_watch_page,
       f"search: a watch page's title says what the project is, and it has a description ({findable_watch_title})")
+findable_watch_home = Path(tempfile.mkdtemp())
+try:
+    for findable_name, findable_text in (("alpha", findable_watch_page), ("beta & co", "<html><h1></h1></html>"), ("Hidden", findable_watch_page),
+                                         ("quiet", '<html><meta content="noindex" name="robots"><h1>Quiet</h1></html>')):
+        (findable_watch_home / "watch" / findable_name).mkdir(parents=True)
+        (findable_watch_home / "watch" / findable_name / "index.html").write_text(findable_text, encoding="utf-8")
+    findable_list = findable_showcase.watch_list("Me", findable_watch_home, {"hidden"})
+    check("Hidden/" not in findable_list and "quiet/" not in findable_list and findable_showcase.watch_list("Me", findable_watch_home).count('class="card"') == 3
+          and '<h2><a href="alpha/">Alpha</a></h2><p>Finds the page you lost, in every browser you use, without an account.</p>' in findable_list
+          and '<a href="beta%20%26%20co/">beta &amp; co</a>' in findable_list and "<title>Demo videos: 2 projects by Me, each shown in use</title>" in findable_list
+          and '<link rel="canonical" href="https://me.github.io/watch/">' in findable_list
+          and findable_showcase.watch_list("Me", findable_watch_home, {"hidden"}) == findable_list and findable_showcase.watch_list("Me", findable_watch_home / "none") == "",
+          "search: the list of watch pages names each project with its own heading and description, and leaves out what is kept out of search")
+finally:
+    shutil.rmtree(findable_watch_home, ignore_errors=True)
 check(findable_showcase.short_lead("My public brain: work I can show, published from a private Cairn brain", 61) == "My public brain: work I can show"
       and findable_showcase.short_lead("Walks new engineers through clunky work software (PLM, SRM, ERP), click by click", 61) == "Walks new engineers through clunky work software"
       and findable_showcase.short_lead("Reads the manual for you and answers from it with the page number", 40) == "Reads the manual for you and answers"

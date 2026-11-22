@@ -9,7 +9,8 @@ site that had more than a hundred. Once a day this PC
   2. reads each page the way a search engine does and writes down what would keep it out: it does not
      answer, it says noindex, it has no title or no description,
   3. keeps one sitemap.xml for the whole Pages site (<user>.github.io) with every page that may be found,
-     named in robots.txt, and pushes it when it changed,
+     named in robots.txt, and pushes it when it changed. With it goes watch/index.html, a page that links to
+     every watch page: no other page does, and a search engine finds a page mostly through a link to it,
   4. tells the IndexNow search engines (Bing, Yandex and the ones they pass it on to) which pages are new or
      changed. No account is needed: the site shows its own key file,
   5. asks Google, where a Search Console bridge is connected (secrets.json, "search_console"), whether each
@@ -64,6 +65,7 @@ GOOGLE_AGAIN_DAYS = 3  # an answer is asked again after this long
 KEY_FILE = re.compile(r"^[0-9a-f]{32}\.txt$")
 ACTION = re.compile(r"^findable:(run|tell)$")
 KINDS = {"site": "site", "landing": "landing page", "watch": "watch page", "extra": "page"}
+WATCH_LIST = "watch/index.html"  # on the Pages site: the page that links to every watch page
 
 
 def log(message: str) -> None:
@@ -277,12 +279,26 @@ def host_key(checkout: Path) -> str:
     return key
 
 
-def write_site_files(checkout: Path, user: str, rows: list[tuple[str, str]]) -> list[str]:
-    """Write sitemap.xml and robots.txt into the local copy of the Pages site. Returns the files that changed."""
+def watch_list(user: str, checkout: Path, leave_out=()) -> str:
+    """The page that lists every watch page (showcase.watch_list), "" when the site has none. No other page
+    links to a watch page, and a search engine finds a page mostly through a link to it. A project that is
+    kept out of search on purpose (leave_out) is not named on it."""
+    if not any((checkout / "watch").glob("*/index.html")):
+        return ""
+    import showcase
+
+    return showcase.watch_list(user, checkout, leave_out)
+
+
+def write_site_files(checkout: Path, user: str, rows: list[tuple[str, str]], watch_listing: str = "") -> list[str]:
+    """Write sitemap.xml, robots.txt and, when there is one, the list of watch pages (watch/index.html) into the
+    local copy of the Pages site. Returns the files that changed."""
     host = f"https://{user.lower()}.github.io/"
     wanted = {"sitemap.xml": sitemap_text(rows)}
     robots = checkout / "robots.txt"
     wanted["robots.txt"] = robots_text(robots.read_text(encoding="utf-8") if robots.exists() else "", host + "sitemap.xml")
+    if watch_listing:
+        wanted[WATCH_LIST] = watch_listing
     changed = []
     for name, text in wanted.items():
         target = checkout / name
@@ -436,11 +452,26 @@ def run(now: datetime | None = None, fetch=_fetch, repos=None, checkout: Path | 
                 read.append(facts)
             projects.append({"name": name, "pages": read})
 
+        listing = watch_list(user, checkout, config["not_for_search"]) if have_site and "watch" not in config["skip"] else ""
+        if listing:
+            # The list of watch pages is written by this very pass, so it is read from that text, not from the web.
+            facts = read_page(f"https://{host}/watch/", lambda address: {"status": 200, "url": address, "text": listing, "headers": {}})
+            facts.update(kind="extra", on_site=True)
+            rows.append((facts["url"], facts["changed"]))
+            if (told.get(facts["url"]) or {}).get("print") != facts["print"]:
+                to_tell.append(facts)
+            home = next((project for project in projects if project["name"].lower() == "watch"), None)
+            if home is None:
+                projects.append({"name": "watch", "pages": [facts]})
+                projects.sort(key=lambda project: project["name"].lower())
+            else:
+                home["pages"].append(facts)
+
         notes = []
         sitemap_url = f"https://{host}/sitemap.xml"
         if have_site and rows:
             key = host_key(checkout)
-            changed = write_site_files(checkout, user, rows)
+            changed = write_site_files(checkout, user, rows, listing)
             files = changed + [f"{key}.txt"]
             problem = push(checkout, files, f"sitemap.xml: {len(set(rows))} pages search engines may find (ReachPilot)") if files else ""
             if problem:
