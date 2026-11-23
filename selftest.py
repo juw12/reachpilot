@@ -6669,5 +6669,49 @@ check('<button role="tab" data-tab="search" hidden>Search</button>' in findable_
 check("data/findable/" in (Path(__file__).parent / ".gitignore").read_text(encoding="utf-8").split(),
       "search: what the check found stays out of the repository")
 
+# LinkedIn sign-in on a computer whose secrets.json has other sign-ins and no LinkedIn app (a second computer
+# where only Search Console was connected): it asks for the app, keeps what was there, and does not crash.
+import builtins as auth_builtins
+import tempfile as auth_tempfile
+
+import autopilot as auth_ap
+import linkedin_api as auth_linkedin
+
+auth_home = Path(auth_tempfile.mkdtemp(prefix="reachpilot_auth_"))
+auth_kept = (auth_ap.SECRETS_PATH, auth_ap.TOKEN_PATH, auth_linkedin.run_oauth, auth_builtins.input)
+try:
+    auth_ap.SECRETS_PATH, auth_ap.TOKEN_PATH = auth_home / "secrets.json", auth_home / "token.json"
+    auth_asked, auth_used = [], []
+    auth_answers = iter(["app-id", "app-secret"])
+
+    def auth_input(prompt=""):
+        auth_asked.append(prompt)
+        return next(auth_answers)
+
+    def auth_oauth(client_id, client_secret):
+        auth_used.append((client_id, client_secret))
+        return {"name": "Me", "expires_at": time.time() + 60 * 86400}
+
+    auth_builtins.input, auth_linkedin.run_oauth = auth_input, auth_oauth
+    auth_ap.SECRETS_PATH.write_text(json.dumps({"search_console": {"token": "kept"}}), encoding="utf-8")
+    with contextlib.redirect_stdout(io.StringIO()):
+        auth_ap.cmd_auth()
+    auth_after = json.loads(auth_ap.SECRETS_PATH.read_text(encoding="utf-8"))
+    check(auth_used == [("app-id", "app-secret")] and len(auth_asked) == 2 and auth_after["search_console"] == {"token": "kept"}
+          and (auth_after["client_id"], auth_after["client_secret"]) == ("app-id", "app-secret") and auth_ap.TOKEN_PATH.exists(),
+          "auth: with a secrets.json that has no LinkedIn app it asks for the app, keeps the other sign-ins and connects")
+    with contextlib.redirect_stdout(io.StringIO()):
+        auth_ap.cmd_auth()
+    check(len(auth_asked) == 2 and len(auth_used) == 2, "auth: with the app already there it asks nothing again")
+    auth_ap.SECRETS_PATH.unlink()
+    auth_answers = iter(["first-id", "first-secret"])
+    with contextlib.redirect_stdout(io.StringIO()):
+        auth_ap.cmd_auth()
+    check(json.loads(auth_ap.SECRETS_PATH.read_text(encoding="utf-8")) == {"client_id": "first-id", "client_secret": "first-secret"},
+          "auth: with no secrets.json it asks and writes one, as before")
+finally:
+    auth_ap.SECRETS_PATH, auth_ap.TOKEN_PATH, auth_linkedin.run_oauth, auth_builtins.input = auth_kept
+    shutil.rmtree(auth_home, ignore_errors=True)
+
 print("\nALL PASSED" if not failures else f"\n{len(failures)} FAILED")
 sys.exit(1 if failures else 0)
