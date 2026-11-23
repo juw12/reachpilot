@@ -994,11 +994,13 @@ def cmd_init(config, db) -> None:
 def cmd_auth() -> None:
     from linkedin_api import run_oauth
 
-    if not SECRETS_PATH.exists():
-        client_id = input("LinkedIn app Client ID: ").strip()
-        client_secret = input("LinkedIn app Client Secret: ").strip()
-        SECRETS_PATH.write_text(json.dumps({"client_id": client_id, "client_secret": client_secret}), encoding="utf-8")
-    secrets_data = json.loads(SECRETS_PATH.read_text(encoding="utf-8"))
+    # secrets.json can be there already without the LinkedIn app in it: a computer where another platform or
+    # Search Console was connected first. Ask for what is missing and keep the rest.
+    secrets_data = json.loads(SECRETS_PATH.read_text(encoding="utf-8")) if SECRETS_PATH.exists() else {}
+    if not secrets_data.get("client_id") or not secrets_data.get("client_secret"):
+        secrets_data["client_id"] = input("LinkedIn app Client ID: ").strip()
+        secrets_data["client_secret"] = input("LinkedIn app Client Secret: ").strip()
+        SECRETS_PATH.write_text(json.dumps(secrets_data, indent=2), encoding="utf-8")
     token = run_oauth(secrets_data["client_id"], secrets_data["client_secret"])
     TOKEN_PATH.write_text(json.dumps(token), encoding="utf-8")
     days = (token["expires_at"] - time.time()) / 86400
